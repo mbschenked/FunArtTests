@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Max Schenk · after orhun — three browser studies</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #000000;
+    --bg-tile: #0a0c10;
+    --bg-tile-hov: #0e131a;
+    --fg: #d8e3ee;
+    --fg-dim: #6b7785;
+    --rule: #1a2330;
+    --cyan: #7fd0ff;
+    --slate: #3c8cba;
+    --amber: #e6ac73;
+    --purple: #b657ff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--fg);
+    font-family: 'Fira Code', 'JetBrains Mono', monospace;
+    font-size: 15px; line-height: 1.55;
+    min-height: 100vh;
+  }
+  a { color: var(--cyan); text-decoration: none; border-bottom: 1px dotted var(--slate); }
+  a:hover { color: white; border-color: var(--cyan); }
+
+  .page { max-width: 1180px; margin: 0 auto; padding: 56px 28px 80px; }
+
+  /* ---- Header ---- */
+  .eyebrow {
+    font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--slate); margin-bottom: 18px;
+  }
+  .eyebrow .dot { color: var(--cyan); }
+
+  h1 {
+    font-size: 32px; font-weight: 600; line-height: 1.25;
+    margin: 0 0 22px; color: white;
+    max-width: 760px;
+  }
+  h1 em { font-style: normal; color: var(--cyan); }
+
+  .credit {
+    max-width: 720px;
+    color: var(--fg-dim);
+    border-left: 2px solid var(--rule);
+    padding: 6px 0 6px 18px;
+    margin: 0 0 48px;
+    font-size: 13.5px;
+  }
+  .credit strong { color: var(--fg); font-weight: 500; }
+  .credit code {
+    color: var(--cyan); font-size: 12.5px;
+    padding: 0 3px;
+    background: rgba(127, 208, 255, 0.06);
+    border-radius: 2px;
+  }
+
+  /* ---- Tile grid ---- */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px;
+  }
+  @media (max-width: 880px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+
+  .tile {
+    position: relative;
+    display: block;
+    border: 1px solid var(--rule);
+    background: var(--bg-tile);
+    aspect-ratio: 4 / 5;
+    padding: 22px;
+    color: var(--fg);
+    text-decoration: none;
+    overflow: hidden;
+    transition: background 180ms ease, border-color 180ms ease, transform 220ms ease;
+  }
+  .tile:hover {
+    background: var(--bg-tile-hov);
+    border-color: var(--accent, var(--cyan));
+    transform: translateY(-2px);
+  }
+  .tile:focus-visible {
+    background: var(--bg-tile-hov);
+    border-color: var(--accent, var(--cyan));
+    outline: 2px solid var(--accent, var(--cyan));
+    outline-offset: 4px;
+    transform: translateY(-2px);
+  }
+  .tile:hover .num,
+  .tile:focus-visible .num { color: var(--accent); }
+  .tile:hover .thumb,
+  .tile:focus-visible .thumb { opacity: 1; }
+
+  .tile .num {
+    font-size: 14px; font-weight: 600; letter-spacing: 0.16em;
+    color: var(--fg-dim);
+    transition: color 200ms ease;
+  }
+  .tile .name {
+    position: absolute; left: 22px; bottom: 84px;
+    font-size: 22px; font-weight: 600;
+    color: white;
+    line-height: 1.15;
+  }
+  .tile .desc {
+    position: absolute; left: 22px; right: 22px; bottom: 38px;
+    font-size: 12.5px; color: var(--fg-dim);
+    line-height: 1.5;
+  }
+  .tile .chip {
+    position: absolute; left: 22px; bottom: 18px;
+    font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--accent, var(--cyan));
+    border: 1px solid currentColor;
+    padding: 3px 7px;
+    border-radius: 2px;
+    opacity: 0.85;
+  }
+
+  .tile .thumb {
+    position: absolute;
+    top: 50px; left: 22px; right: 22px;
+    height: 130px;
+    opacity: 0.55;
+    transition: opacity 220ms ease;
+    pointer-events: none;
+    overflow: hidden;
+  }
+
+  /* Per-tile accent + thumbnail flavor */
+  .tile.t-a { --accent: var(--amber); }
+  .tile.t-b { --accent: var(--cyan); }
+  .tile.t-c { --accent: var(--purple); }
+
+  /* A thumb: density-ramp text grid */
+  .thumb-a {
+    color: var(--amber);
+    font-size: 13px; line-height: 1; white-space: pre;
+    text-shadow: 0.5px 0 rgba(255,0,80,0.4), -0.5px 0 rgba(0,220,255,0.4);
+  }
+
+  /* B thumb: skewed grid lines */
+  .thumb-b {
+    background:
+      linear-gradient(180deg, transparent, rgba(127,208,255,0.08) 50%, transparent),
+      repeating-linear-gradient(90deg,  rgba(127,208,255,0.35) 0 1px, transparent 1px 14px),
+      repeating-linear-gradient(0deg,   rgba(60,140,186,0.20) 0 1px, transparent 1px 10px);
+    transform: perspective(360px) rotateX(38deg) rotateZ(-2deg);
+    transform-origin: center bottom;
+  }
+
+  /* C thumb: pointillist scatter */
+  .thumb-c {
+    background-image:
+      radial-gradient(circle, var(--purple) 0.8px, transparent 1.2px),
+      radial-gradient(circle, var(--cyan)   0.6px, transparent 1px);
+    background-size: 9px 9px, 13px 13px;
+    background-position: 0 0, 4px 6px;
+    opacity: 0.7;
+  }
+
+  /* ---- Footer ---- */
+  footer {
+    margin-top: 56px;
+    padding-top: 22px;
+    border-top: 1px solid var(--rule);
+    font-size: 12px;
+    color: var(--fg-dim);
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 14px;
+  }
+  footer .right { color: var(--fg-dim); }
+</style>
+</head>
+<body>
+<main class="page">
+
+  <div class="eyebrow"><span class="dot">●</span>&nbsp;&nbsp;after orhun &nbsp; / &nbsp; three browser studies</div>
+
+  <h1>Three browser studies <em>after</em> <a href="https://github.com/orhun" target="_blank" rel="noopener">orhun</a>'s terminal-native dynamic art.</h1>
+
+  <p class="credit">
+    Each piece picks one motion thread from <strong>Orhun Parmaksız</strong>'s terminal-art catalog
+    and restages it as a browser-native rendering primitive &mdash; written from scratch, no Rust, no WASM.
+    Source threads:
+    <a href="https://github.com/orhun/theattyr" target="_blank" rel="noopener">orhun/theattyr</a>,
+    <a href="https://github.com/orhun/ratty" target="_blank" rel="noopener">orhun/ratty</a>,
+    <a href="https://github.com/orhun/ratatui-splash-screen" target="_blank" rel="noopener">orhun/ratatui-splash-screen</a>.
+    Web-bridge precedent: <a href="https://github.com/ratatui/ratzilla" target="_blank" rel="noopener">ratatui/ratzilla</a>.
+    Visual homage; unaffiliated.
+  </p>
+
+  <section class="grid">
+
+    <a class="tile t-a" href="a-phosphor.html" aria-label="Open piece A — Phosphor Cell Field">
+      <div class="num">01 / 03</div>
+      <div class="thumb thumb-a" aria-hidden="true"><pre>. : ; + * # @ ▒ █ ▒ @ # *
++ * # @ ▒ █ ▒ @ # * + : .
+@ ▒ █ ▒ @ # * + : . . : ;
+▒ @ # * + : . . : ; + * #
+* + : . . : ; + * # @ ▒ █</pre></div>
+      <div class="name">Phosphor Cell Field</div>
+      <div class="desc">DOM character grid driven by sum-of-sines noise; palette cycles through four phosphor tints behind a CRT overlay.</div>
+      <div class="chip">theattyr</div>
+    </a>
+
+    <a class="tile t-b" href="b-warped.html" aria-label="Open piece B — Warped Console">
+      <div class="num">02 / 03</div>
+      <div class="thumb thumb-b" aria-hidden="true"></div>
+      <div class="name">Warped Console</div>
+      <div class="desc">Matrix-rain canvas mapped onto a 3D plane, deformed live by a vertex shader. WebGL via Three.js.</div>
+      <div class="chip">ratty</div>
+    </a>
+
+    <a class="tile t-c" href="c-scatter.html" aria-label="Open piece C — Boot Scatter">
+      <div class="num">03 / 03</div>
+      <div class="thumb thumb-c" aria-hidden="true"></div>
+      <div class="name">Boot Scatter</div>
+      <div class="desc">Random points accumulate to reveal a generative image, then dissolve. Cycles three source patterns (Voronoi, flow-field, Lissajous) across five palette swatches.</div>
+      <div class="chip">splash-screen</div>
+    </a>
+
+  </section>
+
+  <footer>
+    <div>
+      Experiment by <strong>Max Schenk</strong> &middot; <a href="https://github.com/mbschenked/FunArtTests/tree/main/after-orhun" target="_blank" rel="noopener">source</a>
+    </div>
+    <div class="right">
+      Inspired by — not endorsed by — <a href="https://orhun.dev" target="_blank" rel="noopener">orhun.dev</a>
+    </div>
+  </footer>
+
+</main>
+</body>
+</html>

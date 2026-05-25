@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>C · Boot Scatter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --label: rgba(127, 208, 255, 0.92);
+    --label-dim: rgba(127, 208, 255, 0.72);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: #000; color: white;
+    font-family: 'Fira Code', 'JetBrains Mono', monospace;
+    overflow: hidden; height: 100vh;
+  }
+
+  #stage {
+    position: fixed; inset: 0;
+    display: block;
+    background: #000;
+  }
+
+  .vignette {
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at center,
+      transparent 35%,
+      rgba(0,0,0,0.3) 70%,
+      rgba(0,0,0,0.7) 100%);
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  /* Subtle film grain */
+  .grain {
+    position: fixed; inset: 0;
+    pointer-events: none;
+    z-index: 11;
+    opacity: 0.05;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='2' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  }
+
+  .hud {
+    position: fixed;
+    top: 18px; left: 22px;
+    z-index: 20;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--label);
+  }
+  .hud a {
+    color: var(--label-dim);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--label-dim);
+  }
+  .hud a:hover { color: var(--label); border-color: var(--label); }
+  .hud a:focus-visible {
+    color: var(--label);
+    border-color: var(--label);
+    outline: 1px solid var(--label);
+    outline-offset: 2px;
+  }
+  .hud .title { color: white; font-weight: 500; }
+  .hud .sep { color: var(--label-dim); margin: 0 0.6em; }
+
+  .meta {
+    position: fixed;
+    bottom: 18px; right: 22px;
+    z-index: 20;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--label-dim);
+    text-align: right;
+    line-height: 1.6;
+  }
+  .meta b { color: var(--label); font-weight: 400; }
+
+  .cycle-tag {
+    position: fixed;
+    bottom: 18px; left: 22px;
+    z-index: 20;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--label-dim);
+  }
+  .cycle-tag #ctitle { color: var(--label); }
+</style>
+</head>
+<body>
+
+<canvas id="stage" aria-hidden="true"></canvas>
+<div class="vignette" aria-hidden="true"></div>
+<div class="grain" aria-hidden="true"></div>
+
+<header class="hud">
+  <a href="index.html">← index</a>
+  <span class="sep">/</span>
+  <span class="title">C · boot scatter</span>
+</header>
+
+<aside class="meta">
+  <div><b>SRC</b> ratatui-splash-screen · point reveal</div>
+  <div><b>TECH</b> Canvas 2D · mask-buffer sampling</div>
+  <div><b>PALETTE</b> Black Waves accent cycle</div>
+</aside>
+
+<div class="cycle-tag">
+  Cycle <span id="cidx">01</span> &middot; <span id="ctitle">VORONOI</span>
+</div>
+
+<script>
+(() => {
+  // --- Setup ----------------------------------------------------------------
+  const stage = document.getElementById('stage');
+  const ctx = stage.getContext('2d');
+
+  let W = 0, H = 0;
+  function resize() {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    stage.width = W * dpr;
+    stage.height = H * dpr;
+    stage.style.width = W + 'px';
+    stage.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  // --- Mask buffer (target image) ------------------------------------------
+  const MASK_W = 256;
+  const MASK_H = 256;
+  const maskCanvas = document.createElement('canvas');
+  maskCanvas.width = MASK_W;
+  maskCanvas.height = MASK_H;
+  // `willReadFrequently: true` — we call getImageData once per cycle; the hint silences Chrome's perf warning
+  const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true });
+  let maskData = null;
+
+  function readMask() {
+    maskData = maskCtx.getImageData(0, 0, MASK_W, MASK_H).data;
+  }
+
+  function clearMask() {
+    maskCtx.fillStyle = '#000';
+    maskCtx.fillRect(0, 0, MASK_W, MASK_H);
+  }
+
+  // Voronoi-edge mask: brighter where two seeds are equidistant
+  function buildVoronoi() {
+    clearMask();
+    const SEEDS = 14;
+    const seeds = [];
+    for (let i = 0; i < SEEDS; i++) {
+      seeds.push({ x: Math.random() * MASK_W, y: Math.random() * MASK_H });
+    }
+    const id = maskCtx.createImageData(MASK_W, MASK_H);
+    for (let py = 0; py < MASK_H; py++) {
+      for (let px = 0; px < MASK_W; px++) {
+        let d1 = Infinity, d2 = Infinity;
+        for (let i = 0; i < SEEDS; i++) {
+          const dx = px - seeds[i].x;
+          const dy = py - seeds[i].y;
+          const d = dx * dx + dy * dy;
+          if (d < d1) { d2 = d1; d1 = d; }
+          else if (d < d2) { d2 = d; }
+        }
+        const diff = Math.sqrt(d2) - Math.sqrt(d1);
+        // Edge intensity: 1 near boundary, falling off over a few px
+        const v = Math.max(0, 1 - diff / 4);
+        const idx = (py * MASK_W + px) * 4;
+        const g = Math.round(v * 255);
+        id.data[idx] = g; id.data[idx + 1] = g; id.data[idx + 2] = g; id.data[idx + 3] = 255;
+      }
+    }
+    maskCtx.putImageData(id, 0, 0);
+    readMask();
+  }
+
+  // Flow-field streamlines mask
+  function buildFlowField() {
+    clearMask();
+    maskCtx.strokeStyle = 'rgba(255,255,255,0.9)';
+    maskCtx.lineWidth = 1;
+    maskCtx.lineCap = 'round';
+
+    const STREAMS = 90;
+    const STEP = 1.5;
+    const phaseA = Math.random() * 10;
+    const phaseB = Math.random() * 10;
+
+    for (let s = 0; s < STREAMS; s++) {
+      let x = Math.random() * MASK_W;
+      let y = Math.random() * MASK_H;
+      maskCtx.beginPath();
+      maskCtx.moveTo(x, y);
+      for (let step = 0; step < 220; step++) {
+        const angle = (
+          Math.sin(x * 0.022 + phaseA) +
+          Math.cos(y * 0.026 + phaseB) +
+          Math.sin((x + y) * 0.012)
+        ) * Math.PI * 0.75;
+        x += Math.cos(angle) * STEP;
+        y += Math.sin(angle) * STEP;
+        if (x < -8 || x > MASK_W + 8 || y < -8 || y > MASK_H + 8) break;
+        maskCtx.lineTo(x, y);
+      }
+      maskCtx.stroke();
+    }
+    readMask();
+  }
+
+  // Lissajous curve mask
+  function buildLissajous() {
+    clearMask();
+    maskCtx.strokeStyle = 'rgba(255,255,255,0.95)';
+    maskCtx.lineWidth = 2;
+
+    const a = 3 + Math.floor(Math.random() * 4);
+    const b = 4 + Math.floor(Math.random() * 4);
+    const delta = Math.random() * Math.PI;
+
+    maskCtx.beginPath();
+    let first = true;
+    for (let t = 0; t <= Math.PI * 2; t += 0.0015) {
+      const x = MASK_W / 2 + Math.sin(a * t + delta) * MASK_W * 0.42;
+      const y = MASK_H / 2 + Math.sin(b * t) * MASK_H * 0.42;
+      if (first) { maskCtx.moveTo(x, y); first = false; }
+      else maskCtx.lineTo(x, y);
+    }
+    maskCtx.stroke();
+    readMask();
+  }
+
+  // --- Cycle config ---------------------------------------------------------
+  const PALETTE = [
+    { hex: '#e6ac73', name: 'AMBER'  },  // Black Waves orange
+    { hex: '#7fd0ff', name: 'CYAN'   },  // ratty
+    { hex: '#5F8787', name: 'TEAL'   },  // Black Waves teal
+    { hex: '#a7da1e', name: 'LIME'   },  // Black Waves lime
+    { hex: '#b657ff', name: 'PURPLE' },  // Black Waves purple
+  ];
+
+  const IMAGES = [
+    { name: 'VORONOI',   build: buildVoronoi   },
+    { name: 'FLOWFIELD', build: buildFlowField },
+    { name: 'LISSAJOUS', build: buildLissajous },
+  ];
+
+  // --- Phase timings (seconds) ---------------------------------------------
+  const T_REVEAL   = 3.2;
+  const T_HOLD     = 1.6;
+  const T_DISSOLVE = 1.7;
+  const CYCLE_LEN  = T_REVEAL + T_HOLD + T_DISSOLVE;
+
+  // --- State ----------------------------------------------------------------
+  let cycleIdx = 0;
+  let imageIdx = 0;
+  let paletteIdx = 0;
+  let cycleStart = 0;
+
+  const cidxEl = document.getElementById('cidx');
+  const ctitleEl = document.getElementById('ctitle');
+
+  function startCycle(now) {
+    cycleIdx++;
+    imageIdx = (imageIdx + 1) % IMAGES.length;
+    paletteIdx = (paletteIdx + 1) % PALETTE.length;
+    IMAGES[imageIdx].build();
+    cycleStart = now;
+    cidxEl.textContent = String(cycleIdx).padStart(2, '0');
+    ctitleEl.textContent = IMAGES[imageIdx].name + ' · ' + PALETTE[paletteIdx].name;
+  }
+
+  function hexToRgb(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
+  }
+
+  // --- Reduced-motion gate ---------------------------------------------------
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // --- Main loop ------------------------------------------------------------
+  function frame(now) {
+    if (!reducedMotion) requestAnimationFrame(frame);
+    const t = now / 1000;
+
+    if (cycleStart === 0) startCycle(t);
+    const elapsed = t - cycleStart;
+    if (elapsed >= CYCLE_LEN) {
+      startCycle(t);
+      return;
+    }
+
+    // Soft fade trail
+    ctx.fillStyle = 'rgba(0,0,0,0.045)';
+    ctx.fillRect(0, 0, W, H);
+
+    const color = PALETTE[paletteIdx].hex;
+    const [r, g, b] = hexToRgb(color);
+
+    if (elapsed < T_REVEAL) {
+      // REVEAL: ramp sample count from low to high over the phase
+      const progress = elapsed / T_REVEAL;
+      const samples = Math.floor(200 + progress * 1400);
+      ctx.fillStyle = color;
+      for (let i = 0; i < samples; i++) {
+        const x = Math.random() * W;
+        const y = Math.random() * H;
+        const mx = (x / W) * MASK_W | 0;
+        const my = (y / H) * MASK_H | 0;
+        const v = maskData[(my * MASK_W + mx) * 4] / 255;
+        if (Math.random() < v * 0.95) {
+          const radius = 1 + Math.random() * 1.2;
+          ctx.beginPath();
+          ctx.arc(x, y, radius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    } else if (elapsed < T_REVEAL + T_HOLD) {
+      // HOLD: keep plotting at full density to maintain the image
+      ctx.fillStyle = color;
+      for (let i = 0; i < 1200; i++) {
+        const x = Math.random() * W;
+        const y = Math.random() * H;
+        const mx = (x / W) * MASK_W | 0;
+        const my = (y / H) * MASK_H | 0;
+        const v = maskData[(my * MASK_W + mx) * 4] / 255;
+        if (Math.random() < v * 0.9) {
+          ctx.beginPath();
+          ctx.arc(x, y, 1.2 + Math.random(), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    } else {
+      // DISSOLVE: heavier fade + spray noise dots over the image
+      ctx.fillStyle = 'rgba(0,0,0,0.10)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = `rgba(${r},${g},${b},0.25)`;
+      for (let i = 0; i < 500; i++) {
+        const x = Math.random() * W;
+        const y = Math.random() * H;
+        ctx.beginPath();
+        ctx.arc(x, y, 1 + Math.random() * 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  if (reducedMotion) {
+    // Static snapshot: render one source at hold density, then stop
+    cycleIdx = 1; imageIdx = 0; paletteIdx = 0;
+    IMAGES[imageIdx].build();
+    cidxEl.textContent = '01';
+    ctitleEl.textContent = IMAGES[imageIdx].name + ' · ' + PALETTE[paletteIdx].name;
+    const [r, g, b] = hexToRgb(PALETTE[paletteIdx].hex);
+    ctx.fillStyle = PALETTE[paletteIdx].hex;
+    for (let pass = 0; pass < 8; pass++) {
+      for (let i = 0; i < 2000; i++) {
+        const x = Math.random() * W;
+        const y = Math.random() * H;
+        const mx = (x / W) * MASK_W | 0;
+        const my = (y / H) * MASK_H | 0;
+        const v = maskData[(my * MASK_W + mx) * 4] / 255;
+        if (Math.random() < v * 0.85) {
+          ctx.beginPath();
+          ctx.arc(x, y, 1.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+  } else {
+    requestAnimationFrame(frame);
+  }
+})();
+</script>
+</body>
+</html>

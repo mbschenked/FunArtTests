@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>B · Warped Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --label: rgba(127, 208, 255, 0.92);
+    --label-dim: rgba(127, 208, 255, 0.72);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: #050608; color: white;
+    font-family: 'Fira Code', 'JetBrains Mono', monospace;
+    overflow: hidden; height: 100vh;
+  }
+
+  #gl {
+    position: fixed; inset: 0;
+    display: block;
+    background: radial-gradient(ellipse at center,
+      #0a0e14 0%,
+      #050608 60%,
+      #000000 100%);
+  }
+
+  /* CRT vignette + faint scanlines on top of the GL surface */
+  .scanlines {
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0,0,0,0.18) 0 1px,
+      transparent 1px 3px
+    );
+    pointer-events: none;
+    z-index: 10;
+    mix-blend-mode: multiply;
+  }
+
+  .vignette {
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at center,
+      transparent 30%,
+      rgba(0,0,0,0.4) 75%,
+      rgba(0,0,0,0.85) 100%);
+    pointer-events: none;
+    z-index: 11;
+  }
+
+  .hud {
+    position: fixed;
+    top: 18px; left: 22px;
+    z-index: 20;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--label);
+  }
+  .hud a {
+    color: var(--label-dim);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--label-dim);
+  }
+  .hud a:hover { color: var(--label); border-color: var(--label); }
+  .hud a:focus-visible {
+    color: var(--label);
+    border-color: var(--label);
+    outline: 1px solid var(--label);
+    outline-offset: 2px;
+  }
+  .hud .title { color: white; font-weight: 500; }
+  .hud .sep { color: var(--label-dim); margin: 0 0.6em; }
+
+  .meta {
+    position: fixed;
+    bottom: 18px; right: 22px;
+    z-index: 20;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--label-dim);
+    text-align: right;
+    line-height: 1.6;
+  }
+  .meta b { color: var(--label); font-weight: 400; }
+</style>
+</head>
+<body>
+
+<canvas id="gl" aria-hidden="true"></canvas>
+<div class="scanlines" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+
+<header class="hud">
+  <a href="index.html">← index</a>
+  <span class="sep">/</span>
+  <span class="title">B · warped console</span>
+</header>
+
+<aside class="meta">
+  <div><b>SRC</b> ratty · Möbius surface warp</div>
+  <div><b>TECH</b> WebGL · Three.js · vertex shader</div>
+  <div><b>BUFFER</b> 64-col matrix rain · canvas tex</div>
+</aside>
+
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+const ACCENT_BRIGHT = '#c4eaff';
+const ACCENT_SLATE  = '#3c8cba';
+const ACCENT_DIM    = '#1a3a4f';
+
+// --- Renderer / scene / camera ----------------------------------------------
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight, false);
+
+const scene = new THREE.Scene();
+
+const camera = new THREE.PerspectiveCamera(
+  55, window.innerWidth / window.innerHeight, 0.1, 100
+);
+camera.position.set(0, 0.6, 6);
+
+// --- Matrix-rain canvas → texture -------------------------------------------
+const RAIN_W = 1024;
+const RAIN_H = 1024;
+const rainCanvas = document.createElement('canvas');
+rainCanvas.width = RAIN_W;
+rainCanvas.height = RAIN_H;
+const rainCtx = rainCanvas.getContext('2d');
+rainCtx.fillStyle = '#000';
+rainCtx.fillRect(0, 0, RAIN_W, RAIN_H);
+
+// Glyph set: half-width Katakana + ASCII operators + digits + select uppercase
+const GLYPHS = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEFXYZ:;=+*<>{}[]/\\|';
+const COLS = 64;
+const ROWS = 64;
+const cellW = RAIN_W / COLS;
+const cellH = RAIN_H / ROWS;
+
+const columns = Array.from({ length: COLS }, () => ({
+  y: Math.random() * ROWS,
+  speed: 0.6 + Math.random() * 1.4,
+  lastGlyph: GLYPHS[Math.floor(Math.random() * GLYPHS.length)],
+}));
+
+function pickGlyph() {
+  return GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
+}
+
+function paintRain() {
+  // Fade everything by a small alpha — creates the trail
+  rainCtx.fillStyle = 'rgba(0,0,0,0.10)';
+  rainCtx.fillRect(0, 0, RAIN_W, RAIN_H);
+
+  rainCtx.font = `500 ${Math.floor(cellH * 0.85)}px "Fira Code", monospace`;
+  rainCtx.textBaseline = 'top';
+  rainCtx.textAlign = 'left';
+
+  for (let i = 0; i < COLS; i++) {
+    const col = columns[i];
+    col.y += col.speed * 0.55;
+    if (col.y > ROWS + 18) {
+      col.y = -Math.random() * 30;
+      col.speed = 0.6 + Math.random() * 1.4;
+    }
+    const x = i * cellW + 1;
+
+    // Bright leading glyph
+    const head = pickGlyph();
+    col.lastGlyph = head;
+    rainCtx.fillStyle = ACCENT_BRIGHT;
+    rainCtx.fillText(head, x, col.y * cellH);
+
+    // Slate-blue trail one cell up
+    if (col.y > 1) {
+      rainCtx.fillStyle = ACCENT_SLATE;
+      rainCtx.fillText(pickGlyph(), x, (col.y - 1) * cellH);
+    }
+    // Dim further trail
+    if (col.y > 2) {
+      rainCtx.fillStyle = ACCENT_DIM;
+      rainCtx.fillText(pickGlyph(), x, (col.y - 2) * cellH);
+    }
+  }
+}
+
+const rainTexture = new THREE.CanvasTexture(rainCanvas);
+rainTexture.magFilter = THREE.LinearFilter;
+// Streaming texture — disable mipmaps so we don't regenerate them on every frame
+rainTexture.generateMipmaps = false;
+rainTexture.minFilter = THREE.LinearFilter;
+
+// --- Warped plane ------------------------------------------------------------
+const PLANE_W = 9;
+const PLANE_H = 6;
+const SEG_X = 90;
+const SEG_Y = 60;
+
+const geometry = new THREE.PlaneGeometry(PLANE_W, PLANE_H, SEG_X, SEG_Y);
+
+const material = new THREE.ShaderMaterial({
+  uniforms: {
+    uTime:  { value: 0 },
+    uAmp:   { value: 0.55 },
+    uTwist: { value: 0.18 },
+    uTex:   { value: rainTexture },
+  },
+  vertexShader: /* glsl */ `
+    uniform float uTime;
+    uniform float uAmp;
+    uniform float uTwist;
+    varying vec2 vUv;
+    varying float vBrightness;
+
+    void main() {
+      vUv = uv;
+      vec3 p = position;
+
+      // Wave along X and a softer cross-wave along Y
+      float wave =
+        sin(p.x * 1.10 + uTime * 0.85) * uAmp +
+        sin(p.y * 0.65 - uTime * 0.55) * uAmp * 0.45;
+      p.z += wave;
+
+      // Möbius-ish twist: rotate (y,z) about x-axis by an angle linear in x
+      float twist = p.x * uTwist + uTime * 0.18;
+      float c = cos(twist);
+      float s = sin(twist);
+      float ny = c * p.y - s * p.z;
+      float nz = s * p.y + c * p.z;
+      p.y = ny;
+      p.z = nz;
+
+      // Brightness falls off toward the long-axis edges
+      vBrightness = 1.0 - smoothstep(0.55, 1.0, abs(uv.x - 0.5) * 2.0) * 0.6;
+
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D uTex;
+    varying vec2 vUv;
+    varying float vBrightness;
+
+    void main() {
+      vec4 c = texture2D(uTex, vUv);
+      // Subtle CRT horizontal banding on the surface itself
+      float band = 0.92 + 0.08 * sin(vUv.y * 700.0);
+      c.rgb *= band * vBrightness;
+      gl_FragColor = vec4(c.rgb, 1.0);
+    }
+  `,
+  side: THREE.DoubleSide,
+});
+
+const plane = new THREE.Mesh(geometry, material);
+scene.add(plane);
+
+// --- Camera orbit -----------------------------------------------------------
+function updateCamera(t) {
+  const r = 6.4;
+  camera.position.x = Math.sin(t * 0.10) * r * 0.55;
+  camera.position.z = Math.cos(t * 0.10) * r;
+  camera.position.y = Math.sin(t * 0.07) * 1.2;
+  camera.lookAt(0, 0, 0);
+}
+
+// --- Resize ------------------------------------------------------------------
+function onResize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  // Re-sample DPR — handles drag-between-displays on HiDPI/non-HiDPI Mac setups
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(w, h, false);
+}
+window.addEventListener('resize', onResize);
+
+// --- Main loop ---------------------------------------------------------------
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function tick() {
+  if (!reducedMotion) requestAnimationFrame(tick);
+  const t = performance.now() / 1000;
+
+  paintRain();
+  rainTexture.needsUpdate = true;
+
+  material.uniforms.uTime.value = t;
+  updateCamera(t);
+
+  renderer.render(scene, camera);
+}
+
+// Wait for Fira Code before first paint so the canvas text isn't ugly fallback.
+// In reduced-motion mode, render a single static frame at t≈1.5s (mid-warp).
+if (document.fonts?.ready) {
+  document.fonts.ready.then(() => requestAnimationFrame(tick));
+} else {
+  requestAnimationFrame(tick);
+}
+</script>
+
+</body>
+</html>

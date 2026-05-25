@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>A · Phosphor Cell Field</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #000000;
+    --label: rgba(127, 208, 255, 0.92);
+    --label-dim: rgba(127, 208, 255, 0.72);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: white;
+    font-family: 'Fira Code', 'JetBrains Mono', monospace;
+    overflow: hidden; height: 100vh;
+  }
+
+  .stage {
+    position: fixed; inset: 0;
+    display: grid; place-items: center;
+    animation: flicker 8s ease-in-out infinite;
+  }
+
+  /* Cellular field */
+  .field {
+    font-family: 'Fira Code', 'JetBrains Mono', monospace;
+    font-size: 16px;
+    line-height: 0.95;
+    letter-spacing: 0;
+    white-space: pre;
+    user-select: none;
+    text-shadow:
+      0.6px 0 0 rgba(255, 0, 80, 0.45),
+     -0.6px 0 0 rgba(0, 220, 255, 0.45);
+    transform: scale(1);
+    will-change: contents;
+  }
+
+  /* Soft outer vignette */
+  .stage::after {
+    content: '';
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at center,
+      transparent 35%,
+      rgba(0,0,0,0.45) 75%,
+      rgba(0,0,0,0.9) 100%);
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  /* Scanline overlay */
+  .scanlines {
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0,0,0,0.22) 0 1px,
+      transparent 1px 3px
+    );
+    pointer-events: none;
+    z-index: 10;
+    mix-blend-mode: multiply;
+  }
+
+  /* Slow horizontal scan-bar drifting down */
+  .scanbar {
+    position: fixed;
+    left: 0; right: 0;
+    height: 120px;
+    background: linear-gradient(180deg,
+      transparent 0%,
+      rgba(255,255,255,0.025) 50%,
+      transparent 100%);
+    pointer-events: none;
+    z-index: 11;
+    animation: scanbar 7s linear infinite;
+    will-change: transform;
+  }
+
+  @keyframes scanbar {
+    0%   { transform: translateY(-120px); }
+    100% { transform: translateY(100vh); }
+  }
+
+  @keyframes flicker {
+    0%, 100% { opacity: 1; }
+    8%       { opacity: 0.97; }
+    9%       { opacity: 1; }
+    72%      { opacity: 0.98; }
+    73%      { opacity: 1; }
+  }
+
+  /* HUD label */
+  .hud {
+    position: fixed;
+    top: 18px; left: 22px;
+    z-index: 20;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--label);
+    pointer-events: auto;
+  }
+  .hud a {
+    color: var(--label-dim);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--label-dim);
+  }
+  .hud a:hover { color: var(--label); border-color: var(--label); }
+  .hud a:focus-visible {
+    color: var(--label);
+    border-color: var(--label);
+    outline: 1px solid var(--label);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .stage  { animation: none !important; }
+    .scanbar { animation: none !important; transform: translateY(40vh); opacity: 0.5; }
+  }
+
+  .hud .title { color: white; font-weight: 500; }
+  .hud .sep { color: var(--label-dim); margin: 0 0.6em; }
+
+  .meta {
+    position: fixed;
+    bottom: 18px; right: 22px;
+    z-index: 20;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--label-dim);
+    text-align: right;
+    line-height: 1.6;
+  }
+  .meta b { color: var(--label); font-weight: 400; }
+</style>
+</head>
+<body>
+
+<div class="stage" aria-hidden="true">
+  <pre id="field" class="field"></pre>
+</div>
+
+<div class="scanlines" aria-hidden="true"></div>
+<div class="scanbar" aria-hidden="true"></div>
+
+<header class="hud">
+  <a href="index.html">← index</a>
+  <span class="sep">/</span>
+  <span class="title">A · phosphor cell field</span>
+</header>
+
+<aside class="meta">
+  <div><b>SRC</b> theattyr · VT100 cell mutation</div>
+  <div><b>TECH</b> DOM grid · 80×40 · 20fps</div>
+  <div><b>CYCLE</b> amber → cyan → lime → purple</div>
+</aside>
+
+<script>
+(() => {
+  const COLS = 80;
+  const ROWS = 40;
+  const RAMP = ' .:;+*#@▒█';
+  // Phosphor palette: amber, cyan, lime, purple
+  const PALETTE = [
+    [230, 172, 115],
+    [127, 208, 255],
+    [167, 218,  30],
+    [182,  87, 255],
+  ];
+  const CYCLE_SECONDS = 7;            // hold time per phosphor tint
+  const FRAME_INTERVAL_MS = 50;       // 20fps
+  const fieldEl = document.getElementById('field');
+
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const lerpRGB = (a, b, t) => [lerp(a[0],b[0],t), lerp(a[1],b[1],t), lerp(a[2],b[2],t)];
+
+  // Sum-of-sines noise: cheap, smooth, no library
+  function noise(x, y, t) {
+    return (
+      Math.sin(x * 0.30 + t * 0.45) * 0.55 +
+      Math.cos(y * 0.34 - t * 0.32) * 0.40 +
+      Math.sin((x + y) * 0.16 + t * 0.70) * 0.50 +
+      Math.cos(Math.sqrt(x * x + y * y) * 0.22 - t * 0.38) * 0.35
+    );
+  }
+
+  let lastFrame = 0;
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function frame(now) {
+    if (!reducedMotion) requestAnimationFrame(frame);
+    if (now - lastFrame < FRAME_INTERVAL_MS && !reducedMotion) return;
+    lastFrame = now;
+
+    const t = now / 1000;
+    const cycle = (t / CYCLE_SECONDS) % PALETTE.length;
+    const i = Math.floor(cycle);
+    const mix = cycle - i;
+    const base = lerpRGB(PALETTE[i], PALETTE[(i + 1) % PALETTE.length], mix);
+    const br = Math.round(base[0]);
+    const bg = Math.round(base[1]);
+    const bb = Math.round(base[2]);
+
+    // Build one large HTML string — faster than mutating 3200 spans
+    const parts = [];
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        const n = noise(x, y, t);
+        // Normalize ~[-1.8, 1.8] → [0, 1]
+        const intensity = Math.max(0, Math.min(1, (n + 1.8) / 3.6));
+        const charIdx = Math.min(RAMP.length - 1, Math.floor(intensity * RAMP.length));
+        const ch = RAMP[charIdx];
+        const a = (0.20 + 0.80 * intensity).toFixed(2);
+        const safe = ch === ' ' ? ' ' : ch;
+        parts.push(`<span style="color:rgba(${br},${bg},${bb},${a})">${safe}</span>`);
+      }
+      parts.push('\n');
+    }
+    fieldEl.innerHTML = parts.join('');
+  }
+
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
