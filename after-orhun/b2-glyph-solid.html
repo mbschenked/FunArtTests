@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>B2 · Glyph Polyhedron</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<script type="importmap">
+{
+  "imports": {
+    "three":          "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/":  "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<style>
+  :root {
+    --label:     rgba(127, 208, 255, 0.92);
+    --label-dim: rgba(127, 208, 255, 0.72);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: #050608; color: white;
+    font-family: 'Fira Code', 'JetBrains Mono', monospace;
+    overflow: hidden; height: 100vh;
+  }
+
+  #gl {
+    position: fixed; inset: 0;
+    display: block;
+    background: radial-gradient(ellipse at center,
+      #0a0e14 0%,
+      #050608 60%,
+      #000000 100%);
+    /* drag cursor hint */
+    cursor: grab;
+  }
+  #gl:active { cursor: grabbing; }
+
+  .scanlines {
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0,0,0,0.18) 0 1px,
+      transparent 1px 3px
+    );
+    pointer-events: none;
+    z-index: 10;
+    mix-blend-mode: multiply;
+  }
+  .vignette {
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at center,
+      transparent 30%,
+      rgba(0,0,0,0.4) 75%,
+      rgba(0,0,0,0.85) 100%);
+    pointer-events: none;
+    z-index: 11;
+  }
+
+  .hud {
+    position: fixed;
+    top: 18px; left: 22px;
+    z-index: 20;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--label);
+  }
+  .hud a {
+    color: var(--label-dim);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--label-dim);
+  }
+  .hud a:hover { color: var(--label); border-color: var(--label); }
+  .hud a:focus-visible {
+    color: var(--label);
+    border-color: var(--label);
+    outline: 1px solid var(--label);
+    outline-offset: 2px;
+  }
+  .hud .title { color: white; font-weight: 500; }
+  .hud .sep { color: var(--label-dim); margin: 0 0.6em; }
+
+  .meta {
+    position: fixed;
+    bottom: 18px; right: 22px;
+    z-index: 20;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--label-dim);
+    text-align: right;
+    line-height: 1.6;
+  }
+  .meta b { color: var(--label); font-weight: 400; }
+
+  .hint {
+    position: fixed;
+    bottom: 18px; left: 22px;
+    z-index: 20;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--label-dim);
+  }
+  .hint b { color: var(--label); font-weight: 400; }
+</style>
+</head>
+<body>
+
+<canvas id="gl" aria-hidden="true"></canvas>
+<div class="scanlines" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+
+<header class="hud">
+  <a href="index.html">← index</a>
+  <span class="sep">/</span>
+  <span class="title">B2 · glyph polyhedron</span>
+  <span class="sep">/</span>
+  <span style="color: var(--label-dim)">variant: not similar</span>
+</header>
+
+<aside class="meta">
+  <div><b>SUBJECT</b> dodecahedron · flat-shaded</div>
+  <div><b>LIGHT</b> one directional · upper-right</div>
+  <div><b>BACKDROP</b> matrix rain · z = -3</div>
+</aside>
+
+<div class="hint">
+  <b>↻</b> drag to spin
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const ACCENT_BRIGHT = '#c4eaff';
+const ACCENT_SLATE  = '#3c8cba';
+const ACCENT_DIM    = '#1a3a4f';
+
+// --- Renderer / scene / camera ---------------------------------------------
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight, false);
+
+const scene = new THREE.Scene();
+
+const camera = new THREE.PerspectiveCamera(
+  50, window.innerWidth / window.innerHeight, 0.1, 100
+);
+camera.position.set(0, 0.4, 5.5);
+camera.lookAt(0, 0, 0);
+
+// --- Glyph atlas: 1024x1024 grid of 16x16 = 256 monospace glyphs -----------
+const ATLAS = 1024;
+const atlasCanvas = document.createElement('canvas');
+atlasCanvas.width = ATLAS;
+atlasCanvas.height = ATLAS;
+const actx = atlasCanvas.getContext('2d');
+actx.fillStyle = '#000';
+actx.fillRect(0, 0, ATLAS, ATLAS);
+
+const GLYPHS = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ:;=+*<>{}[]/\\|()!?@#$%^&';
+const ATLAS_COLS = 16;
+const ATLAS_ROWS = 16;
+const CELL = ATLAS / ATLAS_COLS;
+
+function paintAtlas() {
+  actx.fillStyle = '#000';
+  actx.fillRect(0, 0, ATLAS, ATLAS);
+  actx.font = `500 ${Math.floor(CELL * 0.78)}px "Fira Code", monospace`;
+  actx.textBaseline = 'middle';
+  actx.textAlign = 'center';
+  for (let r = 0; r < ATLAS_ROWS; r++) {
+    for (let c = 0; c < ATLAS_COLS; c++) {
+      const i = r * ATLAS_COLS + c;
+      const ch = GLYPHS[i % GLYPHS.length];
+      // Mix accent colors across the grid for visual texture
+      const tint = (i % 7 === 0) ? ACCENT_BRIGHT : (i % 3 === 0) ? ACCENT_SLATE : ACCENT_DIM;
+      actx.fillStyle = tint;
+      actx.fillText(ch, c * CELL + CELL / 2, r * CELL + CELL / 2);
+    }
+  }
+}
+paintAtlas();
+
+const atlasTex = new THREE.CanvasTexture(atlasCanvas);
+atlasTex.wrapS = THREE.RepeatWrapping;
+atlasTex.wrapT = THREE.RepeatWrapping;
+atlasTex.repeat.set(1.4, 1.4);
+atlasTex.magFilter = THREE.LinearFilter;
+atlasTex.minFilter = THREE.LinearMipmapLinearFilter;
+atlasTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+// --- Dodecahedron with flat-shaded Phong material --------------------------
+const solidGeom = new THREE.DodecahedronGeometry(1.5, 0);
+
+// Phong over Standard: crisper specular for faceted geometry on a single-
+// directional-light scene (no IBL). flatShading shows per-face lighting clearly.
+const solidMat = new THREE.MeshPhongMaterial({
+  color:     0x1a3a4f,   // slate base — let the directional light do the work
+  emissive:  0x0a1a26,   // tiny self-glow so the glyph atlas reads even on shadow side
+  specular:  0x7fd0ff,   // cyan specular highlight
+  shininess: 38,
+  map:       atlasTex,
+  flatShading: true,
+});
+
+const solid = new THREE.Mesh(solidGeom, solidMat);
+scene.add(solid);
+
+// --- Lighting: ONE directional from upper-right ---------------------------
+const dirLight = new THREE.DirectionalLight(0xc4eaff, 1.7);
+dirLight.position.set(3, 4, 5);
+scene.add(dirLight);
+
+// Tiny ambient so back faces don't crush to pure black. Still satisfies the
+// "one angle" spec — there's no second directional source.
+const ambient = new THREE.AmbientLight(0x1a3a4f, 0.18);
+scene.add(ambient);
+
+// --- Matrix-rain backdrop (visual continuity to B) -------------------------
+const RAIN_W = 1024;
+const RAIN_H = 1024;
+const rainCanvas = document.createElement('canvas');
+rainCanvas.width = RAIN_W;
+rainCanvas.height = RAIN_H;
+const rainCtx = rainCanvas.getContext('2d');
+rainCtx.fillStyle = '#000';
+rainCtx.fillRect(0, 0, RAIN_W, RAIN_H);
+
+const RAIN_GLYPHS = GLYPHS;
+const RCOLS = 64;
+const RROWS = 64;
+const rcellW = RAIN_W / RCOLS;
+const rcellH = RAIN_H / RROWS;
+const rcolumns = Array.from({ length: RCOLS }, () => ({
+  y: Math.random() * RROWS,
+  speed: 0.6 + Math.random() * 1.4,
+}));
+
+function pickRainGlyph() {
+  return RAIN_GLYPHS[Math.floor(Math.random() * RAIN_GLYPHS.length)];
+}
+
+function paintRain() {
+  rainCtx.fillStyle = 'rgba(0,0,0,0.10)';
+  rainCtx.fillRect(0, 0, RAIN_W, RAIN_H);
+  rainCtx.font = `500 ${Math.floor(rcellH * 0.85)}px "Fira Code", monospace`;
+  rainCtx.textBaseline = 'top';
+  rainCtx.textAlign = 'left';
+  for (let i = 0; i < RCOLS; i++) {
+    const col = rcolumns[i];
+    col.y += col.speed * 0.55;
+    if (col.y > RROWS + 18) {
+      col.y = -Math.random() * 30;
+      col.speed = 0.6 + Math.random() * 1.4;
+    }
+    const x = i * rcellW + 1;
+    rainCtx.fillStyle = ACCENT_BRIGHT;
+    rainCtx.fillText(pickRainGlyph(), x, col.y * rcellH);
+    if (col.y > 1) {
+      rainCtx.fillStyle = ACCENT_SLATE;
+      rainCtx.fillText(pickRainGlyph(), x, (col.y - 1) * rcellH);
+    }
+    if (col.y > 2) {
+      rainCtx.fillStyle = ACCENT_DIM;
+      rainCtx.fillText(pickRainGlyph(), x, (col.y - 2) * rcellH);
+    }
+  }
+}
+
+const rainTex = new THREE.CanvasTexture(rainCanvas);
+rainTex.generateMipmaps = false;
+rainTex.minFilter = THREE.LinearFilter;
+
+const backdropGeom = new THREE.PlaneGeometry(14, 9);
+const backdropMat = new THREE.MeshBasicMaterial({
+  map: rainTex,
+  transparent: true,
+  opacity: 0.32,
+  depthWrite: false,
+});
+const backdrop = new THREE.Mesh(backdropGeom, backdropMat);
+backdrop.position.set(0, 0, -3);
+scene.add(backdrop);
+
+// --- OrbitControls + auto-spin handshake -----------------------------------
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.enableZoom = false;
+controls.enablePan = false;
+controls.rotateSpeed = 0.9;
+
+const AUTO_SPIN_PER_FRAME = 0.005;
+let autoSpin = true;
+let resumeHandle = null;
+
+controls.addEventListener('start', () => {
+  autoSpin = false;
+  if (resumeHandle) { clearTimeout(resumeHandle); resumeHandle = null; }
+});
+
+controls.addEventListener('end', () => {
+  if (resumeHandle) clearTimeout(resumeHandle);
+  resumeHandle = setTimeout(() => {
+    autoSpin = true;
+    resumeHandle = null;
+  }, 2000);
+});
+
+// --- Resize ----------------------------------------------------------------
+function onResize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(w, h, false);
+}
+window.addEventListener('resize', onResize);
+
+// --- Main loop --------------------------------------------------------------
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function tick() {
+  if (!reducedMotion) requestAnimationFrame(tick);
+
+  // Backdrop rain
+  paintRain();
+  rainTex.needsUpdate = true;
+
+  // Auto-spin (skip when user is dragging or in reduced-motion mode)
+  if (autoSpin && !reducedMotion) {
+    solid.rotation.y += AUTO_SPIN_PER_FRAME;
+    solid.rotation.x += AUTO_SPIN_PER_FRAME * 0.35;
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+if (document.fonts?.ready) {
+  document.fonts.ready.then(() => requestAnimationFrame(tick));
+} else {
+  requestAnimationFrame(tick);
+}
+</script>
+
+</body>
+</html>

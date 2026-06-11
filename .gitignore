@@ -2,3 +2,6 @@
 *.swp
 .vscode/
 node_modules/
+.verify/
+.claude/*.local.md
+reports/

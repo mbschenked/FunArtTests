@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>B3 · Glyph Particle Cloud</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --label:     rgba(127, 208, 255, 0.92);
+    --label-dim: rgba(127, 208, 255, 0.72);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: #000; color: white;
+    font-family: 'Fira Code', 'JetBrains Mono', monospace;
+    overflow: hidden; height: 100vh;
+  }
+
+  #gl {
+    position: fixed; inset: 0;
+    display: block;
+    background:
+      radial-gradient(ellipse at center,
+        #050a14 0%,
+        #02040a 60%,
+        #000000 100%);
+  }
+
+  .scanlines {
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0,0,0,0.18) 0 1px,
+      transparent 1px 3px
+    );
+    pointer-events: none;
+    z-index: 10;
+    mix-blend-mode: multiply;
+  }
+  .vignette {
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at center,
+      transparent 30%,
+      rgba(0,0,0,0.45) 75%,
+      rgba(0,0,0,0.9) 100%);
+    pointer-events: none;
+    z-index: 11;
+  }
+
+  .hud {
+    position: fixed;
+    top: 18px; left: 22px;
+    z-index: 20;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--label);
+  }
+  .hud a {
+    color: var(--label-dim);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--label-dim);
+  }
+  .hud a:hover { color: var(--label); border-color: var(--label); }
+  .hud a:focus-visible {
+    color: var(--label);
+    border-color: var(--label);
+    outline: 1px solid var(--label);
+    outline-offset: 2px;
+  }
+  .hud .title { color: white; font-weight: 500; }
+  .hud .sep { color: var(--label-dim); margin: 0 0.6em; }
+
+  .meta {
+    position: fixed;
+    bottom: 18px; right: 22px;
+    z-index: 20;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--label-dim);
+    text-align: right;
+    line-height: 1.6;
+  }
+  .meta b { color: var(--label); font-weight: 400; }
+</style>
+</head>
+<body>
+
+<canvas id="gl" aria-hidden="true"></canvas>
+<div class="scanlines" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+
+<header class="hud">
+  <a href="index.html">← index</a>
+  <span class="sep">/</span>
+  <span class="title">B3 · glyph particle cloud</span>
+  <span class="sep">/</span>
+  <span style="color: var(--label-dim)">variant: wildly different</span>
+</header>
+
+<aside class="meta">
+  <div><b>POINTS</b> 5000 · additive blend</div>
+  <div><b>MOTION</b> galaxy rotation + per-seed lissajous</div>
+  <div><b>ATLAS</b> 32 glyphs · alpha-only</div>
+</aside>
+
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// --- Renderer / scene / camera ---------------------------------------------
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight, false);
+
+const scene = new THREE.Scene();
+
+const camera = new THREE.PerspectiveCamera(
+  55, window.innerWidth / window.innerHeight, 0.1, 100
+);
+camera.position.set(0, 0.6, 5.5);
+camera.lookAt(0, 0, 0);
+
+// --- Glyph atlas: 1024×32 strip of 32 cells × 32×32 each -------------------
+// White glyphs on transparent background — shader owns color decision
+const ATLAS_W = 1024;
+const ATLAS_H = 32;
+const ATLAS_COLS = 32;
+const CELL = ATLAS_W / ATLAS_COLS;  // 32px square
+
+const atlasCanvas = document.createElement('canvas');
+atlasCanvas.width = ATLAS_W;
+atlasCanvas.height = ATLAS_H;
+const actx = atlasCanvas.getContext('2d');
+actx.clearRect(0, 0, ATLAS_W, ATLAS_H);
+
+const GLYPHS = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメ';
+actx.font = `500 ${Math.floor(CELL * 0.85)}px "Fira Code", monospace`;
+actx.textBaseline = 'middle';
+actx.textAlign = 'center';
+actx.fillStyle = '#ffffff';
+
+for (let i = 0; i < ATLAS_COLS; i++) {
+  const ch = GLYPHS[i % GLYPHS.length];
+  actx.fillText(ch, i * CELL + CELL / 2, ATLAS_H / 2);
+}
+
+const atlasTex = new THREE.CanvasTexture(atlasCanvas);
+atlasTex.magFilter = THREE.LinearFilter;
+atlasTex.minFilter = THREE.LinearFilter;
+atlasTex.generateMipmaps = false;
+atlasTex.premultiplyAlpha = false;
+
+// --- Particle field --------------------------------------------------------
+const COUNT = 5000;
+const positions = new Float32Array(COUNT * 3);
+const glyphIdx  = new Float32Array(COUNT);
+const seeds     = new Float32Array(COUNT);
+
+for (let i = 0; i < COUNT; i++) {
+  // Distribute in an oblate disk (galaxy-like): bigger radial spread, thin Y
+  const r = Math.sqrt(Math.random()) * 2.4;
+  const theta = Math.random() * Math.PI * 2;
+  positions[i * 3 + 0] = Math.cos(theta) * r;
+  positions[i * 3 + 1] = (Math.random() - 0.5) * 0.5; // thin disk
+  positions[i * 3 + 2] = Math.sin(theta) * r;
+  glyphIdx[i] = Math.floor(Math.random() * ATLAS_COLS);
+  seeds[i]    = Math.random();
+}
+
+const geom = new THREE.BufferGeometry();
+geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+geom.setAttribute('aGlyph',   new THREE.BufferAttribute(glyphIdx, 1));
+geom.setAttribute('aSeed',    new THREE.BufferAttribute(seeds, 1));
+
+const material = new THREE.ShaderMaterial({
+  uniforms: {
+    uTime:    { value: 0 },
+    uAtlas:   { value: atlasTex },
+    uPxRatio: { value: renderer.getPixelRatio() },
+  },
+  vertexShader: /* glsl */ `
+    uniform float uTime;
+    uniform float uPxRatio;
+    attribute float aGlyph;
+    attribute float aSeed;
+
+    varying float vGlyph;
+    varying float vDepth;
+    varying float vAlpha;
+
+    void main() {
+      // Galaxy-style rotation: inner particles spin slower than outer.
+      vec3 base = position;
+      float radius = length(base.xz);
+      float angle  = uTime * 0.10 + radius * 0.55;
+      float c = cos(angle), s = sin(angle);
+      vec2 rotXZ = vec2(c * base.x - s * base.z, s * base.x + c * base.z);
+
+      // Per-particle wobble — small lissajous around the rotated base
+      float ts = uTime + aSeed * 6.2831;
+      vec3 wobble = vec3(
+        sin(ts * 0.40) * 0.18,
+        cos(ts * 0.30 + aSeed * 6.0) * 0.22,
+        sin(ts * 0.50 + aSeed * 3.0) * 0.18
+      );
+
+      vec3 p = vec3(rotXZ.x, base.y, rotXZ.y) + wobble;
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
+
+      // Size attenuation: closer = bigger, capped to avoid pixel-size clamp.
+      gl_PointSize = clamp(64.0 / -mv.z * uPxRatio, 8.0, 24.0);
+      gl_Position = projectionMatrix * mv;
+
+      vGlyph = aGlyph;
+      vDepth = -mv.z;          // distance from camera (positive)
+      vAlpha = smoothstep(8.0, 1.5, -mv.z); // softer fade for nearby particles
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D uAtlas;
+    varying float vGlyph;
+    varying float vDepth;
+    varying float vAlpha;
+
+    void main() {
+      // gl_PointCoord origin is top-left in WebGL.
+      vec2 uv = vec2(
+        (vGlyph + gl_PointCoord.x) / 32.0,
+        gl_PointCoord.y
+      );
+      vec4 g = texture2D(uAtlas, uv);
+      if (g.a < 0.08) discard;
+
+      // Depth-grade: near = bright cyan, far = slate, very far = dim
+      float d = clamp((vDepth - 1.5) / 6.0, 0.0, 1.0);
+      vec3 near  = vec3(0.77, 0.92, 1.00);  // #c4eaff
+      vec3 mid   = vec3(0.24, 0.55, 0.73);  // #3c8cba
+      vec3 far   = vec3(0.10, 0.23, 0.31);  // #1a3a4f
+      vec3 col   = mix(near, mid, smoothstep(0.0, 0.5, d));
+      col        = mix(col,  far, smoothstep(0.5, 1.0, d));
+
+      gl_FragColor = vec4(col, g.a * vAlpha);
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+});
+
+const points = new THREE.Points(geom, material);
+scene.add(points);
+
+// --- Camera orbit (reuses B's orbit math) ----------------------------------
+function updateCamera(t) {
+  const r = 5.5;
+  camera.position.x = Math.sin(t * 0.10) * r * 0.55;
+  camera.position.z = Math.cos(t * 0.10) * r;
+  camera.position.y = Math.sin(t * 0.07) * 1.0 + 0.4;
+  camera.lookAt(0, 0, 0);
+}
+
+// --- Resize ----------------------------------------------------------------
+function onResize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(w, h, false);
+  material.uniforms.uPxRatio.value = renderer.getPixelRatio();
+}
+window.addEventListener('resize', onResize);
+
+// --- Main loop --------------------------------------------------------------
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function tick() {
+  if (!reducedMotion) requestAnimationFrame(tick);
+  const t = performance.now() / 1000;
+
+  material.uniforms.uTime.value = t;
+  updateCamera(t);
+
+  renderer.render(scene, camera);
+}
+
+if (document.fonts?.ready) {
+  document.fonts.ready.then(() => requestAnimationFrame(tick));
+} else {
+  requestAnimationFrame(tick);
+}
+</script>
+
+</body>
+</html>
