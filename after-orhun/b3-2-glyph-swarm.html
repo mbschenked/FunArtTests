@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>B3-2 · Glyph Swarm</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --label:     rgba(232, 122, 255, 0.92);
+    --label-dim: rgba(232, 122, 255, 0.72);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: #06030d; color: white;
+    font-family: 'Fira Code', 'JetBrains Mono', monospace;
+    overflow: hidden; height: 100vh;
+  }
+
+  #gl {
+    position: fixed; inset: 0;
+    display: block;
+    background:
+      radial-gradient(ellipse at center,
+        #1a0a28 0%,
+        #0a0414 60%,
+        #000000 100%);
+  }
+
+  .scanlines {
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0,0,0,0.18) 0 1px,
+      transparent 1px 3px
+    );
+    pointer-events: none;
+    z-index: 10;
+    mix-blend-mode: multiply;
+  }
+  .vignette {
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at center,
+      transparent 30%,
+      rgba(0,0,0,0.45) 75%,
+      rgba(0,0,0,0.9) 100%);
+    pointer-events: none;
+    z-index: 11;
+  }
+
+  .hud {
+    position: fixed;
+    top: 18px; left: 22px;
+    z-index: 20;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--label);
+  }
+  .hud a {
+    color: var(--label-dim);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--label-dim);
+  }
+  .hud a:hover { color: var(--label); border-color: var(--label); }
+  .hud a:focus-visible {
+    color: var(--label);
+    border-color: var(--label);
+    outline: 2px solid var(--label);
+    outline-offset: 2px;
+  }
+  .hud .title {
+    color: white; font-weight: 500;
+    font-size: inherit; line-height: inherit; letter-spacing: inherit;
+    text-transform: inherit; margin: 0; display: inline;
+  }
+  .hud .sep { color: var(--label-dim); margin: 0 0.6em; }
+
+  .meta {
+    position: fixed;
+    bottom: 18px; right: 22px;
+    z-index: 20;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--label-dim);
+    text-align: right;
+    line-height: 1.6;
+  }
+  .meta b { color: var(--label); font-weight: 400; }
+
+  .hint {
+    position: fixed;
+    bottom: 18px; left: 22px;
+    z-index: 20;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--label-dim);
+  }
+  .hint b { color: var(--label); font-weight: 400; }
+</style>
+</head>
+<body>
+
+<canvas id="gl" aria-hidden="true"></canvas>
+<div class="scanlines" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+
+<header class="hud">
+  <a href="index.html">← index</a>
+  <span class="sep">/</span>
+  <h1 class="title">B3-2 · glyph swarm</h1>
+  <span class="sep">/</span>
+  <span style="color: var(--label-dim)">variant: not similar · iter 2</span>
+</header>
+
+<aside class="meta" aria-hidden="true">
+  <div><b>POINTS</b> 4000 · additive blend</div>
+  <div><b>MOTION</b> curl-like vector field</div>
+  <div><b>REPULSION</b> explodes outward · friction return</div>
+</aside>
+
+<div class="hint" aria-hidden="true"><b>HINT</b> move mouse into the swarm</div>
+
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// --- Renderer / scene / camera ---------------------------------------------
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight, false);
+
+const scene = new THREE.Scene();
+
+const camera = new THREE.PerspectiveCamera(
+  55, window.innerWidth / window.innerHeight, 0.1, 100
+);
+camera.position.set(0, 0.4, 5.0);
+camera.lookAt(0, 0, 0);
+
+// --- Glyph atlas: same recipe as B3 ----------------------------------------
+const ATLAS_W = 1024;
+const ATLAS_H = 32;
+const ATLAS_COLS = 32;
+const CELL = ATLAS_W / ATLAS_COLS;
+
+const atlasCanvas = document.createElement('canvas');
+atlasCanvas.width = ATLAS_W;
+atlasCanvas.height = ATLAS_H;
+const actx = atlasCanvas.getContext('2d');
+actx.clearRect(0, 0, ATLAS_W, ATLAS_H);
+
+const GLYPHS = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメ';
+actx.font = `500 ${Math.floor(CELL * 0.85)}px "Fira Code", monospace`;
+actx.textBaseline = 'middle';
+actx.textAlign = 'center';
+actx.fillStyle = '#ffffff';
+
+for (let i = 0; i < ATLAS_COLS; i++) {
+  const ch = GLYPHS[i % GLYPHS.length];
+  actx.fillText(ch, i * CELL + CELL / 2, ATLAS_H / 2);
+}
+
+const atlasTex = new THREE.CanvasTexture(atlasCanvas);
+atlasTex.magFilter = THREE.LinearFilter;
+atlasTex.minFilter = THREE.LinearFilter;
+atlasTex.generateMipmaps = false;
+atlasTex.premultiplyAlpha = false;
+atlasTex.flipY = false;  // BAKE-IN FIX from iter 1
+
+// --- Particle field --------------------------------------------------------
+const COUNT = 4000;
+const positions = new Float32Array(COUNT * 3);
+const glyphIdx  = new Float32Array(COUNT);
+const seeds     = new Float32Array(COUNT);
+const groups    = new Float32Array(COUNT);  // 0..9, hue offset only
+
+// Explosion impulse — CPU-authoritative, uploaded each frame
+const expOffset = new Float32Array(COUNT * 3);
+const expVel    = new Float32Array(COUNT * 3);
+
+// Fill positions in a roughly spherical cloud (so the swarm has volumetric depth,
+// not a flat disk — that's already B3-1's identity).
+for (let i = 0; i < COUNT; i++) {
+  const u = Math.random(), v = Math.random();
+  const theta = u * Math.PI * 2;
+  const phi   = Math.acos(2 * v - 1);
+  const r     = Math.cbrt(Math.random()) * 2.0;
+  positions[i * 3 + 0] = Math.sin(phi) * Math.cos(theta) * r;
+  positions[i * 3 + 1] = Math.cos(phi) * r * 0.8;     // slight squash
+  positions[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * r;
+  glyphIdx[i] = Math.floor(Math.random() * ATLAS_COLS);
+  seeds[i]    = Math.random();
+  groups[i]   = Math.floor(Math.random() * 10);
+}
+
+const geom = new THREE.BufferGeometry();
+geom.setAttribute('position',  new THREE.BufferAttribute(positions, 3));
+geom.setAttribute('aGlyph',    new THREE.BufferAttribute(glyphIdx, 1));
+geom.setAttribute('aSeed',     new THREE.BufferAttribute(seeds, 1));
+geom.setAttribute('aGroup',    new THREE.BufferAttribute(groups, 1));
+const expAttr = new THREE.BufferAttribute(expOffset, 3);
+expAttr.setUsage(THREE.DynamicDrawUsage);
+geom.setAttribute('aExpOffset', expAttr);
+
+const material = new THREE.ShaderMaterial({
+  uniforms: {
+    uTime:    { value: 0 },
+    uAtlas:   { value: atlasTex },
+    uPxRatio: { value: renderer.getPixelRatio() },
+  },
+  vertexShader: /* glsl */ `
+    uniform float uTime;
+    uniform float uPxRatio;
+    attribute float aGlyph;
+    attribute float aSeed;
+    attribute float aGroup;
+    attribute vec3  aExpOffset;
+
+    varying float vGlyph;
+    varying float vDepth;
+    varying float vAlpha;
+    varying float vGroup;
+    varying float vEnergy;
+
+    // Curl-like field: sin/cos combination on position+time per-axis.
+    // Not a true divergence-free curl, but reads as fluid swirl. ~12 ops.
+    vec3 curlFlow(vec3 p, float t) {
+      vec3 q = p * 0.7 + vec3(t * 0.08);
+      return vec3(
+        sin(q.y * 1.7)              + cos(q.z * 1.3 + t * 0.20),
+        sin(q.z * 1.5 + t * 0.15)   + cos(q.x * 1.9),
+        sin(q.x * 1.4)              + cos(q.y * 1.6 - t * 0.18)
+      ) * 0.42;
+    }
+
+    void main() {
+      vec3 base = position;
+      vec3 flow = curlFlow(base, uTime);
+
+      // Per-seed phase: makes adjacent particles take slightly different streamlines
+      float ts = uTime + aSeed * 6.2831;
+      vec3 phase = vec3(
+        sin(ts * 0.22) * 0.06,
+        cos(ts * 0.27) * 0.06,
+        sin(ts * 0.31) * 0.06
+      );
+
+      vec3 p = base + flow + phase + aExpOffset;
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
+
+      // Energy drives size reduction during explosion
+      float energy = clamp(length(aExpOffset) * 1.5, 0.0, 0.6);
+      float size = clamp(60.0 / -mv.z * uPxRatio, 7.0, 22.0);
+      gl_PointSize = size * (1.0 - energy);
+      gl_Position = projectionMatrix * mv;
+
+      vGlyph  = aGlyph;
+      vDepth  = -mv.z;
+      vAlpha  = smoothstep(8.0, 1.5, -mv.z);
+      vGroup  = aGroup;
+      vEnergy = energy;
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D uAtlas;
+    varying float vGlyph;
+    varying float vDepth;
+    varying float vAlpha;
+    varying float vGroup;
+    varying float vEnergy;
+
+    void main() {
+      vec2 uv = vec2(
+        (vGlyph + gl_PointCoord.x) / 32.0,
+        1.0 - gl_PointCoord.y   // bake-in flipY correction
+      );
+      vec4 g = texture2D(uAtlas, uv);
+      if (g.a < 0.08) discard;
+
+      // Depth-grade: near = electric violet, mid = ultraviolet, far = deep cosmic
+      float d = clamp((vDepth - 1.5) / 6.0, 0.0, 1.0);
+      vec3 near  = vec3(0.91, 0.48, 1.00);  // #e87aff
+      vec3 mid   = vec3(0.48, 0.30, 1.00);  // #7a4cff
+      vec3 far   = vec3(0.14, 0.06, 0.28);  // #241048
+      vec3 col   = mix(near, mid, smoothstep(0.0, 0.5, d));
+      col        = mix(col,  far, smoothstep(0.5, 1.0, d));
+
+      // Per-group hue offset (±0.04 over group index)
+      float groupShift = (vGroup / 9.0 - 0.5) * 0.08;
+      col.r += groupShift * 0.6;
+      col.b -= groupShift * 0.4;
+
+      // Explosion energy brightens hot particles briefly
+      col = mix(col, vec3(1.0, 0.85, 1.0), vEnergy * 0.45);
+
+      gl_FragColor = vec4(col, g.a * vAlpha);
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+});
+
+const points = new THREE.Points(geom, material);
+scene.add(points);
+
+// --- Camera orbit ----------------------------------------------------------
+function updateCamera(t) {
+  const r = 5.0;
+  camera.position.x = Math.sin(t * 0.08) * r * 0.65;
+  camera.position.z = Math.cos(t * 0.08) * r;
+  camera.position.y = Math.sin(t * 0.05) * 0.8 + 0.3;
+  camera.lookAt(0, 0, 0);
+}
+
+// --- Mouse tracking → world point on plane(z=0) ----------------------------
+const raycaster = new THREE.Raycaster();
+const mouseNDC  = new THREE.Vector2(999, 999);
+const planeZ0   = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+const mouseWorld = new THREE.Vector3();
+let mouseActive = false;
+
+window.addEventListener('pointermove', (e) => {
+  mouseNDC.x =  (e.clientX / window.innerWidth)  * 2 - 1;
+  mouseNDC.y = -((e.clientY / window.innerHeight) * 2 - 1);
+  mouseActive = true;
+});
+window.addEventListener('pointerleave', () => { mouseActive = false; });
+window.addEventListener('blur',         () => { mouseActive = false; });
+
+function updateMouseWorld() {
+  raycaster.setFromCamera(mouseNDC, camera);
+  if (!raycaster.ray.intersectPlane(planeZ0, mouseWorld)) {
+    // Ray parallel to plane — fall back to camera-forward point at fixed distance.
+    mouseWorld.copy(camera.position).add(raycaster.ray.direction.clone().multiplyScalar(5));
+  }
+}
+
+// --- Explosion step --------------------------------------------------------
+const IMPULSE = 0.35;   // outward velocity per frame at mouse center
+const RADIUS  = 0.5;    // world-space proximity radius
+const FRICTION = 0.92;  // velocity damping per frame
+const MAX_OFFSET = 1.2; // clamp runaway
+
+function stepExplosion(time) {
+  if (mouseActive) {
+    // updateCamera() above leaves matrixWorld + matrixWorldInverse stale until renderer.render().
+    // Both the raycaster and any CPU projection here would otherwise read last-frame's inverse
+    // (or the identity on boot), making mouseWorld land in the wrong spot.
+    camera.updateMatrixWorld();
+    camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+    updateMouseWorld();
+    const mx = mouseWorld.x, my = mouseWorld.y, mz = mouseWorld.z;
+    for (let i = 0; i < COUNT; i++) {
+      const ix = i * 3;
+      const bx = positions[ix], by = positions[ix + 1], bz = positions[ix + 2];
+
+      // Replicate curlFlow() + phase from the vertex shader so the proximity test
+      // hits the position the user actually sees.
+      const qx = bx * 0.7 + time * 0.08;
+      const qy = by * 0.7 + time * 0.08;
+      const qz = bz * 0.7 + time * 0.08;
+      const fx = (Math.sin(qy * 1.7)              + Math.cos(qz * 1.3 + time * 0.20)) * 0.42;
+      const fy = (Math.sin(qz * 1.5 + time * 0.15) + Math.cos(qx * 1.9)              ) * 0.42;
+      const fz = (Math.sin(qx * 1.4)              + Math.cos(qy * 1.6 - time * 0.18)) * 0.42;
+
+      const seed = seeds[i];
+      const ts = time + seed * 6.2831;
+      const phX = Math.sin(ts * 0.22) * 0.06;
+      const phY = Math.cos(ts * 0.27) * 0.06;
+      const phZ = Math.sin(ts * 0.31) * 0.06;
+
+      const px = bx + fx + phX + expOffset[ix    ];
+      const py = by + fy + phY + expOffset[ix + 1];
+      const pz = bz + fz + phZ + expOffset[ix + 2];
+
+      const dx = px - mx, dy = py - my, dz = pz - mz;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 > RADIUS * RADIUS) continue;
+      const d = Math.sqrt(d2);
+      const u = d / RADIUS;
+      const fall = 1.0 - (u * u * (3.0 - 2.0 * u));
+      const invd = d > 0.0001 ? 1.0 / d : 0.0;
+      expVel[ix    ] += dx * invd * IMPULSE * fall;
+      expVel[ix + 1] += dy * invd * IMPULSE * fall;
+      expVel[ix + 2] += dz * invd * IMPULSE * fall;
+    }
+  }
+
+  // Integrate + friction + clamp
+  for (let i = 0; i < COUNT; i++) {
+    const ix = i * 3;
+    expVel[ix    ] *= FRICTION;
+    expVel[ix + 1] *= FRICTION;
+    expVel[ix + 2] *= FRICTION;
+    // Pull-back toward origin so particles eventually re-settle into the field
+    expOffset[ix    ] = (expOffset[ix    ] + expVel[ix    ]) * 0.985;
+    expOffset[ix + 1] = (expOffset[ix + 1] + expVel[ix + 1]) * 0.985;
+    expOffset[ix + 2] = (expOffset[ix + 2] + expVel[ix + 2]) * 0.985;
+    // Clamp
+    for (let k = 0; k < 3; k++) {
+      const v = expOffset[ix + k];
+      if (v >  MAX_OFFSET) expOffset[ix + k] =  MAX_OFFSET;
+      if (v < -MAX_OFFSET) expOffset[ix + k] = -MAX_OFFSET;
+    }
+  }
+
+  expAttr.needsUpdate = true;
+}
+
+// --- Resize ----------------------------------------------------------------
+function onResize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(w, h, false);
+  material.uniforms.uPxRatio.value = renderer.getPixelRatio();
+}
+window.addEventListener('resize', onResize);
+
+// --- Main loop --------------------------------------------------------------
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function tick() {
+  if (!reducedMotion) requestAnimationFrame(tick);
+  const t = performance.now() / 1000;
+
+  material.uniforms.uTime.value = t;
+  updateCamera(t);
+  if (!reducedMotion) stepExplosion(t);
+
+  renderer.render(scene, camera);
+}
+
+if (document.fonts?.ready) {
+  document.fonts.ready.then(() => requestAnimationFrame(tick));
+} else {
+  requestAnimationFrame(tick);
+}
+</script>
+
+</body>
+</html>

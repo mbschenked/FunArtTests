@@ -139,9 +139,17 @@
   }
 
   /* Per-tile accent + thumbnail flavor */
-  .tile.t-a { --accent: var(--amber); }
-  .tile.t-b { --accent: var(--cyan); }
-  .tile.t-c { --accent: var(--purple); }
+  .tile.t-a  { --accent: var(--amber); }
+  .tile.t-b  { --accent: var(--cyan); }
+  .tile.t-c  { --accent: var(--purple); }
+  /* B-family variants */
+  .tile.t-b1 { --accent: #c4eaff; }   /* brightest cyan — most similar to B */
+  .tile.t-b2 { --accent: var(--slate); } /* slate — middle drift */
+  .tile.t-b3 { --accent: var(--purple); } /* purple — wildly different */
+  /* Iteration 2: B3-family variants — warm → violet → sunset triptych */
+  .tile.t-c1 { --accent: #ffcb8a; }   /* warm flare amber */
+  .tile.t-c2 { --accent: #e87aff; }   /* violet/magenta */
+  .tile.t-c3 { --accent: #f5e0a0; }   /* gold (sunset) */
 
   /* A thumb: density-ramp text grid */
   .thumb-a {
@@ -169,6 +177,138 @@
     background-position: 0 0, 4px 6px;
     opacity: 0.7;
   }
+
+  /* B1 thumb: straight perspective gridlines (wave-on-plane, no twist) */
+  .thumb-b1 {
+    background:
+      linear-gradient(180deg, transparent, rgba(196,234,255,0.08) 50%, transparent),
+      repeating-linear-gradient(90deg,  rgba(196,234,255,0.45) 0 1px, transparent 1px 11px),
+      repeating-linear-gradient(0deg,   rgba(60,140,186,0.30)  0 1px, transparent 1px  9px);
+    transform: perspective(420px) rotateX(34deg);
+    transform-origin: center bottom;
+  }
+
+  /* B2 thumb: pentagon (signals "polyhedron") with one-sided shading */
+  .thumb-b2 {
+    position: relative;
+  }
+  .thumb-b2::before {
+    content: '';
+    position: absolute;
+    inset: 8px;
+    background: linear-gradient(120deg,
+      rgba(196,234,255,0.55) 0%,
+      rgba(127,208,255,0.35) 35%,
+      rgba(60,140,186,0.18)  70%,
+      rgba(26,58,79,0.10)    100%);
+    clip-path: polygon(50% 4%, 96% 36%, 80% 92%, 20% 92%, 4% 36%);
+    border: 1px solid rgba(127,208,255,0.6); /* visual rule on shape */
+    /* clip border via -webkit-mask not needed — outline is hidden by clip-path */
+  }
+  .thumb-b2::after {
+    content: '';
+    position: absolute;
+    inset: 8px;
+    /* faint glyph hint inside the pentagon */
+    background:
+      radial-gradient(circle, rgba(196,234,255,0.4) 0.6px, transparent 1px);
+    background-size: 7px 7px;
+    clip-path: polygon(50% 4%, 96% 36%, 80% 92%, 20% 92%, 4% 36%);
+    opacity: 0.5;
+  }
+
+  /* B3 thumb: glyph cloud — denser scatter, cyan/slate mix */
+  .thumb-b3 {
+    background-image:
+      radial-gradient(circle, rgba(196,234,255,0.85) 0.7px, transparent 1.1px),
+      radial-gradient(circle, rgba(60,140,186,0.75)  0.55px, transparent 0.9px),
+      radial-gradient(circle, rgba(182, 87,255,0.55) 0.5px, transparent 0.9px);
+    background-size: 7px 7px, 11px 11px, 17px 17px;
+    background-position: 0 0, 3px 4px, 6px 9px;
+    opacity: 0.75;
+  }
+
+  /* Iteration-2 thumbs — B3-family recolors with mechanic-hint flourishes */
+
+  /* C1 (Solar Flare): warm scatter, same scatter recipe as B3 recolored */
+  .thumb-c1 {
+    background-image:
+      radial-gradient(circle, rgba(255,203,138,0.88) 0.7px, transparent 1.1px),
+      radial-gradient(circle, rgba(230,128, 74,0.78) 0.55px, transparent 0.9px),
+      radial-gradient(circle, rgba(168, 58, 31,0.55) 0.5px, transparent 0.9px);
+    background-size: 7px 7px, 11px 11px, 17px 17px;
+    background-position: 0 0, 3px 4px, 6px 9px;
+    opacity: 0.78;
+  }
+
+  /* C2 (Glyph Swarm): violet scatter overlaid with faint diagonal flow streaks */
+  .thumb-c2 {
+    background-image:
+      radial-gradient(circle, rgba(232,122,255,0.85) 0.7px, transparent 1.1px),
+      radial-gradient(circle, rgba(122, 76,255,0.75) 0.55px, transparent 0.9px),
+      repeating-linear-gradient(40deg,
+        rgba(232,122,255,0.10) 0 1px, transparent 1px 9px);
+    background-size: 7px 7px, 11px 11px, 100% 100%;
+    background-position: 0 0, 3px 4px, 0 0;
+    opacity: 0.78;
+  }
+
+  /* C3 (Sediment Field): sunset scatter with a settled band at the bottom */
+  .thumb-c3 {
+    background-image:
+      linear-gradient(180deg,
+        transparent 0%,
+        transparent 70%,
+        rgba(217,117, 87,0.55) 85%,
+        rgba(107, 58, 82,0.75) 100%),
+      radial-gradient(circle, rgba(245,224,160,0.82) 0.65px, transparent 1px),
+      radial-gradient(circle, rgba(217,117, 87,0.62) 0.5px,  transparent 0.9px);
+    background-size: 100% 100%, 9px 9px, 13px 13px;
+    background-position: 0 0, 0 0, 4px 5px;
+    opacity: 0.82;
+  }
+
+  /* Iteration 3: new thread — Destiny Director globe */
+  .tile.t-d  { --accent: #fdcd47; }   /* director gold */
+
+  /* D thumb: ice planet disc + gold destination diamond with leader line */
+  .thumb-d { position: relative; }
+  .thumb-d::before {
+    content: '';
+    position: absolute;
+    top: 6px; left: 50%;
+    width: 112px; height: 112px;
+    transform: translateX(-50%);
+    border-radius: 50%;
+    background: radial-gradient(circle at 36% 32%,
+      #e8eaf0 0%, #aebdd0 30%, #8090a8 52%, #2a3d5c 78%, #16233c 100%);
+    box-shadow:
+      0 0 22px rgba(150, 190, 255, 0.35),
+      0 0 60px rgba(120, 160, 255, 0.15);
+  }
+  .thumb-d::after {
+    content: '';
+    position: absolute;
+    top: 24px; right: 16%;
+    width: 7px; height: 7px;
+    border: 1px solid #fdcd47;
+    transform: rotate(45deg);
+    box-shadow: -36px 20px 0 -2.5px rgba(229, 232, 238, 0.75);
+  }
+
+  /* Row separator between the two grid blocks */
+  .row-sep {
+    border: 0;
+    border-top: 1px dashed var(--rule);
+    margin: 48px 0 24px;
+  }
+
+  .sub-eyebrow {
+    font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--slate); margin-bottom: 18px;
+  }
+  .sub-eyebrow .dot { color: var(--cyan); }
+  .sub-eyebrow em { font-style: normal; color: var(--fg); }
 
   /* ---- Footer ---- */
   footer {
@@ -228,6 +368,92 @@
       <div class="name">Boot Scatter</div>
       <div class="desc">Random points accumulate to reveal a generative image, then dissolve. Cycles three source patterns (Voronoi, flow-field, Lissajous) across five palette swatches.</div>
       <div class="chip">splash-screen</div>
+    </a>
+
+  </section>
+
+  <hr class="row-sep" aria-hidden="true">
+
+  <div class="sub-eyebrow">
+    <span class="dot">●</span>&nbsp;&nbsp;variants on <em>B</em> &nbsp; / &nbsp; similarity gradient &nbsp;·&nbsp; minimum departure &rarr; wildly different
+  </div>
+
+  <section class="grid">
+
+    <a class="tile t-b1" href="b1-wave.html" aria-label="Open variant B1 — Wave Console">
+      <div class="num">B1 · most similar</div>
+      <div class="thumb thumb-b1" aria-hidden="true"></div>
+      <div class="name">Wave Console</div>
+      <div class="desc">Same plane and matrix-rain texture as B, with the Möbius twist removed; camera locked dead-on so the wave rolls toward the viewer.</div>
+      <div class="chip">wave only</div>
+    </a>
+
+    <a class="tile t-b2" href="b2-glyph-solid.html" aria-label="Open variant B2 — Glyph Polyhedron">
+      <div class="num">B2 · not similar</div>
+      <div class="thumb thumb-b2" aria-hidden="true"></div>
+      <div class="name">Glyph Polyhedron</div>
+      <div class="desc">A spinnable flat-shaded dodecahedron with a glyph atlas mapped to its faces, lit by a single directional light from upper-right. Drag to rotate.</div>
+      <div class="chip">3D · drag</div>
+    </a>
+
+    <a class="tile t-b3" href="b3-glyph-cloud.html" aria-label="Open variant B3 — Glyph Particle Cloud">
+      <div class="num">B3 · wildly different</div>
+      <div class="thumb thumb-b3" aria-hidden="true"></div>
+      <div class="name">Glyph Particle Cloud</div>
+      <div class="desc">5000 glyph particles in a slow galaxy rotation, additively blended. No plane, no surface — only points in volume.</div>
+      <div class="chip">points</div>
+    </a>
+
+  </section>
+
+  <hr class="row-sep" aria-hidden="true">
+
+  <div class="sub-eyebrow">
+    <span class="dot">●</span>&nbsp;&nbsp;iteration 2 &nbsp; / &nbsp; variants on <em>B3</em> &nbsp;·&nbsp; same similarity gradient &nbsp;·&nbsp; one mouse-proximity mechanic each
+  </div>
+
+  <section class="grid">
+
+    <a class="tile t-c1" href="b3-1-solar-flare.html" aria-label="Open variant B3-1 — Solar Flare">
+      <div class="num">B3-1 · most similar</div>
+      <div class="thumb thumb-c1" aria-hidden="true"></div>
+      <div class="name">Solar Flare</div>
+      <div class="desc">Same galaxy-rotation + lissajous recipe as B3, recolored to a warm flare palette. Cursor near the cloud, and nearby particles push outward on a damped spring before snapping back through center.</div>
+      <div class="chip">springs · interactive</div>
+    </a>
+
+    <a class="tile t-c2" href="b3-2-glyph-swarm.html" aria-label="Open variant B3-2 — Glyph Swarm">
+      <div class="num">B3-2 · not similar</div>
+      <div class="thumb thumb-c2" aria-hidden="true"></div>
+      <div class="name">Glyph Swarm</div>
+      <div class="desc">4000 particles drifting along a curl-like vector field instead of a disk rotation. Cursor near the swarm fires nearby particles outward with a brief size collapse; friction draws them back into the field.</div>
+      <div class="chip">explodes · interactive</div>
+    </a>
+
+    <a class="tile t-c3" href="b3-3-sediment-field.html" aria-label="Open variant B3-3 — Sediment Field">
+      <div class="num">B3-3 · wildly different</div>
+      <div class="thumb thumb-c3" aria-hidden="true"></div>
+      <div class="name">Sediment Field</div>
+      <div class="desc">Canvas 2D, no WebGL. 1200 floating glyphs in a sunset palette. Brush a glyph with the cursor and it staggers, falls under gravity, and accumulates as sediment along the bottom edge.</div>
+      <div class="chip">falls · interactive</div>
+    </a>
+
+  </section>
+
+  <hr class="row-sep" aria-hidden="true">
+
+  <div class="sub-eyebrow">
+    <span class="dot">●</span>&nbsp;&nbsp;iteration 3 &nbsp; / &nbsp; new thread &nbsp;·&nbsp; <em>destiny director</em> &nbsp;·&nbsp; orbit-view globe lit by its nearest stars
+  </div>
+
+  <section class="grid">
+
+    <a class="tile t-d" href="d-director-globe.html" aria-label="Open piece D — Director Globe">
+      <div class="num">D · new thread</div>
+      <div class="thumb thumb-d" aria-hidden="true"></div>
+      <div class="name">Director Globe</div>
+      <div class="desc">Director orbit-view ice world, lit by its nearest stars. Click re-orients.</div>
+      <div class="chip">orbit · click</div>
     </a>
 
   </section>

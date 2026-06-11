@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>D · Director Globe</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --label:     rgba(229, 232, 238, 0.92);  /* #e5e8ee director near-white */
+    --label-dim: rgba(150, 168, 192, 0.88);
+    --gold:      #fdcd47;                     /* director accent gold */
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: #0a0e1a; color: white;
+    font-family: 'Fira Code', 'JetBrains Mono', monospace;
+    overflow: hidden; height: 100vh;
+  }
+
+  #gl {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;   /* buffer is w×dpr; CSS size must stay w */
+    display: block;
+    background:
+      radial-gradient(ellipse at center,
+        #101828 0%,
+        #0a0e1a 55%,
+        #05070f 100%);
+  }
+
+  .scanlines {
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0,0,0,0.18) 0 1px,
+      transparent 1px 3px
+    );
+    pointer-events: none;
+    z-index: 10;
+    mix-blend-mode: multiply;
+  }
+  .vignette {
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at center,
+      transparent 44%,
+      rgba(0,0,0,0.38) 80%,
+      rgba(0,0,0,0.85) 100%);
+    pointer-events: none;
+    z-index: 11;
+  }
+
+  /* --- Director destination overlay (SVG leader lines + DOM markers/labels) --- */
+  #lines {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: 14;
+  }
+  .marker {
+    position: fixed; top: 0; left: 0;
+    width: 9px; height: 9px;
+    border: 1px solid var(--label);
+    background: rgba(10, 14, 26, 0.45);
+    box-shadow: 0 0 5px rgba(5, 7, 15, 0.95);
+    transform: translate(-50%, -50%) rotate(45deg);
+    opacity: 0;                       /* no boot flash at (0,0) before the first projected frame */
+    cursor: pointer;
+    z-index: 16;
+    transition: border-color 120ms ease, background 120ms ease, scale 120ms ease;
+  }
+  .marker.hot, .marker.active {
+    border-color: var(--gold);
+    background: rgba(253, 205, 71, 0.22);
+    scale: 1.3;
+  }
+  .label {
+    position: fixed; top: 0; left: 0;
+    opacity: 0;
+    transform: translate(-50%, -100%);
+    text-align: center;
+    cursor: pointer;
+    z-index: 15;
+    padding-bottom: 6px;
+    transition: color 120ms ease;
+  }
+  .label .lname {
+    font-size: 11px; font-weight: 500;
+    letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--label);
+    white-space: nowrap;
+    background: rgba(5, 9, 20, 0.72);   /* director-style backing chip — legible over bright ice */
+    padding: 2px 8px;
+    transition: color 120ms ease;
+  }
+  .label .ltype {
+    font-size: 8.5px;
+    letter-spacing: 0.4em; text-transform: uppercase;
+    color: var(--label-dim);
+    white-space: nowrap;
+    margin-top: 1px;
+    background: rgba(5, 9, 20, 0.60);
+    padding: 1px 6px;
+    transition: color 120ms ease;
+  }
+  .label.hot .lname, .label.active .lname { color: var(--gold); }
+  .label.hot .ltype, .label.active .ltype { color: rgba(253, 205, 71, 0.7); }
+
+  /* --- House HUD chrome --- */
+  .hud {
+    position: fixed;
+    top: 18px; left: 22px;
+    z-index: 20;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--label);
+  }
+  .hud a {
+    color: var(--label-dim);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--label-dim);
+  }
+  .hud a:hover { color: var(--label); border-color: var(--label); }
+  .hud a:focus-visible {
+    color: var(--label);
+    border-color: var(--label);
+    outline: 2px solid var(--label);
+    outline-offset: 2px;
+  }
+  .hud .title {
+    color: white; font-weight: 500;
+    font-size: inherit; line-height: inherit; letter-spacing: inherit;
+    text-transform: inherit; margin: 0; display: inline;
+  }
+  .hud .sep { color: var(--label-dim); margin: 0 0.6em; }
+
+  .meta {
+    position: fixed;
+    bottom: 18px; right: 22px;
+    z-index: 20;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--label-dim);
+    text-align: right;
+    line-height: 1.6;
+  }
+  .meta b { color: var(--label); font-weight: 400; }
+
+  .hint {
+    position: fixed;
+    bottom: 18px; left: 22px;
+    z-index: 20;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--label-dim);
+  }
+  .hint b { color: var(--gold); font-weight: 400; }
+</style>
+</head>
+<body>
+
+<canvas id="gl" aria-hidden="true"></canvas>
+<svg id="lines" aria-hidden="true"></svg>
+<div class="scanlines" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+
+<header class="hud">
+  <a href="index.html">← index</a>
+  <span class="sep">/</span>
+  <h1 class="title">D · director globe</h1>
+  <span class="sep">/</span>
+  <span style="color: var(--label-dim)">new thread: destiny director · iter 3</span>
+</header>
+
+<aside class="meta" aria-hidden="true">
+  <div><b>SURFACE</b> fbm ice + ridged lineae · object-space noise</div>
+  <div><b>LIGHTS</b> 3 stars · wrap lambert + key spec</div>
+  <div><b>ROTATION</b> 4°/s drift + critically damped spring</div>
+</aside>
+
+<div class="hint" aria-hidden="true"><b>CLICK</b> re-orients · markers focus their site</div>
+
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// --- Palette (Europa surface inside Director chrome) ------------------------
+const ICE_DEEP   = new THREE.Color('#2a3d5c');
+const ICE_MID    = new THREE.Color('#8090a8');
+const ICE_BRIGHT = new THREE.Color('#e8eaf0');
+const HALO_IN    = new THREE.Color('#bcd2ff');
+
+// --- Renderer / scene / fixed camera (the PLANET rotates, never the camera) -
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight, false);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(
+  50, window.innerWidth / window.innerHeight, 0.1, 200
+);
+camera.position.set(0, 0.3, 5.2);
+camera.lookAt(0, 0, 0);
+camera.updateMatrixWorld();
+
+// --- Starfield: 600 points on a far shell, additive, slow drift -------------
+const STAR_COUNT = 600;
+const starPos = new Float32Array(STAR_COUNT * 3);
+for (let i = 0; i < STAR_COUNT; i++) {
+  // Uniform direction via normalized gaussian-ish triple
+  let x = Math.random() * 2 - 1, y = Math.random() * 2 - 1, z = Math.random() * 2 - 1;
+  const len = Math.sqrt(x * x + y * y + z * z) || 1;
+  starPos[i * 3]     = (x / len) * 40;
+  starPos[i * 3 + 1] = (y / len) * 40;
+  starPos[i * 3 + 2] = (z / len) * 40;
+}
+const starGeom = new THREE.BufferGeometry();
+starGeom.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+const starfield = new THREE.Points(starGeom, new THREE.PointsMaterial({
+  color: 0xdde6f5, size: 1.6, sizeAttenuation: false,
+  transparent: true, opacity: 0.35,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+}));
+scene.add(starfield);
+
+// --- Nearest stars: visible sprites that ARE the shader's light sources -----
+function makeGlowTexture(coreStop, tint) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const x = c.getContext('2d');
+  const g = x.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0, '#ffffff');
+  g.addColorStop(coreStop, tint);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 128, 128);
+  // 4-point diffraction cross
+  for (const horizontal of [true, false]) {
+    const lg = horizontal
+      ? x.createLinearGradient(0, 64, 128, 64)
+      : x.createLinearGradient(64, 0, 64, 128);
+    lg.addColorStop(0, 'rgba(255,255,255,0)');
+    lg.addColorStop(0.5, 'rgba(255,255,255,0.85)');
+    lg.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = lg;
+    if (horizontal) x.fillRect(0, 63, 128, 2); else x.fillRect(63, 0, 2, 128);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// key warm-gold / fill cool-blue / rim dim amber — intensity premultiplied into uLightCol
+// Key sits off-frame front-left (the sun outside the window); the two visible
+// stars are real shader lights too — blue fill kisses the left limb, amber
+// accent rims the right.
+const STARS = [
+  { pos: new THREE.Vector3( -7,  4,   8), color: '#fff3d6', intensity: 1.00, scale: 1.1 },
+  { pos: new THREE.Vector3( -6,  2.5, -2), color: '#9fc4ff', intensity: 0.50, scale: 0.85 },
+  { pos: new THREE.Vector3(  8,  4.5, -6), color: '#ff9a66', intensity: 0.35, scale: 0.55 },
+];
+const starGroup = new THREE.Group();
+for (const s of STARS) {
+  const mat = new THREE.SpriteMaterial({
+    map: makeGlowTexture(0.4, s.color), transparent: true,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const sprite = new THREE.Sprite(mat);
+  sprite.position.copy(s.pos);
+  sprite.scale.setScalar(s.scale);
+  starGroup.add(sprite);
+}
+// Wide soft bloom behind the visible amber star (cheap bloom, no postprocessing)
+{
+  const wide = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makeGlowTexture(0.18, STARS[2].color), transparent: true, opacity: 0.15,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  }));
+  wide.position.copy(STARS[2].pos);
+  wide.scale.setScalar(1.6);
+  starGroup.add(wide);
+}
+scene.add(starGroup);
+
+const lightDirs = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+const lightCols = STARS.map(s => new THREE.Color(s.color).multiplyScalar(s.intensity));
+
+// --- Planet: Europa-palette procedural ice in a custom shader ---------------
+// Uniforms: uLightDir[3] world-space unit vectors planet→star; uLightCol[3]
+// linear RGB premultiplied by intensity. Noise domain is OBJECT space so the
+// surface pattern is glued to the rotating mesh (and no UV pole pinch).
+const PLANET_R = 1.6;
+const planetMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uLightDir: { value: lightDirs },
+    uLightCol: { value: lightCols },
+    uDeep:     { value: ICE_DEEP },
+    uMid:      { value: ICE_MID },
+    uBright:   { value: ICE_BRIGHT },
+  },
+  vertexShader: /* glsl */ `
+    varying vec3 vObjPos;
+    varying vec3 vWorldNormal;
+    varying vec3 vWorldPos;
+    void main() {
+      vObjPos = position;
+      vWorldNormal = normalize(mat3(modelMatrix) * normal);  // uniform scale only
+      vec4 wp = modelMatrix * vec4(position, 1.0);
+      vWorldPos = wp.xyz;
+      gl_Position = projectionMatrix * viewMatrix * wp;
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    precision highp float;
+    uniform vec3 uLightDir[3];
+    uniform vec3 uLightCol[3];
+    uniform vec3 uDeep;
+    uniform vec3 uMid;
+    uniform vec3 uBright;
+    varying vec3 vObjPos;
+    varying vec3 vWorldNormal;
+    varying vec3 vWorldPos;
+
+    // fract-mul hash (no sin → no banding on mobile GPUs)
+    float hash(vec3 p) {
+      p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
+      p *= 17.0;
+      return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+    }
+    float vnoise(vec3 p) {
+      vec3 i = floor(p), f = fract(p);
+      vec3 u = f * f * (3.0 - 2.0 * f);
+      return mix(
+        mix(mix(hash(i),                  hash(i + vec3(1,0,0)), u.x),
+            mix(hash(i + vec3(0,1,0)),    hash(i + vec3(1,1,0)), u.x), u.y),
+        mix(mix(hash(i + vec3(0,0,1)),    hash(i + vec3(1,0,1)), u.x),
+            mix(hash(i + vec3(0,1,1)),    hash(i + vec3(1,1,1)), u.x), u.y),
+        u.z);
+    }
+    // 5 octaves: base freq 4 → top ~64 ≈ 3px features at this sphere size
+    float fbm(vec3 p) {
+      float v = 0.0, a = 0.5;
+      for (int i = 0; i < 5; i++) {
+        v += a * vnoise(p);
+        p *= 2.0; a *= 0.5;
+      }
+      return v;
+    }
+    // 2-octave ridged layer → Europa lineae crack lines
+    float ridged(vec3 p) {
+      float v = 0.0, a = 0.6;
+      for (int i = 0; i < 2; i++) {
+        v += a * (1.0 - abs(2.0 * vnoise(p) - 1.0));
+        p *= 2.1; a *= 0.5;
+      }
+      return v;
+    }
+
+    void main() {
+      vec3 N = normalize(vWorldNormal);
+      vec3 V = normalize(cameraPosition - vWorldPos);
+
+      float n = fbm(vObjPos * 2.5);
+      float crack = smoothstep(0.78, 0.86, ridged(vObjPos * 6.0));
+
+      // Albedo ramp: deep ocean blue → mid ice → bright ice, polar caps, cracks
+      vec3 albedo = mix(uDeep, uMid, smoothstep(0.30, 0.55, n));
+      albedo = mix(albedo, uBright, smoothstep(0.55, 0.78, n));
+      float pole = smoothstep(0.55, 0.80, abs(normalize(vObjPos).y));
+      albedo = mix(albedo, uBright, pole * 0.85);
+      albedo = mix(albedo, uDeep * 0.85, crack * 0.8);
+
+      // Night side reads as faint navy, never pure black
+      vec3 col = albedo * vec3(0.07, 0.10, 0.15);
+
+      // Wrap Lambert ×3 — the +0.12 wrap IS the soft icy terminator
+      float totalLambert = 0.0;
+      float keyNdl = 0.0;
+      for (int i = 0; i < 3; i++) {
+        float ndl = clamp((dot(N, uLightDir[i]) + 0.12) / 1.12, 0.0, 1.0);
+        if (i == 0) keyNdl = ndl;
+        col += albedo * uLightCol[i] * ndl;
+        totalLambert += ndl;
+      }
+
+      // Blinn-Phong spec, key light only, gloss-masked so only smooth ice glints
+      vec3 H = normalize(uLightDir[0] + V);
+      float gloss = smoothstep(0.5, 0.8, n) * (1.0 - crack);
+      col += uLightCol[0] * pow(max(dot(N, H), 0.0), 80.0) * 0.5 * gloss * keyNdl;
+
+      // Fresnel limb brightening, scaled by lit side (atmosphere is the halo pass)
+      float fres = pow(1.0 - max(dot(N, V), 0.0), 2.5);
+      col += fres * vec3(0.55, 0.70, 1.00) * min(totalLambert, 1.0) * 0.6;
+
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `,
+});
+const planet = new THREE.Mesh(new THREE.SphereGeometry(PLANET_R, 96, 64), planetMat);
+planet.rotation.order = 'YXZ';
+scene.add(planet);
+
+// --- Atmosphere: backface halo shell — glow extends BEYOND the limb ---------
+const halo = new THREE.Mesh(
+  new THREE.SphereGeometry(PLANET_R, 48, 32),
+  new THREE.ShaderMaterial({
+    uniforms: { uHaloIn: { value: HALO_IN }, uHaloOut: { value: ICE_BRIGHT } },
+    vertexShader: /* glsl */ `
+      varying float vRim;
+      void main() {
+        // View-space normal; on BackSide faces -dot(N, +Z) peaks at the planet
+        // limb and falls to 0 at the shell's outer silhouette.
+        vec3 nv = normalize(normalMatrix * normal);
+        vRim = clamp(-nv.z, 0.0, 1.0);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uHaloIn;
+      uniform vec3 uHaloOut;
+      varying float vRim;
+      void main() {
+        float tight = pow(vRim, 2.2);
+        float wide  = pow(vRim, 0.8) * 0.12;   // soft outer corona wash
+        float i = tight + wide;
+        gl_FragColor = vec4(mix(uHaloOut, uHaloIn, tight) * i, min(i * 0.9, 1.0));
+      }
+    `,
+    side: THREE.BackSide,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+);
+halo.scale.setScalar(1.30);
+scene.add(halo);
+
+// --- Destination anchors (lat/lon on the sphere) + DOM/SVG overlay ----------
+// Max lon gap 120° < the ~160° visibility window → ≥1 marker always faces camera
+const ANCHORS = [
+  { name: 'KELL BASIN',      type: 'landing zone', lat:  18, lon:  40 },
+  { name: 'LINEAE TERMINUS', type: 'survey site',  lat: -32, lon: 160 },
+  { name: 'AURORA STATION',  type: 'lost relay',   lat:  48, lon: 260 },
+  { name: 'MERIDIAN VAULT',  type: 'drowned vault', lat:  -8, lon: 330 },
+].map(a => {
+  const lat = a.lat * Math.PI / 180, lon = a.lon * Math.PI / 180;
+  return {
+    ...a,
+    local: new THREE.Vector3(
+      Math.cos(lat) * Math.sin(lon),
+      Math.sin(lat),
+      Math.cos(lat) * Math.cos(lon)
+    ),
+  };
+});
+
+const linesSvg = document.getElementById('lines');
+const SVG_NS = 'http://www.w3.org/2000/svg';
+for (const a of ANCHORS) {
+  a.line = document.createElementNS(SVG_NS, 'line');
+  a.line.setAttribute('stroke', 'rgba(229,232,238,0.55)');
+  a.line.setAttribute('stroke-width', '1');
+  a.line.setAttribute('stroke-dasharray', '3 3');
+  linesSvg.appendChild(a.line);
+
+  a.markerEl = document.createElement('div');
+  a.markerEl.className = 'marker';
+  document.body.appendChild(a.markerEl);
+
+  a.labelEl = document.createElement('div');
+  a.labelEl.className = 'label';
+  a.labelEl.innerHTML = `<div class="lname">${a.name}</div><div class="ltype">${a.type}</div>`;
+  document.body.appendChild(a.labelEl);
+}
+
+// --- Rotation state: drift channel + critically damped spring channel -------
+// Drift never stops; spring snaps toward click targets and retargets smoothly
+// mid-flight (continuous velocity — the reason it's a spring, not an ease).
+const DRIFT = 0.07;          // rad/s ≈ 4°/s idle creep
+const OMEGA = 4.5;           // spring stiffness → ~1.2s settle
+const LAT_MAX = 55 * Math.PI / 180;
+const LON_PER_CLICK = -2.094;  // -120° across full width — tune as a pair with LAT_MAX
+let baseLon = 0;
+const snapLon = { x: 0, v: 0, target: 0 };
+const snapLat = { x: 0, v: 0, target: 0 };
+
+function springStep(s, dt) {
+  s.v += (-2.0 * OMEGA * s.v - OMEGA * OMEGA * (s.x - s.target)) * dt;
+  s.x += s.v * dt;
+}
+const wrapPI = a => ((a + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+
+// Click anywhere → re-orient with perceived causality (verified sign in-browser)
+const down = { x: 0, y: 0 };
+// (registered below only when motion is enabled — reduced-motion attaches no interaction)
+function onSceneClick(e) {
+  if (e.target.closest('.marker, .label, .hud, a')) return;
+  if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6) return;  // drag guard
+  const ndcX = (e.clientX / window.innerWidth) * 2 - 1;
+  const ndcY = -((e.clientY / window.innerHeight) * 2 - 1);
+  snapLon.target += ndcX * LON_PER_CLICK;
+  snapLat.target = THREE.MathUtils.clamp(ndcY * 0.61, -LAT_MAX, LAT_MAX);
+}
+
+// Marker click → solve YXZ yaw/pitch that brings the anchor face-on (Director
+// "select destination"). Pitch first (rotation order YXZ applies X before Y):
+//   pitch = atan2(y, z); yaw = atan2(-x, sqrt(y²+z²)) for the anchor's local v.
+function focusAnchor(a) {
+  const v = a.local;
+  const pitch = Math.atan2(v.y, v.z);
+  const yaw = Math.atan2(-v.x, Math.sqrt(v.y * v.y + v.z * v.z));
+  let want = yaw - baseLon;
+  want = snapLon.x + wrapPI(want - snapLon.x);  // shortest way from current
+  snapLon.target = want;
+  snapLat.target = THREE.MathUtils.clamp(pitch, -LAT_MAX, LAT_MAX);
+  for (const o of ANCHORS) {
+    o.markerEl.classList.toggle('active', o === a);
+    o.labelEl.classList.toggle('active', o === a);
+  }
+}
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+if (!reducedMotion) for (const a of ANCHORS) {
+  for (const el of [a.markerEl, a.labelEl]) {
+    el.addEventListener('click', () => focusAnchor(a));
+    el.addEventListener('pointerenter', () => {
+      a.markerEl.classList.add('hot'); a.labelEl.classList.add('hot');
+    });
+    el.addEventListener('pointerleave', () => {
+      a.markerEl.classList.remove('hot'); a.labelEl.classList.remove('hot');
+    });
+  }
+}
+
+// --- Per-frame label projection with limb fade band --------------------------
+const _world = new THREE.Vector3();
+const _toCam = new THREE.Vector3();
+const _proj = new THREE.Vector3();
+const _wn = new THREE.Vector3();
+function updateOverlay() {
+  const W = window.innerWidth, H = window.innerHeight;
+  const cx = W / 2, cy = H / 2;
+  for (const a of ANCHORS) {
+    _world.copy(a.local).applyQuaternion(planet.quaternion).multiplyScalar(PLANET_R);
+    _toCam.copy(camera.position).sub(_world).normalize();
+    const facing = _wn.copy(_world).normalize().dot(_toCam);
+    // smoothstep fade band — labels dissolve at the limb instead of popping
+    const t = THREE.MathUtils.clamp((facing - 0.02) / 0.16, 0, 1);
+    const op = t * t * (3 - 2 * t);
+
+    _proj.copy(_world).project(camera);
+    const sx = (_proj.x * 0.5 + 0.5) * W;
+    const sy = (-_proj.y * 0.5 + 0.5) * H;
+    let dx = sx - cx, dy = sy - cy;
+    const dl = Math.hypot(dx, dy) || 1;
+    dx /= dl; dy /= dl;
+    const lx = sx + dx * 70, ly = sy + dy * 70;
+
+    a.markerEl.style.transform = `translate(${sx - 4.5}px, ${sy - 4.5}px) rotate(45deg)`;
+    a.labelEl.style.transform = `translate(${lx}px, ${ly}px) translate(-50%, -100%)`;
+    a.line.setAttribute('x1', sx); a.line.setAttribute('y1', sy);
+    a.line.setAttribute('x2', lx); a.line.setAttribute('y2', ly);
+    a.line.setAttribute('stroke-opacity', op * 0.75);
+    a.markerEl.style.opacity = op;
+    a.labelEl.style.opacity = op;
+    const interactive = op > 0.4;   // midpoint of the fade band — keep in sync with 0.02/0.18 above
+    if (a.wasInteractive !== interactive) {
+      a.wasInteractive = interactive;
+      const pe = interactive ? 'auto' : 'none';
+      a.markerEl.style.pointerEvents = pe;
+      a.labelEl.style.pointerEvents = pe;
+    }
+  }
+}
+
+// --- Resize ------------------------------------------------------------------
+function onResize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(w, h, false);
+}
+window.addEventListener('resize', onResize);
+
+// --- Main loop ----------------------------------------------------------------
+if (!reducedMotion) {
+  window.addEventListener('pointerdown', e => { down.x = e.clientX; down.y = e.clientY; });
+  window.addEventListener('click', onSceneClick);
+} else {
+  document.querySelector('.hint').innerHTML = '<b>STATIC</b> reduced motion · single frame';
+}
+
+let last = performance.now() / 1000;
+function tick() {
+  if (!reducedMotion) requestAnimationFrame(tick);
+  const now = performance.now() / 1000;
+  const dt = Math.min(now - last, 0.05);
+  last = now;
+
+  baseLon += DRIFT * dt;
+  springStep(snapLon, dt);
+  springStep(snapLat, dt);
+  planet.rotation.set(snapLat.x, baseLon + snapLon.x, 0);
+
+  // Stars creep so the terminator migrates even without clicks
+  starGroup.rotation.y += 0.01 * dt;
+  for (let i = 0; i < 3; i++) {
+    lightDirs[i].copy(STARS[i].pos).applyQuaternion(starGroup.quaternion).normalize();
+  }
+
+  updateOverlay();
+  renderer.render(scene, camera);
+}
+
+if (document.fonts?.ready) {
+  document.fonts.ready.then(() => requestAnimationFrame(tick));
+} else {
+  requestAnimationFrame(tick);
+}
+</script>
+
+</body>
+</html>

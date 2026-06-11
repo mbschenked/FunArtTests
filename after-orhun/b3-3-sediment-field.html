@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>B3-3 · Sediment Field</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --label:     rgba(245, 224, 160, 0.92);
+    --label-dim: rgba(245, 224, 160, 0.72);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: #0a1518; color: white;
+    font-family: 'Fira Code', 'JetBrains Mono', monospace;
+    overflow: hidden; height: 100vh;
+  }
+
+  #c2d {
+    position: fixed; inset: 0;
+    display: block;
+    background:
+      radial-gradient(ellipse at 50% 35%,
+        #112226 0%,
+        #0a1518 60%,
+        #04090b 100%);
+  }
+
+  .scanlines {
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0,0,0,0.18) 0 1px,
+      transparent 1px 3px
+    );
+    pointer-events: none;
+    z-index: 10;
+    mix-blend-mode: multiply;
+  }
+  .vignette {
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at center,
+      transparent 30%,
+      rgba(0,0,0,0.45) 75%,
+      rgba(0,0,0,0.9) 100%);
+    pointer-events: none;
+    z-index: 11;
+  }
+
+  .hud {
+    position: fixed;
+    top: 18px; left: 22px;
+    z-index: 20;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--label);
+  }
+  .hud a {
+    color: var(--label-dim);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--label-dim);
+  }
+  .hud a:hover { color: var(--label); border-color: var(--label); }
+  .hud a:focus-visible {
+    color: var(--label);
+    border-color: var(--label);
+    outline: 2px solid var(--label);
+    outline-offset: 2px;
+  }
+  .hud .title {
+    color: white; font-weight: 500;
+    font-size: inherit; line-height: inherit; letter-spacing: inherit;
+    text-transform: inherit; margin: 0; display: inline;
+  }
+  .hud .sep { color: var(--label-dim); margin: 0 0.6em; }
+
+  .meta {
+    position: fixed;
+    bottom: 18px; right: 22px;
+    z-index: 20;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--label-dim);
+    text-align: right;
+    line-height: 1.6;
+  }
+  .meta b { color: var(--label); font-weight: 400; }
+
+  .hint {
+    position: fixed;
+    bottom: 18px; left: 22px;
+    z-index: 20;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--label-dim);
+  }
+  .hint b { color: var(--label); font-weight: 400; }
+</style>
+</head>
+<body>
+
+<canvas id="c2d" aria-hidden="true"></canvas>
+<div class="scanlines" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+
+<header class="hud">
+  <a href="index.html">← index</a>
+  <span class="sep">/</span>
+  <h1 class="title">B3-3 · sediment field</h1>
+  <span class="sep">/</span>
+  <span style="color: var(--label-dim)">variant: wildly different · iter 2</span>
+</header>
+
+<aside class="meta" aria-hidden="true">
+  <div><b>PARTICLES</b> 1200 · canvas 2D</div>
+  <div><b>STATES</b> float · stagger · falling · settled</div>
+  <div><b>REPULSION</b> falls to bottom · inverted</div>
+</aside>
+
+<div class="hint" aria-hidden="true"><b>HINT</b> brush the glyphs · they fall</div>
+
+<script>
+'use strict';
+
+// --- Canvas / hidpi --------------------------------------------------------
+const canvas = document.getElementById('c2d');
+const ctx = canvas.getContext('2d');
+let DPR = Math.min(window.devicePixelRatio || 1, 2);
+let W = 0, H = 0;
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width  = Math.floor(W * DPR);
+  canvas.height = Math.floor(H * DPR);
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);  // draw in CSS px
+  rebuildBuckets();
+  remapSettledToNewBuckets();
+}
+
+// On resize, the bucket-column mapping changes. Remap every settled particle
+// to its new column and rebuild the per-column counts from scratch so that
+// pileCol stays consistent with bucketHeights.
+function remapSettledToNewBuckets() {
+  if (!particles.length) return;
+  bucketHeights.fill(0);
+  for (let i = 0; i < particles.length; i++) {
+    const p = particles[i];
+    if (p.state !== 'settled') continue;
+    const col = Math.max(0, Math.min(BUCKET_COUNT - 1, Math.floor(p.x / bucketWidth)));
+    p.pileCol = col;
+    bucketHeights[col]++;
+  }
+}
+window.addEventListener('resize', resize);
+
+// --- Palette ---------------------------------------------------------------
+const PALETTE = ['#f5e0a0', '#d97557', '#6b3a52'];  // gold, terracotta, mauve
+
+// --- Glyphs ----------------------------------------------------------------
+const GLYPHS = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメ';
+
+// --- Bucket pile (64 columns) ----------------------------------------------
+const BUCKET_COUNT = 64;
+let bucketWidth = 0;
+const bucketHeights = new Int16Array(BUCKET_COUNT);  // particle count per column
+function rebuildBuckets() {
+  bucketWidth = W / BUCKET_COUNT;
+  // Don't reset bucketHeights on resize — keeping pile preserves visual continuity.
+}
+
+// --- Particles -------------------------------------------------------------
+const COUNT = 1200;
+const SIZE_TIERS = [12, 16, 20, 24];  // px font sizes for depth illusion
+const particles = [];
+
+function spawnAtTop(p, t) {
+  p.x       = Math.random() * W;
+  p.baseX   = p.x;
+  p.baseY   = 40 + Math.random() * (H * 0.55);   // float in upper 55% of screen
+  p.y       = p.baseY;
+  p.glyph   = GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
+  p.tier    = Math.floor(Math.random() * SIZE_TIERS.length);
+  p.size    = SIZE_TIERS[p.tier];
+  p.color   = PALETTE[Math.min(p.tier, PALETTE.length - 1)];
+  p.seed    = Math.random();
+  p.state   = 'float';
+  p.stateT  = t;
+  p.vy      = 0;
+  p.opacity = 0;        // fade-in over ~0.5s
+  p.pileCol = -1;
+}
+
+function initParticles() {
+  for (let i = 0; i < COUNT; i++) {
+    const p = {};
+    spawnAtTop(p, 0);
+    // Stagger initial baseY so the field starts visible across full vertical range
+    p.baseY  = 40 + Math.random() * (H * 0.55);
+    p.y      = p.baseY;
+    p.opacity = 1;
+    particles.push(p);
+  }
+}
+
+// --- Mouse tracking --------------------------------------------------------
+const mouse = { x: -9999, y: -9999, active: false, prevX: -9999, prevY: -9999 };
+window.addEventListener('pointermove', (e) => {
+  mouse.prevX = mouse.x;
+  mouse.prevY = mouse.y;
+  mouse.x = e.clientX;
+  mouse.y = e.clientY;
+  mouse.active = true;
+});
+window.addEventListener('pointerleave', () => { mouse.active = false; });
+window.addEventListener('blur',         () => { mouse.active = false; });
+
+const TOUCH_RADIUS = 28;   // px from mouse to consider "touched"
+const TOUCH_R2 = TOUCH_RADIUS * TOUCH_RADIUS;
+
+// --- Settings --------------------------------------------------------------
+const STAGGER_MS    = 200;    // duration of stagger phase
+const SETTLED_FADE  = 4000;   // ms before settled particle starts fading
+const SETTLED_FADE_DUR = 1500;
+const GRAVITY       = 0.35;
+const AIR_RES       = 0.995;
+const PILE_BOTTOM_OFFSET = 18;
+const PILE_GRAIN    = 2.0;    // px per pile-rank — subtle bump so pile reads as accumulating mass, not a thin line
+
+// --- Main loop -------------------------------------------------------------
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+let lastT = null;
+
+function frame(now) {
+  if (!reducedMotion) requestAnimationFrame(frame);
+  // First frame: dt = 1 (one tick at 60fps) so a deferred boot doesn't cause a gravity jolt.
+  const dt = lastT == null ? 1.0 : Math.min((now - lastT) / 16.667, 2.0);
+  lastT = now;
+  const t = now;
+
+  // Trail effect: paint translucent background instead of clearing
+  ctx.fillStyle = 'rgba(10, 21, 24, 0.32)';
+  ctx.fillRect(0, 0, W, H);
+
+  for (let i = 0; i < particles.length; i++) {
+    const p = particles[i];
+
+    // Fade-in for freshly respawned particles
+    if (p.opacity < 1) p.opacity = Math.min(1, p.opacity + 0.05 * dt);
+
+    // --- State updates ---
+    if (p.state === 'float') {
+      // Gentle vertical sine wobble
+      p.y = p.baseY + Math.sin(t * 0.0006 + p.seed * 6) * 8;
+      p.x = p.baseX;
+
+      // Mouse proximity test (only if mouse is active & not in reduced motion)
+      if (!reducedMotion && mouse.active) {
+        const dx = p.x - mouse.x;
+        const dy = p.y - mouse.y;
+        if (dx * dx + dy * dy < TOUCH_R2) {
+          p.state = 'stagger';
+          p.stateT = t;
+        }
+      }
+    }
+    else if (p.state === 'stagger') {
+      // Shudder in place; dim slightly
+      const elapsed = t - p.stateT;
+      const shudder = Math.sin(t * 0.04) * 1.5;
+      p.y = p.baseY + Math.sin(t * 0.0006 + p.seed * 6) * 8 + shudder;
+      p.x = p.baseX + Math.cos(t * 0.045) * 1.2;
+
+      if (elapsed >= STAGGER_MS) {
+        p.state = 'falling';
+        p.stateT = t;
+        p.vy = 0.8;  // small initial push so the drop reads as decisive
+      }
+    }
+    else if (p.state === 'falling') {
+      p.vy = (p.vy + GRAVITY * dt) * AIR_RES;
+      p.y += p.vy * dt;
+
+      // Find landing target: floor based on current column bucket.
+      // Cap the rank used for floorY so a runaway pile in one column can't push
+      // the floor off-screen and cause instant-settle-then-stuck particles.
+      const col = Math.max(0, Math.min(BUCKET_COUNT - 1, Math.floor(p.x / bucketWidth)));
+      const pileRank = bucketHeights[col];
+      const PILE_MAX_RANK = Math.max(0, (H - PILE_BOTTOM_OFFSET - 40) / PILE_GRAIN);
+      const cappedRank = Math.min(pileRank, PILE_MAX_RANK);
+      const floorY = H - PILE_BOTTOM_OFFSET - cappedRank * PILE_GRAIN;
+      if (p.y >= floorY) {
+        p.y = floorY;
+        p.vy = 0;
+        p.state = 'settled';
+        p.stateT = t;
+        p.pileCol = col;
+        bucketHeights[col] = pileRank + 1;
+      }
+    }
+    else if (p.state === 'settled') {
+      const elapsed = t - p.stateT;
+      if (elapsed > SETTLED_FADE) {
+        const fadeT = elapsed - SETTLED_FADE;
+        p.opacity = Math.max(0, 1 - fadeT / SETTLED_FADE_DUR);
+        if (p.opacity <= 0) {
+          // Decrement bucket and respawn at top
+          if (p.pileCol >= 0 && bucketHeights[p.pileCol] > 0) {
+            bucketHeights[p.pileCol]--;
+          }
+          spawnAtTop(p, t);
+        }
+      }
+    }
+
+    // --- Render ---
+    const alpha = p.opacity * (p.state === 'stagger' ? 0.7 : 1.0);
+    if (alpha <= 0.01) continue;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.font = `500 ${p.size}px "Fira Code", monospace`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.fillText(p.glyph, p.x | 0, p.y | 0);
+  }
+
+  ctx.globalAlpha = 1;
+}
+
+// --- Boot ------------------------------------------------------------------
+resize();
+initParticles();
+
+if (document.fonts && document.fonts.ready) {
+  document.fonts.ready.then(() => requestAnimationFrame(frame));
+} else {
+  requestAnimationFrame(frame);
+}
+</script>
+
+</body>
+</html>
