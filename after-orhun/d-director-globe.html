@@ -160,6 +160,12 @@
     color: var(--label-dim);
   }
   .hint b { color: var(--gold); font-weight: 400; }
+
+  /* narrow viewports: hint (327px) + meta (395px) + margins collide below 790px
+     (measured) — drop the decorative spec block, keep the interaction hint */
+  @media (max-width: 800px) {
+    .meta { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -480,10 +486,20 @@ for (const a of ANCHORS) {
 // --- Rotation state: drift channel + critically damped spring channel -------
 // Drift never stops; spring snaps toward click targets and retargets smoothly
 // mid-flight (continuous velocity — the reason it's a spring, not an ease).
-const DRIFT = 0.07;          // rad/s ≈ 4°/s idle creep
+// ?preflight freezes all autonomous motion (drift + star creep) and exposes a
+// window.__globe handle — module scope otherwise hides state from CDP click tests.
+const QP = new URLSearchParams(location.search);
+const PREFLIGHT = QP.has('preflight');
+const DRIFT = PREFLIGHT ? 0 : 0.07;        // rad/s ≈ 4°/s idle creep
+const STAR_CREEP = PREFLIGHT ? 0 : 0.01;   // rad/s terminator migration — frozen with DRIFT
 const OMEGA = 4.5;           // spring stiffness → ~1.2s settle
 const LAT_MAX = 55 * Math.PI / 180;
-const LON_PER_CLICK = -2.094;  // -120° across full width — tune as a pair with LAT_MAX
+const lonQP = PREFLIGHT ? parseFloat(QP.get('lon')) : NaN;  // NaN unless ?preflight&lon=<float>
+const LON_PER_CLICK = Number.isFinite(lonQP)
+  ? lonQP
+  : -2.6;  // -149° across full width — a feature at ~40° lands centered (measured
+           // 2026-06-11 via CDP click tests at 2:1; -2.094 undershot 24%, -π overshot 24%).
+           // NDC-based, so degrees-per-globe-width varies with window aspect.
 let baseLon = 0;
 const snapLon = { x: 0, v: 0, target: 0 };
 const snapLat = { x: 0, v: 0, target: 0 };
@@ -594,6 +610,11 @@ if (!reducedMotion) {
   document.querySelector('.hint').innerHTML = '<b>STATIC</b> reduced motion · single frame';
 }
 
+if (PREFLIGHT) window.__globe = {
+  snapLon, snapLat, planet, camera, LON_PER_CLICK, LAT_MAX,
+  get baseLon() { return baseLon; },
+};
+
 let last = performance.now() / 1000;
 function tick() {
   if (!reducedMotion) requestAnimationFrame(tick);
@@ -607,7 +628,7 @@ function tick() {
   planet.rotation.set(snapLat.x, baseLon + snapLon.x, 0);
 
   // Stars creep so the terminator migrates even without clicks
-  starGroup.rotation.y += 0.01 * dt;
+  starGroup.rotation.y += STAR_CREEP * dt;
   for (let i = 0; i < 3; i++) {
     lightDirs[i].copy(STARS[i].pos).applyQuaternion(starGroup.quaternion).normalize();
   }
