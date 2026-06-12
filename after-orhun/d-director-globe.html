@@ -59,6 +59,10 @@
     pointer-events: none;
     z-index: 14;
   }
+  /* hover scale must live INSIDE the transform chain: the standalone `scale`
+     property composes outside `transform` and would multiply the inline pixel
+     translate (diamond flies ~0.3× its screen distance). Registered so it eases. */
+  @property --marker-scale { syntax: '<number>'; inherits: false; initial-value: 1; }
   .marker {
     position: fixed; top: 0; left: 0;
     width: 9px; height: 9px;
@@ -69,12 +73,12 @@
     opacity: 0;                       /* no boot flash at (0,0) before the first projected frame */
     cursor: pointer;
     z-index: 16;
-    transition: border-color 120ms ease, background 120ms ease, scale 120ms ease;
+    transition: border-color 120ms ease, background 120ms ease, --marker-scale 120ms ease;
   }
   .marker.hot, .marker.active {
     border-color: var(--gold);
     background: rgba(253, 205, 71, 0.22);
-    scale: 1.3;
+    --marker-scale: 1.3;
   }
   .label {
     position: fixed; top: 0; left: 0;
@@ -575,7 +579,7 @@ function updateOverlay() {
     dx /= dl; dy /= dl;
     const lx = sx + dx * 70, ly = sy + dy * 70;
 
-    a.markerEl.style.transform = `translate(${sx - 4.5}px, ${sy - 4.5}px) rotate(45deg)`;
+    a.markerEl.style.transform = `translate(${sx}px, ${sy}px) translate(-50%, -50%) rotate(45deg) scale(var(--marker-scale, 1))`;
     a.labelEl.style.transform = `translate(${lx}px, ${ly}px) translate(-50%, -100%)`;
     a.line.setAttribute('x1', sx); a.line.setAttribute('y1', sy);
     a.line.setAttribute('x2', lx); a.line.setAttribute('y2', ly);
