@@ -12,6 +12,14 @@ Three browser-renderable adaptations of [orhun](https://github.com/orhun)'s term
 - **Warped Console** — matrix-rain texture on a vertex-shader-deformed 3D plane (`ratty`)
 - **Boot Scatter** — Canvas 2D scatter-point progressive reveal across rotating sources (`ratatui-splash-screen`)
 
+### [`threads-of-god-2d/`](threads-of-god-2d/) &nbsp; · &nbsp; [▶ live](https://mbschenked.github.io/FunArtTests/threads-of-god-2d/)
+
+A playable Sekiro-style boss duel — **Micheal vs Arelius** — porting the combat grammar of my UE5 project [ThreadsOfGod](https://github.com/mbschenked/ThreadsOfGod) to vanilla Canvas:
+
+- **Posture combat** — poise fills to break, deflect / counter / finisher, paired clash reactions, 0.1s hitstop
+- **Two-phase boss AI** — weighted attacks with pity counters, escalating deflects vs spam, giant-sword throw → teleport mixup
+- **Zero assets** — procedural vector swordsmen, keyframed FK poses, WebAudio oscillator SFX
+
 ## Conventions
 
 - Each study lives in its own folder, self-contained, no shared dependencies.
