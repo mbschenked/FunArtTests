@@ -59,27 +59,41 @@
     pointer-events: none;
     z-index: 14;
   }
-  /* hover scale must live INSIDE the transform chain: the standalone `scale`
-     property composes outside `transform` and would multiply the inline pixel
-     translate (diamond flies ~0.3× its screen distance). Registered so it eases. */
+  /* Marker = stationary wrapper (hover target, line anchor) + ::before visual.
+     The hover rise/scale live INSIDE the ::before transform chain: standalone
+     scale/translate properties compose outside `transform` and would multiply
+     the inline pixel positioning (diamond flies ~0.3× its screen distance).
+     On hover the visual rises along the leader line (--rx/--ry, set per frame)
+     while the wrapper stays put — so the hover state can't self-cancel. */
   @property --marker-scale { syntax: '<number>'; inherits: false; initial-value: 1; }
+  @property --marker-rise { syntax: '<length>'; inherits: false; initial-value: 0px; }
   .marker {
     position: fixed; top: 0; left: 0;
     width: 9px; height: 9px;
-    border: 1px solid var(--label);
-    background: rgba(10, 14, 26, 0.45);
-    box-shadow: 0 0 5px rgba(5, 7, 15, 0.95);
-    transform: translate(-50%, -50%) rotate(45deg);
+    transform: translate(-50%, -50%);
     opacity: 0;                       /* no boot flash at (0,0) before the first projected frame */
     cursor: pointer;
     z-index: 16;
-    transition: border-color 120ms ease, background 120ms ease, --marker-scale 120ms ease;
   }
-  .marker.hot, .marker.active {
+  .marker::before {
+    content: '';
+    position: absolute; inset: 0;
+    border: 1px solid var(--label);
+    background: rgba(10, 14, 26, 0.45);
+    box-shadow: 0 0 5px rgba(5, 7, 15, 0.95);
+    transform: translate(calc(var(--marker-rise) * var(--rx, 0)),
+                         calc(var(--marker-rise) * var(--ry, 0)))
+               rotate(45deg) scale(var(--marker-scale));
+    transition: border-color 120ms ease, background 120ms ease,
+                --marker-scale 120ms ease,
+                --marker-rise 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .marker.hot::before, .marker.active::before {
     border-color: var(--gold);
     background: rgba(253, 205, 71, 0.22);
     --marker-scale: 1.3;
   }
+  .marker.hot::before { --marker-rise: 26px; }  /* glide up the leader line toward the label */
   .label {
     position: fixed; top: 0; left: 0;
     opacity: 0;
@@ -579,7 +593,9 @@ function updateOverlay() {
     dx /= dl; dy /= dl;
     const lx = sx + dx * 70, ly = sy + dy * 70;
 
-    a.markerEl.style.transform = `translate(${sx}px, ${sy}px) translate(-50%, -50%) rotate(45deg) scale(var(--marker-scale, 1))`;
+    a.markerEl.style.transform = `translate(${sx}px, ${sy}px) translate(-50%, -50%)`;
+    a.markerEl.style.setProperty('--rx', dx.toFixed(3));   // leader-line direction for the hover rise
+    a.markerEl.style.setProperty('--ry', dy.toFixed(3));
     a.labelEl.style.transform = `translate(${lx}px, ${ly}px) translate(-50%, -100%)`;
     a.line.setAttribute('x1', sx); a.line.setAttribute('y1', sy);
     a.line.setAttribute('x2', lx); a.line.setAttribute('y2', ly);
