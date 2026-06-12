@@ -59,23 +59,41 @@
     pointer-events: none;
     z-index: 14;
   }
+  /* Marker = stationary wrapper (hover target, line anchor) + ::before visual.
+     The hover rise/scale live INSIDE the ::before transform chain: standalone
+     scale/translate properties compose outside `transform` and would multiply
+     the inline pixel positioning (diamond flies ~0.3× its screen distance).
+     On hover the visual rises along the leader line (--rx/--ry, set per frame)
+     while the wrapper stays put — so the hover state can't self-cancel. */
+  @property --marker-scale { syntax: '<number>'; inherits: false; initial-value: 1; }
+  @property --marker-rise { syntax: '<length>'; inherits: false; initial-value: 0px; }
   .marker {
     position: fixed; top: 0; left: 0;
     width: 9px; height: 9px;
-    border: 1px solid var(--label);
-    background: rgba(10, 14, 26, 0.45);
-    box-shadow: 0 0 5px rgba(5, 7, 15, 0.95);
-    transform: translate(-50%, -50%) rotate(45deg);
+    transform: translate(-50%, -50%);
     opacity: 0;                       /* no boot flash at (0,0) before the first projected frame */
     cursor: pointer;
     z-index: 16;
-    transition: border-color 120ms ease, background 120ms ease, scale 120ms ease;
   }
-  .marker.hot, .marker.active {
+  .marker::before {
+    content: '';
+    position: absolute; inset: 0;
+    border: 1px solid var(--label);
+    background: rgba(10, 14, 26, 0.45);
+    box-shadow: 0 0 5px rgba(5, 7, 15, 0.95);
+    transform: translate(calc(var(--marker-rise) * var(--rx, 0)),
+                         calc(var(--marker-rise) * var(--ry, 0)))
+               rotate(45deg) scale(var(--marker-scale));
+    transition: border-color 120ms ease, background 120ms ease,
+                --marker-scale 120ms ease,
+                --marker-rise 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .marker.hot::before, .marker.active::before {
     border-color: var(--gold);
     background: rgba(253, 205, 71, 0.22);
-    scale: 1.3;
+    --marker-scale: 1.3;
   }
+  .marker.hot::before { --marker-rise: 26px; }  /* glide up the leader line toward the label */
   .label {
     position: fixed; top: 0; left: 0;
     opacity: 0;
@@ -160,6 +178,12 @@
     color: var(--label-dim);
   }
   .hint b { color: var(--gold); font-weight: 400; }
+
+  /* narrow viewports: hint (327px) + meta (395px) + margins collide below 790px
+     (measured) — drop the decorative spec block, keep the interaction hint */
+  @media (max-width: 800px) {
+    .meta { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -480,10 +504,20 @@ for (const a of ANCHORS) {
 // --- Rotation state: drift channel + critically damped spring channel -------
 // Drift never stops; spring snaps toward click targets and retargets smoothly
 // mid-flight (continuous velocity — the reason it's a spring, not an ease).
-const DRIFT = 0.07;          // rad/s ≈ 4°/s idle creep
+// ?preflight freezes all autonomous motion (drift + star creep) and exposes a
+// window.__globe handle — module scope otherwise hides state from CDP click tests.
+const QP = new URLSearchParams(location.search);
+const PREFLIGHT = QP.has('preflight');
+const DRIFT = PREFLIGHT ? 0 : 0.07;        // rad/s ≈ 4°/s idle creep
+const STAR_CREEP = PREFLIGHT ? 0 : 0.01;   // rad/s terminator migration — frozen with DRIFT
 const OMEGA = 4.5;           // spring stiffness → ~1.2s settle
 const LAT_MAX = 55 * Math.PI / 180;
-const LON_PER_CLICK = -2.094;  // -120° across full width — tune as a pair with LAT_MAX
+const lonQP = PREFLIGHT ? parseFloat(QP.get('lon')) : NaN;  // NaN unless ?preflight&lon=<float>
+const LON_PER_CLICK = Number.isFinite(lonQP)
+  ? lonQP
+  : -2.6;  // -149° across full width — a feature at ~40° lands centered (measured
+           // 2026-06-11 via CDP click tests at 2:1; -2.094 undershot 24%, -π overshot 24%).
+           // NDC-based, so degrees-per-globe-width varies with window aspect.
 let baseLon = 0;
 const snapLon = { x: 0, v: 0, target: 0 };
 const snapLat = { x: 0, v: 0, target: 0 };
@@ -559,7 +593,9 @@ function updateOverlay() {
     dx /= dl; dy /= dl;
     const lx = sx + dx * 70, ly = sy + dy * 70;
 
-    a.markerEl.style.transform = `translate(${sx - 4.5}px, ${sy - 4.5}px) rotate(45deg)`;
+    a.markerEl.style.transform = `translate(${sx}px, ${sy}px) translate(-50%, -50%)`;
+    a.markerEl.style.setProperty('--rx', dx.toFixed(3));   // leader-line direction for the hover rise
+    a.markerEl.style.setProperty('--ry', dy.toFixed(3));
     a.labelEl.style.transform = `translate(${lx}px, ${ly}px) translate(-50%, -100%)`;
     a.line.setAttribute('x1', sx); a.line.setAttribute('y1', sy);
     a.line.setAttribute('x2', lx); a.line.setAttribute('y2', ly);
@@ -594,6 +630,11 @@ if (!reducedMotion) {
   document.querySelector('.hint').innerHTML = '<b>STATIC</b> reduced motion · single frame';
 }
 
+if (PREFLIGHT) window.__globe = {
+  snapLon, snapLat, planet, camera, LON_PER_CLICK, LAT_MAX,
+  get baseLon() { return baseLon; },
+};
+
 let last = performance.now() / 1000;
 function tick() {
   if (!reducedMotion) requestAnimationFrame(tick);
@@ -607,7 +648,7 @@ function tick() {
   planet.rotation.set(snapLat.x, baseLon + snapLon.x, 0);
 
   // Stars creep so the terminator migrates even without clicks
-  starGroup.rotation.y += 0.01 * dt;
+  starGroup.rotation.y += STAR_CREEP * dt;
   for (let i = 0; i < 3; i++) {
     lightDirs[i].copy(STARS[i].pos).applyQuaternion(starGroup.quaternion).normalize();
   }
