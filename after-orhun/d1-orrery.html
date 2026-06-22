@@ -209,8 +209,8 @@
 </header>
 
 <aside class="meta" aria-hidden="true">
-  <div><b>WORLDS</b> 7 · ice · ember · gas · fossil · pitch · oof · chimera</div>
-  <div><b>SURFACE</b> uType-branch shader · oof crust · porsche rain</div>
+  <div><b>WORLDS</b> 8 · ice · ember · gas · fossil · pitch · oof · chimera · parlour</div>
+  <div><b>SURFACE</b> uType-branch shader · oof crust · skating furniture</div>
   <div><b>MOTION</b> orbit + self-spin · damped camera-focus spring</div>
 </aside>
 
@@ -221,7 +221,7 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 
 // --- Surface-type enum — matches the uType branch index in the fragment shader
 // (OOF is a special textured world, not a uType branch — see makeOofMat)
-const SURF = { ICE: 0, LAVA: 1, GAS: 2, FOSSIL: 3, SOCCER: 4, OOF: 5, CHIMERA: 6 };
+const SURF = { ICE: 0, LAVA: 1, GAS: 2, FOSSIL: 3, SOCCER: 4, OOF: 5, CHIMERA: 6, FURNITURE: 7 };
 
 // --- Central star: emissive sphere + sprite glow + THE key light for every world
 const STAR = {
@@ -241,6 +241,7 @@ const PLANETS = [
   { name: 'PELE XI',   type: 'pitch world', surf: SURF.SOCCER, deep:'#0d0d10', mid:'#9aa0a8', bright:'#f4f4f0', r:0.50, orbit:9.3, speed:0.024, incl: 0.08, phase:1.2, spin:0.40 },
   { name: 'OOF PRIME', type: 'respawn world', surf: SURF.OOF,  deep:'#1b1030', mid:'#7a4fd0', bright:'#ffd23f', r:0.58, orbit:11.0, speed:0.020, incl: 0.04, phase:3.0, spin:0.25 },
   { name: 'KHIMAIRA',  type: 'collision remnant', surf: SURF.CHIMERA, deep:'#0d0b1a', mid:'#7c6f9a', bright:'#f0e6ff', r:0.80, orbit:12.9, speed:0.017, incl:-0.06, phase:0.2, spin:0.30 },
+  { name: 'OTTOMAN',   type: 'skating parlour', surf: SURF.FURNITURE, deep:'#6fa8d8', mid:'#bfe0f5', bright:'#eaf6ff', r:0.72, orbit:14.7, speed:0.014, incl: 0.05, phase:2.4, spin:0.05 },
 ].map(p => ({
   ...p,
   cDeep:   new THREE.Color(p.deep),
@@ -492,6 +493,20 @@ const PLANET_FRAG = /* glsl */ `
     gloss = 0.35; emis = vec3(0.0);
   }
 
+  // Skating ice rink — glossy cool blue-white with a network of white scratch arcs
+  void surfaceIceRink(vec3 op, out vec3 albedo, out float gloss, out vec3 emis) {
+    float n = fbm(op * 2.2);
+    vec3 base = mix(uDeep, uMid, smoothstep(0.12, 0.5, n));
+    base = mix(base, uBright, smoothstep(0.5, 0.78, n));
+    float s1 = smoothstep(0.86, 0.93, ridged(op * 5.0));    // coarse skate arcs
+    float s2 = smoothstep(0.90, 0.96, ridged(op * 11.0));   // fine cross-hatch
+    float scratch = max(s1 * 0.6, s2 * 0.45);
+    albedo = mix(base, vec3(1.0), scratch);
+    gloss = 0.92;        // glossy ice → strong specular streak
+    // cool self-cast so the rink still reads as cold blue ice under the warm gold star
+    emis = base * vec3(0.34, 0.45, 0.62);
+  }
+
   void main() {
     vec3 op = vObjPos * uDetail;
     vec3 albedo; float gloss; vec3 emis;
@@ -499,7 +514,8 @@ const PLANET_FRAG = /* glsl */ `
     else if (uType == 1) surfaceLava(op,   albedo, gloss, emis);
     else if (uType == 2) surfaceGas(op,    albedo, gloss, emis);
     else if (uType == 3) surfaceFossil(op, albedo, gloss, emis);
-    else                 surfaceSoccer(op, albedo, gloss, emis);
+    else if (uType == 4) surfaceSoccer(op, albedo, gloss, emis);
+    else                 surfaceIceRink(op, albedo, gloss, emis);
 
     vec3 N = normalize(vWorldNormal);
     vec3 V = normalize(cameraPosition - vWorldPos);
@@ -707,8 +723,155 @@ function buildChimera(p) {
   scene.add(g);
 }
 
+// --- OTTOMAN: a furniture planet whose icy surface is a spherical skating rink.
+// Low-poly furniture (warm Baroque gold/burgundy vs cold ice) glides in curved
+// loops on blades, leans into the turns, and leaves white skate trails — the
+// floor lamp & coat rack pirouette (the brief's "star skaters"); one armchair is
+// oversized (the Magritte "Personal Values" scale trick).
+const FURN_COL = {
+  wood:'#7a4a24', gold:'#d9a441', burgundy:'#7a1f2b', cream:'#ede0c8',
+  dark:'#2a2018', blade:'#cfe6ff', brass:'#caa24a',
+};
+const _matCache = {};
+function fmat(hex) { return _matCache[hex] || (_matCache[hex] = new THREE.MeshBasicMaterial({ color: new THREE.Color(hex) })); }
+function fbox(w, h, d, hex, x, y, z) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), fmat(hex));
+  m.position.set(x, y, z); return m;
+}
+function legsWithBlades(g, hx, hz, hy) {     // 4 legs + icy skate blades at the feet
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    g.add(fbox(0.07, hy, 0.07, FURN_COL.wood, sx * hx, hy / 2, sz * hz));
+    g.add(fbox(0.05, 0.04, 0.22, FURN_COL.blade, sx * hx, 0.0, sz * hz));
+  }
+}
+function makeArmchair() {
+  const g = new THREE.Group();
+  legsWithBlades(g, 0.2, 0.2, 0.3);
+  g.add(fbox(0.55, 0.12, 0.5, FURN_COL.burgundy, 0, 0.36, 0));      // seat
+  g.add(fbox(0.55, 0.55, 0.1, FURN_COL.burgundy, 0, 0.64, -0.2));   // back
+  g.add(fbox(0.09, 0.22, 0.5, FURN_COL.wood, -0.25, 0.5, 0));       // arms
+  g.add(fbox(0.09, 0.22, 0.5, FURN_COL.wood, 0.25, 0.5, 0));
+  g.add(fbox(0.5, 0.07, 0.06, FURN_COL.gold, 0, 0.84, -0.22));      // gilt crest
+  return g;
+}
+function makeDiningChair() {
+  const g = new THREE.Group();
+  legsWithBlades(g, 0.16, 0.16, 0.38);
+  g.add(fbox(0.4, 0.08, 0.4, FURN_COL.wood, 0, 0.42, 0));
+  g.add(fbox(0.4, 0.5, 0.06, FURN_COL.burgundy, 0, 0.66, -0.17));
+  g.add(fbox(0.4, 0.06, 0.06, FURN_COL.gold, 0, 0.86, -0.17));
+  return g;
+}
+function makeFloorLamp() {
+  const g = new THREE.Group();
+  g.add(fbox(0.26, 0.05, 0.26, FURN_COL.dark, 0, 0.03, 0));         // base
+  g.add(fbox(0.06, 0.04, 0.34, FURN_COL.blade, 0, 0.0, 0));         // single blade
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.8, 8), fmat(FURN_COL.brass));
+  pole.position.set(0, 0.45, 0); g.add(pole);
+  const shade = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.26, 18), fmat(FURN_COL.cream));
+  shade.position.set(0, 0.95, 0); g.add(shade);
+  return g;
+}
+function makeCoatRack() {
+  const g = new THREE.Group();
+  g.add(fbox(0.26, 0.05, 0.26, FURN_COL.dark, 0, 0.03, 0));
+  g.add(fbox(0.06, 0.04, 0.34, FURN_COL.blade, 0, 0.0, 0));
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.95, 8), fmat(FURN_COL.wood));
+  pole.position.set(0, 0.52, 0); g.add(pole);
+  for (let i = 0; i < 5; i++) {                                     // radiating hooks (ballerina arms)
+    const h = fbox(0.05, 0.05, 0.2, FURN_COL.brass, 0, 0.9, 0.1);
+    h.rotation.y = i * (Math.PI * 2 / 5);
+    h.position.set(Math.sin(i * 1.257) * 0.1, 0.9, Math.cos(i * 1.257) * 0.1);
+    g.add(h);
+  }
+  return g;
+}
+function makeClock() {
+  const g = new THREE.Group();
+  g.add(fbox(0.42, 0.1, 0.3, FURN_COL.wood, 0, 0.05, 0));           // plinth
+  g.add(fbox(0.07, 0.04, 0.34, FURN_COL.blade, -0.16, 0.0, 0));     // blades
+  g.add(fbox(0.07, 0.04, 0.34, FURN_COL.blade, 0.16, 0.0, 0));
+  g.add(fbox(0.34, 0.95, 0.22, FURN_COL.wood, 0, 0.58, 0));         // tall body
+  g.add(fbox(0.36, 0.08, 0.24, FURN_COL.gold, 0, 1.06, 0));         // gilt cornice
+  const face = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.03, 16), fmat(FURN_COL.cream));
+  face.rotation.x = Math.PI / 2; face.position.set(0, 0.8, 0.12); g.add(face);
+  return g;
+}
+const FURN_BUILDERS = [makeArmchair, makeFloorLamp, makeCoatRack, makeClock, makeDiningChair, makeFloorLamp, makeCoatRack, makeArmchair];
+
+function buildFurnitureWorld(p) {
+  const g = new THREE.Group();
+  const R = 0.64;
+  p.iceR = R;
+  // the rink itself (ice-rink shader)
+  const iceMat = makePlanetMat({ surf: SURF.FURNITURE, r: R, cDeep: p.cDeep, cMid: p.cMid, cBright: p.cBright });
+  g.add(new THREE.Mesh(new THREE.SphereGeometry(R, 64, 48), iceMat));
+  p.iceMat = iceMat;
+  // skaters distributed over the rink (fibonacci directions)
+  p.skaters = [];
+  const N = FURN_BUILDERS.length;
+  const _up = new THREE.Vector3(0, 1, 0), _alt = new THREE.Vector3(1, 0, 0);
+  for (let i = 0; i < N; i++) {
+    const y = 1 - (i + 0.5) / N * 2;                 // -1..1
+    const rad = Math.sqrt(1 - y * y), th = i * 2.399;
+    const C = new THREE.Vector3(Math.cos(th) * rad, y, Math.sin(th) * rad).normalize();
+    const T1 = new THREE.Vector3().crossVectors(C, Math.abs(C.y) > 0.9 ? _alt : _up).normalize();
+    const T2 = new THREE.Vector3().crossVectors(C, T1).normalize();
+    const obj = FURN_BUILDERS[i]();
+    const oversized = (i === 7);                      // Magritte scale trick: one giant chair
+    obj.scale.setScalar(oversized ? 0.42 : 0.16 + (i % 3) * 0.02);
+    g.add(obj);
+    // skate trail (white, hugs the ice)
+    const TN = 22, tp = new Float32Array(TN * 3);
+    const tgeo = new THREE.BufferGeometry();
+    tgeo.setAttribute('position', new THREE.BufferAttribute(tp, 3));
+    const line = new THREE.Line(tgeo, new THREE.LineBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    g.add(line);
+    p.skaters.push({
+      obj, C, T1, T2,
+      loopR: 0.16 + (i % 4) * 0.06,
+      speed: (0.5 + (i % 3) * 0.35) * (i % 2 ? -1 : 1),
+      phase: i * 1.7,
+      bank: (i % 2 ? -1 : 1) * 0.34,
+      selfSpin: (FURN_BUILDERS[i] === makeFloorLamp || FURN_BUILDERS[i] === makeCoatRack) ? 1.6 : 0,
+      trail: { pts: tp, geo: tgeo, init: false },
+    });
+  }
+  p.mesh = g;
+  scene.add(g);
+}
+
+const _fd = new THREE.Vector3(), _fv = new THREE.Vector3(), _ff = new THREE.Vector3(),
+      _fr = new THREE.Vector3(), _fp = new THREE.Vector3(), _fm = new THREE.Matrix4();
+function updateFurnitureWorld(p, dt, t, moving) {
+  for (const s of p.skaters) {
+    if (moving) s.t = (s.t || s.phase) + s.speed * dt; else if (s.t === undefined) s.t = s.phase;
+    const ang = s.t, sr = Math.sin(s.loopR), cr = Math.cos(s.loopR);
+    _fd.copy(s.C).multiplyScalar(cr)
+      .addScaledVector(s.T1, sr * Math.cos(ang))
+      .addScaledVector(s.T2, sr * Math.sin(ang)).normalize();
+    const bob = 0.014 + 0.01 * Math.sin(t * 5 + s.phase);
+    _fp.copy(_fd).multiplyScalar(p.iceR + bob);
+    s.obj.position.copy(_fp);
+    _fv.copy(s.T1).multiplyScalar(-Math.sin(ang)).addScaledVector(s.T2, Math.cos(ang));
+    _ff.copy(_fv).addScaledVector(_fd, -_fv.dot(_fd)).normalize();   // forward = surface tangent
+    _fr.crossVectors(_ff, _fd).normalize();                          // right
+    _fm.makeBasis(_fr, _fd, _ff);                                    // +Y → up(normal), +Z → forward
+    s.obj.quaternion.setFromRotationMatrix(_fm);
+    s.obj.rotateZ(s.bank + 0.12 * Math.sin(t * 4 + s.phase));        // lean / carve into the turn
+    if (s.selfSpin) s.obj.rotateY(t * s.selfSpin);                   // pirouette
+    const tp = s.trail.pts;
+    if (!s.trail.init) { for (let k = 0; k < tp.length; k += 3) { tp[k]=_fp.x; tp[k+1]=_fp.y; tp[k+2]=_fp.z; } s.trail.init = true; }
+    else if (moving) { for (let k = tp.length - 3; k >= 3; k--) tp[k] = tp[k-3]; tp[0]=_fp.x; tp[1]=_fp.y; tp[2]=_fp.z; }
+    s.trail.geo.attributes.position.needsUpdate = true;
+  }
+}
+
 // --- Build the planet meshes (+ halos) --------------------------------------
 for (const p of PLANETS) {
+  if (p.surf === SURF.FURNITURE) { buildFurnitureWorld(p); continue; }
   if (p.surf === SURF.CHIMERA) { buildChimera(p); continue; }
   const mat = p.surf === SURF.OOF ? makeOofMat() : makePlanetMat(p);
   p.mesh = new THREE.Mesh(new THREE.SphereGeometry(p.r, 64, 48), mat);
@@ -872,7 +1035,7 @@ for (const p of PLANETS) {
 const QP = new URLSearchParams(location.search);
 const PREFLIGHT = QP.has('preflight');
 const OMEGA = 4.5;                       // critically-damped spring stiffness (~1.2s settle)
-const OVERVIEW_POS = new THREE.Vector3(0, 13, 28.5); // frames out to KHIMAIRA's orbit (12.7)
+const OVERVIEW_POS = new THREE.Vector3(0, 14, 31.5); // frames out to OTTOMAN's orbit (14.7)
 const OVERVIEW_TGT = new THREE.Vector3(0, 0, 0);
 
 function makeVSpring(initial) {
@@ -1016,6 +1179,10 @@ function stepWorld(dt, nowSec) {
         m.uniforms.uLightDir.value[0].copy(_starDir);
         m.uniforms.uTime.value = nowSec;
       }
+    } else if (p.iceMat) {                                 // OTTOMAN = ice rink + skating furniture
+      p.iceMat.uniforms.uLightDir.value[0].copy(_starDir);
+      p.iceMat.uniforms.uTime.value = nowSec;
+      updateFurnitureWorld(p, dt, nowSec, moving);
     } else {
       p.mesh.material.uniforms.uLightDir.value[0].copy(_starDir);
       p.mesh.material.uniforms.uTime.value = nowSec;
