@@ -209,7 +209,7 @@
 </header>
 
 <aside class="meta" aria-hidden="true">
-  <div><b>WORLDS</b> 6 · ice · ember · gas · fossil · pitch · oof</div>
+  <div><b>WORLDS</b> 7 · ice · ember · gas · fossil · pitch · oof · chimera</div>
   <div><b>SURFACE</b> uType-branch shader · oof crust · porsche rain</div>
   <div><b>MOTION</b> orbit + self-spin · damped camera-focus spring</div>
 </aside>
@@ -221,7 +221,7 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 
 // --- Surface-type enum — matches the uType branch index in the fragment shader
 // (OOF is a special textured world, not a uType branch — see makeOofMat)
-const SURF = { ICE: 0, LAVA: 1, GAS: 2, FOSSIL: 3, SOCCER: 4, OOF: 5 };
+const SURF = { ICE: 0, LAVA: 1, GAS: 2, FOSSIL: 3, SOCCER: 4, OOF: 5, CHIMERA: 6 };
 
 // --- Central star: emissive sphere + sprite glow + THE key light for every world
 const STAR = {
@@ -240,6 +240,7 @@ const PLANETS = [
   { name: 'OSSARIUM',  type: 'fossil bed',  surf: SURF.FOSSIL, deep:'#3a2c1e', mid:'#b8a17e', bright:'#efe4cf', r:0.54, orbit:7.7, speed:0.030, incl:-0.05, phase:5.4, spin:0.18 },
   { name: 'PELE XI',   type: 'pitch world', surf: SURF.SOCCER, deep:'#0d0d10', mid:'#9aa0a8', bright:'#f4f4f0', r:0.50, orbit:9.3, speed:0.024, incl: 0.08, phase:1.2, spin:0.40 },
   { name: 'OOF PRIME', type: 'respawn world', surf: SURF.OOF,  deep:'#1b1030', mid:'#7a4fd0', bright:'#ffd23f', r:0.58, orbit:11.0, speed:0.020, incl: 0.04, phase:3.0, spin:0.25 },
+  { name: 'KHIMAIRA',  type: 'patchwork world', surf: SURF.CHIMERA, deep:'#0d0b1a', mid:'#7c6f9a', bright:'#f0e6ff', r:0.62, orbit:12.7, speed:0.017, incl:-0.06, phase:0.2, spin:0.33 },
 ].map(p => ({
   ...p,
   cDeep:   new THREE.Color(p.deep),
@@ -491,6 +492,26 @@ const PLANET_FRAG = /* glsl */ `
     gloss = 0.35; emis = vec3(0.0);
   }
 
+  // CHIMERA — a patchwork of the system's strange surfaces stitched by region.
+  // One eerie palette unifies fossil ridges, soccer panels, lava cracks and gas
+  // bands into a single uncanny world (a "combination of strange planets").
+  void surfaceChimera(vec3 op, out vec3 albedo, out float gloss, out vec3 emis) {
+    vec3 aF, aS, aL, aG; float gF, gS, gL, gG; vec3 eF, eS, eL, eG;
+    surfaceFossil(op, aF, gF, eF);
+    surfaceSoccer(op, aS, gS, eS);
+    surfaceLava(op,   aL, gL, eL);
+    surfaceGas(op,    aG, gG, eG);
+    float sel = fbm(op * 1.1);                    // large-scale continent selector
+    float wF = 1.0 - smoothstep(0.34, 0.42, sel);
+    float wL = smoothstep(0.52, 0.58, sel) * (1.0 - smoothstep(0.70, 0.78, sel));
+    float wG = smoothstep(0.74, 0.80, sel);
+    float wS = clamp(1.0 - wF - wL - wG, 0.0, 1.0);   // soccer panels fill the seams
+    float wsum = wF + wS + wL + wG + 1e-4;
+    albedo = (aF * wF + aS * wS + aL * wL + aG * wG) / wsum;
+    gloss  = (gF * wF + gS * wS + gL * wL + gG * wG) / wsum;
+    emis   = (eF * wF + eS * wS + eL * wL + eG * wG) / wsum;
+  }
+
   void main() {
     vec3 op = vObjPos * uDetail;
     vec3 albedo; float gloss; vec3 emis;
@@ -498,7 +519,8 @@ const PLANET_FRAG = /* glsl */ `
     else if (uType == 1) surfaceLava(op,   albedo, gloss, emis);
     else if (uType == 2) surfaceGas(op,    albedo, gloss, emis);
     else if (uType == 3) surfaceFossil(op, albedo, gloss, emis);
-    else                 surfaceSoccer(op, albedo, gloss, emis);
+    else if (uType == 4) surfaceSoccer(op, albedo, gloss, emis);
+    else                 surfaceChimera(op, albedo, gloss, emis);
 
     vec3 N = normalize(vWorldNormal);
     vec3 V = normalize(cameraPosition - vWorldPos);
@@ -741,7 +763,7 @@ for (const p of PLANETS) {
 const QP = new URLSearchParams(location.search);
 const PREFLIGHT = QP.has('preflight');
 const OMEGA = 4.5;                       // critically-damped spring stiffness (~1.2s settle)
-const OVERVIEW_POS = new THREE.Vector3(0, 12, 26);   // frames out to the OOF world's orbit (11)
+const OVERVIEW_POS = new THREE.Vector3(0, 13, 28.5); // frames out to KHIMAIRA's orbit (12.7)
 const OVERVIEW_TGT = new THREE.Vector3(0, 0, 0);
 
 function makeVSpring(initial) {
