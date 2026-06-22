@@ -296,6 +296,37 @@
     box-shadow: -36px 20px 0 -2.5px rgba(229, 232, 238, 0.75);
   }
 
+  .tile.t-d1 { --accent: #ff8a3d; }   /* orrery ember-orange */
+
+  /* D1 thumb: a glowing central star with six worlds scattered around it */
+  .thumb-d1 { position: relative; }
+  .thumb-d1::before {
+    content: '';
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 18px; height: 18px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: radial-gradient(circle, #fff6e0 0%, #ffd27a 55%, rgba(255,154,74,0) 100%);
+    box-shadow: 0 0 20px 5px rgba(255, 200, 110, 0.55);
+  }
+  .thumb-d1::after {
+    content: '';
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 6px; height: 6px;
+    margin: -3px 0 0 -3px;
+    border-radius: 50%;
+    background: transparent;
+    box-shadow:
+       42px  -8px 0  0   #8fb6e8,   /* ice    */
+      -40px  16px 0  1px #ff7a2a,   /* ember  */
+       22px  32px 0 -1px #d8c79a,   /* gas    */
+      -30px -28px 0  0   #efe4cf,   /* fossil */
+       54px  22px 0 -1px #f4f4f0,   /* pitch  */
+      -52px  -6px 0  0   #ffd23f;   /* oof    */
+  }
+
   /* Row separator between the two grid blocks */
   .row-sep {
     border: 0;
@@ -454,6 +485,14 @@
       <div class="name">Director Globe</div>
       <div class="desc">Director orbit-view ice world, lit by its nearest stars. Click re-orients.</div>
       <div class="chip">orbit · click</div>
+    </a>
+
+    <a class="tile t-d1" href="d1-orrery.html" aria-label="Open variant D1 — Director Orrery">
+      <div class="num">D1 · system</div>
+      <div class="thumb thumb-d1" aria-hidden="true"></div>
+      <div class="name">Director Orrery</div>
+      <div class="desc">Six worlds — including an OOF planet raining Porsches — orbit a central star.</div>
+      <div class="chip">system · focus</div>
     </a>
 
   </section>
