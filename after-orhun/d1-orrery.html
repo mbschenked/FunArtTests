@@ -240,7 +240,7 @@ const PLANETS = [
   { name: 'OSSARIUM',  type: 'fossil bed',  surf: SURF.FOSSIL, deep:'#3a2c1e', mid:'#b8a17e', bright:'#efe4cf', r:0.54, orbit:7.7, speed:0.030, incl:-0.05, phase:5.4, spin:0.18 },
   { name: 'PELE XI',   type: 'pitch world', surf: SURF.SOCCER, deep:'#0d0d10', mid:'#9aa0a8', bright:'#f4f4f0', r:0.50, orbit:9.3, speed:0.024, incl: 0.08, phase:1.2, spin:0.40 },
   { name: 'OOF PRIME', type: 'respawn world', surf: SURF.OOF,  deep:'#1b1030', mid:'#7a4fd0', bright:'#ffd23f', r:0.58, orbit:11.0, speed:0.020, incl: 0.04, phase:3.0, spin:0.25 },
-  { name: 'KHIMAIRA',  type: 'patchwork world', surf: SURF.CHIMERA, deep:'#0d0b1a', mid:'#7c6f9a', bright:'#f0e6ff', r:0.62, orbit:12.7, speed:0.017, incl:-0.06, phase:0.2, spin:0.33 },
+  { name: 'KHIMAIRA',  type: 'collision remnant', surf: SURF.CHIMERA, deep:'#0d0b1a', mid:'#7c6f9a', bright:'#f0e6ff', r:0.80, orbit:12.9, speed:0.017, incl:-0.06, phase:0.2, spin:0.30 },
 ].map(p => ({
   ...p,
   cDeep:   new THREE.Color(p.deep),
@@ -492,26 +492,6 @@ const PLANET_FRAG = /* glsl */ `
     gloss = 0.35; emis = vec3(0.0);
   }
 
-  // CHIMERA — a patchwork of the system's strange surfaces stitched by region.
-  // One eerie palette unifies fossil ridges, soccer panels, lava cracks and gas
-  // bands into a single uncanny world (a "combination of strange planets").
-  void surfaceChimera(vec3 op, out vec3 albedo, out float gloss, out vec3 emis) {
-    vec3 aF, aS, aL, aG; float gF, gS, gL, gG; vec3 eF, eS, eL, eG;
-    surfaceFossil(op, aF, gF, eF);
-    surfaceSoccer(op, aS, gS, eS);
-    surfaceLava(op,   aL, gL, eL);
-    surfaceGas(op,    aG, gG, eG);
-    float sel = fbm(op * 1.1);                    // large-scale continent selector
-    float wF = 1.0 - smoothstep(0.34, 0.42, sel);
-    float wL = smoothstep(0.52, 0.58, sel) * (1.0 - smoothstep(0.70, 0.78, sel));
-    float wG = smoothstep(0.74, 0.80, sel);
-    float wS = clamp(1.0 - wF - wL - wG, 0.0, 1.0);   // soccer panels fill the seams
-    float wsum = wF + wS + wL + wG + 1e-4;
-    albedo = (aF * wF + aS * wS + aL * wL + aG * wG) / wsum;
-    gloss  = (gF * wF + gS * wS + gL * wL + gG * wG) / wsum;
-    emis   = (eF * wF + eS * wS + eL * wL + eG * wG) / wsum;
-  }
-
   void main() {
     vec3 op = vObjPos * uDetail;
     vec3 albedo; float gloss; vec3 emis;
@@ -519,8 +499,7 @@ const PLANET_FRAG = /* glsl */ `
     else if (uType == 1) surfaceLava(op,   albedo, gloss, emis);
     else if (uType == 2) surfaceGas(op,    albedo, gloss, emis);
     else if (uType == 3) surfaceFossil(op, albedo, gloss, emis);
-    else if (uType == 4) surfaceSoccer(op, albedo, gloss, emis);
-    else                 surfaceChimera(op, albedo, gloss, emis);
+    else                 surfaceSoccer(op, albedo, gloss, emis);
 
     vec3 N = normalize(vWorldNormal);
     vec3 V = normalize(cameraPosition - vWorldPos);
@@ -639,8 +618,98 @@ function makeHaloMat(inColor, outColor) {
   });
 }
 
+// --- KHIMAIRA: a collision remnant — NOT a sphere. A battered, bilobed/rubble
+// aggregate of all the other worlds fused together (silhouette per real contact
+// binaries — Arrokoth, comet 67P, Itokawa), with a giant impact basin + central
+// peak gouged into the core, co-orbiting fragments, and a thin post-impact ring.
+function lumps(x, y, z, s) {     // smooth coherent displacement in [-1,1]
+  return (
+    Math.sin(x * 3.1 + s) * Math.cos(y * 2.7 + s * 1.3) +
+    Math.sin(y * 4.3 + s * 0.7) * Math.cos(z * 3.9 + s * 2.1) +
+    Math.sin(z * 2.3 + s * 1.7) * Math.cos(x * 3.3 + s * 0.4)
+  ) / 3.0;
+}
+const _cdir = new THREE.Vector3(0.3, 0.5, 0.8).normalize();   // giant-basin direction
+function deformChunk(geo, amp, seed, crater) {
+  const pos = geo.attributes.position, v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    const len = v.length() || 1;
+    const dx = v.x / len, dy = v.y / len, dz = v.z / len;
+    let disp = amp * lumps(dx * 2.2, dy * 2.2, dz * 2.2, seed);   // battered lumps
+    if (crater) {
+      const ang = Math.acos(Math.max(-1, Math.min(1, dx * _cdir.x + dy * _cdir.y + dz * _cdir.z)));
+      const cr = 0.95;                                            // basin angular radius
+      if (ang < cr) {
+        const t = ang / cr;
+        disp += -0.42 * (1.0 - t * t);                           // bowl depression
+        disp += 0.12 * Math.exp(-Math.pow((t - 1.0) / 0.18, 2)); // raised terraced rim
+        if (ang < 0.22) disp += 0.5 * Math.exp(-Math.pow(ang / 0.12, 2)); // central peak spire
+      }
+    }
+    v.multiplyScalar(1 + disp);
+    pos.setXYZ(i, v.x, v.y, v.z);
+  }
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
+}
+// each fused lobe keeps its own world's terrain (lobes don't blend — Arrokoth)
+const CHUNK_SPECS = [
+  { surf: SURF.FOSSIL, deep:'#3a2c1e', mid:'#b8a17e', bright:'#efe4cf', r:0.42, pos:[ 0.00, 0.02, 0.00], crater:true },
+  { surf: SURF.LAVA,   deep:'#160a08', mid:'#6e2a14', bright:'#ff7a2a', r:0.30, pos:[ 0.42, 0.12,-0.10] },
+  { surf: SURF.ICE,    deep:'#2a3d5c', mid:'#8090a8', bright:'#e8eaf0', r:0.30, pos:[-0.36,-0.06, 0.20] },
+  { surf: SURF.GAS,    deep:'#3a2f4e', mid:'#b89a6a', bright:'#e8dcc0', r:0.34, pos:[ 0.10,-0.36, 0.18] },
+  { surf: SURF.SOCCER, deep:'#0d0d10', mid:'#9aa0a8', bright:'#f4f4f0', r:0.26, pos:[-0.18, 0.34,-0.06] },
+  { surf: SURF.OOF,    deep:'#1b1030', mid:'#7a4fd0', bright:'#ffd23f', r:0.28, pos:[ 0.16, 0.28, 0.30] },
+];
+function buildChimera(p) {
+  const g = new THREE.Group();
+  p.chunkMats = [];
+  CHUNK_SPECS.forEach((s, i) => {
+    const spec = { surf: s.surf, r: s.r,
+      cDeep: new THREE.Color(s.deep), cMid: new THREE.Color(s.mid), cBright: new THREE.Color(s.bright) };
+    const mat = s.surf === SURF.OOF ? makeOofMat() : makePlanetMat(spec);
+    const geo = new THREE.SphereGeometry(s.r, s.crater ? 56 : 36, s.crater ? 40 : 28);
+    deformChunk(geo, s.r * 0.42, i * 11.7 + 3.0, !!s.crater);
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(s.pos[0], s.pos[1], s.pos[2]);
+    m.rotation.set(i * 1.3, i * 0.7, i * 2.1);
+    g.add(m);
+    p.chunkMats.push(mat);
+  });
+  // co-orbiting rocky fragments (one shared bone-rock material)
+  const fragMat = makePlanetMat({ surf: SURF.FOSSIL, r: 0.06,
+    cDeep: new THREE.Color('#2a2018'), cMid: new THREE.Color('#6b5a44'), cBright: new THREE.Color('#b8a17e') });
+  p.chunkMats.push(fragMat);
+  const fragGeo = new THREE.IcosahedronGeometry(0.05, 0);
+  for (let i = 0; i < 9; i++) {
+    const a = i * 2.399, rad = 0.85 + (i % 3) * 0.12, el = Math.sin(i * 1.7) * 0.5;
+    const f = new THREE.Mesh(fragGeo, fragMat);
+    f.position.set(Math.cos(a) * rad, el, Math.sin(a) * rad);
+    f.scale.setScalar(0.6 + (i % 4) * 0.35);
+    f.rotation.set(i, i * 1.4, i * 0.6);
+    g.add(f);
+  }
+  // thin tilted debris ring — a temporary post-collision belt
+  const RN = 140, rp = new Float32Array(RN * 3);
+  for (let i = 0; i < RN; i++) {
+    const a = (i / RN) * Math.PI * 2, rad = 1.02 + Math.sin(i * 12.9) * 0.07, y = Math.sin(i * 7.3) * 0.03;
+    const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
+    rp[i*3] = x; rp[i*3+1] = y * 0.92 - z * 0.38; rp[i*3+2] = y * 0.38 + z * 0.92;  // tilt ~22°
+  }
+  const rg = new THREE.BufferGeometry();
+  rg.setAttribute('position', new THREE.BufferAttribute(rp, 3));
+  g.add(new THREE.Points(rg, new THREE.PointsMaterial({
+    color: 0xb8a89a, size: 1.4, sizeAttenuation: false,
+    transparent: true, opacity: 0.5, depthWrite: false,
+  })));
+  p.mesh = g;
+  scene.add(g);
+}
+
 // --- Build the planet meshes (+ halos) --------------------------------------
 for (const p of PLANETS) {
+  if (p.surf === SURF.CHIMERA) { buildChimera(p); continue; }
   const mat = p.surf === SURF.OOF ? makeOofMat() : makePlanetMat(p);
   p.mesh = new THREE.Mesh(new THREE.SphereGeometry(p.r, 64, 48), mat);
   p.mesh.rotation.order = 'YXZ';
@@ -902,8 +971,15 @@ function stepWorld(dt, nowSec) {
     if (p.halo) p.halo.position.copy(p.worldPos);
     if (moving) p.mesh.rotation.y += p.spin * dt;
     _starDir.copy(STAR.pos).sub(p.worldPos).normalize();   // key light = the central star
-    p.mesh.material.uniforms.uLightDir.value[0].copy(_starDir);
-    p.mesh.material.uniforms.uTime.value = nowSec;
+    if (p.chunkMats) {                                     // KHIMAIRA = a group of chunk materials
+      for (const m of p.chunkMats) {
+        m.uniforms.uLightDir.value[0].copy(_starDir);
+        m.uniforms.uTime.value = nowSec;
+      }
+    } else {
+      p.mesh.material.uniforms.uLightDir.value[0].copy(_starDir);
+      p.mesh.material.uniforms.uTime.value = nowSec;
+    }
   }
   meteorMat.uniforms.uTime.value = nowSec;
   for (const m of METEORS) {
