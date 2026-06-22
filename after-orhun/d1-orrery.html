@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>D1 · Director Orrery</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --label:     rgba(229, 232, 238, 0.92);  /* #e5e8ee director near-white */
+    --label-dim: rgba(150, 168, 192, 0.88);
+    --gold:      #fdcd47;                     /* director accent gold */
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: #0a0e1a; color: white;
+    font-family: 'Fira Code', 'JetBrains Mono', monospace;
+    overflow: hidden; height: 100vh;
+  }
+
+  #gl {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;   /* buffer is w×dpr; CSS size must stay w */
+    display: block;
+    background:
+      radial-gradient(ellipse at center,
+        #101828 0%,
+        #0a0e1a 55%,
+        #05070f 100%);
+  }
+
+  .scanlines {
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0,0,0,0.18) 0 1px,
+      transparent 1px 3px
+    );
+    pointer-events: none;
+    z-index: 10;
+    mix-blend-mode: multiply;
+  }
+  .vignette {
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at center,
+      transparent 44%,
+      rgba(0,0,0,0.38) 80%,
+      rgba(0,0,0,0.85) 100%);
+    pointer-events: none;
+    z-index: 11;
+  }
+
+  /* --- Director destination overlay (SVG leader lines + DOM markers/labels) --- */
+  #lines {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: 14;
+  }
+  /* Marker = stationary wrapper (hover target, line anchor) + ::before visual.
+     The hover rise/scale live INSIDE the ::before transform chain: standalone
+     scale/translate properties compose outside `transform` and would multiply
+     the inline pixel positioning. */
+  @property --marker-scale { syntax: '<number>'; inherits: false; initial-value: 1; }
+  @property --marker-rise { syntax: '<length>'; inherits: false; initial-value: 0px; }
+  .marker {
+    position: fixed; top: 0; left: 0;
+    width: 9px; height: 9px;
+    transform: translate(-50%, -50%);
+    opacity: 0;                       /* no boot flash at (0,0) before first projected frame */
+    cursor: pointer;
+    z-index: 16;
+  }
+  .marker::before {
+    content: '';
+    position: absolute; inset: 0;
+    border: 1px solid var(--label);
+    background: rgba(10, 14, 26, 0.45);
+    box-shadow: 0 0 5px rgba(5, 7, 15, 0.95);
+    transform: translate(calc(var(--marker-rise) * var(--rx, 0)),
+                         calc(var(--marker-rise) * var(--ry, 0)))
+               rotate(45deg) scale(var(--marker-scale));
+    transition: border-color 120ms ease, background 120ms ease,
+                --marker-scale 120ms ease,
+                --marker-rise 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .marker.hot::before, .marker.active::before {
+    border-color: var(--gold);
+    background: rgba(253, 205, 71, 0.22);
+    --marker-scale: 1.3;
+  }
+  .marker.hot::before { --marker-rise: 26px; }  /* glide up the leader line toward the label */
+
+  /* Transparent disc over each planet — picking is a REAL DOM click, not a raycast */
+  .hit {
+    position: fixed; top: 0; left: 0;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    cursor: pointer;
+    z-index: 13;             /* under markers/labels, over the canvas */
+    opacity: 0;              /* invisible hit area */
+  }
+
+  .label {
+    position: fixed; top: 0; left: 0;
+    opacity: 0;
+    transform: translate(-50%, -100%);
+    text-align: center;
+    cursor: pointer;
+    z-index: 15;
+    padding-bottom: 6px;
+    transition: color 120ms ease;
+  }
+  .label .lname {
+    font-size: 11px; font-weight: 500;
+    letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--label);
+    white-space: nowrap;
+    background: rgba(5, 9, 20, 0.72);
+    padding: 2px 8px;
+    transition: color 120ms ease;
+  }
+  .label .ltype {
+    font-size: 8.5px;
+    letter-spacing: 0.4em; text-transform: uppercase;
+    color: var(--label-dim);
+    white-space: nowrap;
+    margin-top: 1px;
+    background: rgba(5, 9, 20, 0.60);
+    padding: 1px 6px;
+    transition: color 120ms ease;
+  }
+  .label.hot .lname, .label.active .lname { color: var(--gold); }
+  .label.hot .ltype, .label.active .ltype { color: rgba(253, 205, 71, 0.7); }
+
+  /* --- House HUD chrome --- */
+  .hud {
+    position: fixed;
+    top: 18px; left: 22px;
+    z-index: 20;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--label);
+  }
+  .hud a {
+    color: var(--label-dim);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--label-dim);
+  }
+  .hud a:hover { color: var(--label); border-color: var(--label); }
+  .hud a:focus-visible {
+    color: var(--label);
+    border-color: var(--label);
+    outline: 2px solid var(--label);
+    outline-offset: 2px;
+  }
+  .hud .title {
+    color: white; font-weight: 500;
+    font-size: inherit; line-height: inherit; letter-spacing: inherit;
+    text-transform: inherit; margin: 0; display: inline;
+  }
+  .hud .sep { color: var(--label-dim); margin: 0 0.6em; }
+
+  .meta {
+    position: fixed;
+    bottom: 18px; right: 22px;
+    z-index: 20;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--label-dim);
+    text-align: right;
+    line-height: 1.6;
+  }
+  .meta b { color: var(--label); font-weight: 400; }
+
+  .hint {
+    position: fixed;
+    bottom: 18px; left: 22px;
+    z-index: 20;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--label-dim);
+  }
+  .hint b { color: var(--gold); font-weight: 400; }
+
+  @media (max-width: 800px) {
+    .meta { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="gl" aria-hidden="true"></canvas>
+<svg id="lines" aria-hidden="true"></svg>
+<div class="scanlines" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+
+<header class="hud">
+  <a href="index.html">← index</a>
+  <span class="sep">/</span>
+  <h1 class="title">D1 · director orrery</h1>
+  <span class="sep">/</span>
+  <span style="color: var(--label-dim)">new thread: destiny director · iter 3</span>
+</header>
+
+<aside class="meta" aria-hidden="true">
+  <div><b>WORLDS</b> 8 · ice · ember · gas · fossil · pitch · oof · chimera · parlour</div>
+  <div><b>SURFACE</b> uType-branch shader · oof crust · skating furniture</div>
+  <div><b>MOTION</b> orbit + self-spin · damped camera-focus spring</div>
+</aside>
+
+<div class="hint" aria-hidden="true"><b>CLICK</b> a world to focus · empty space to pull back</div>
+
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// --- Surface-type enum — matches the uType branch index in the fragment shader
+// (OOF is a special textured world, not a uType branch — see makeOofMat)
+const SURF = { ICE: 0, LAVA: 1, GAS: 2, FOSSIL: 3, SOCCER: 4, OOF: 5, CHIMERA: 6, FURNITURE: 7 };
+
+// --- Central star: emissive sphere + sprite glow + THE key light for every world
+const STAR = {
+  pos:   new THREE.Vector3(0, 0, 0),
+  r:     0.9,
+  color: new THREE.Color('#ffd27a'),
+  coreHot: new THREE.Color('#fff6e0'),
+  intensity: 1.0,
+};
+
+// --- The five worlds. Palette → uDeep/uMid/uBright; full orbital element set.
+const PLANETS = [
+  { name: 'EUROPA',    type: 'ice world',   surf: SURF.ICE,    deep:'#2a3d5c', mid:'#8090a8', bright:'#e8eaf0', r:0.46, orbit:3.0, speed:0.085, incl: 0.06, phase:0.4, spin:0.30 },
+  { name: 'ERIDU',     type: 'ember world', surf: SURF.LAVA,   deep:'#160a08', mid:'#6e2a14', bright:'#ff7a2a', r:0.40, orbit:4.4, speed:0.060, incl:-0.10, phase:2.1, spin:0.22 },
+  { name: 'OPHIUCHUS', type: 'gas giant',   surf: SURF.GAS,    deep:'#3a2f4e', mid:'#b89a6a', bright:'#e8dcc0', r:0.78, orbit:6.0, speed:0.042, incl: 0.03, phase:4.0, spin:0.45 },
+  { name: 'OSSARIUM',  type: 'fossil bed',  surf: SURF.FOSSIL, deep:'#3a2c1e', mid:'#b8a17e', bright:'#efe4cf', r:0.54, orbit:7.7, speed:0.030, incl:-0.05, phase:5.4, spin:0.18 },
+  { name: 'PELE XI',   type: 'pitch world', surf: SURF.SOCCER, deep:'#0d0d10', mid:'#9aa0a8', bright:'#f4f4f0', r:0.50, orbit:9.3, speed:0.024, incl: 0.08, phase:1.2, spin:0.40 },
+  { name: 'OOF PRIME', type: 'respawn world', surf: SURF.OOF,  deep:'#1b1030', mid:'#7a4fd0', bright:'#ffd23f', r:0.58, orbit:11.0, speed:0.020, incl: 0.04, phase:3.0, spin:0.25 },
+  { name: 'KHIMAIRA',  type: 'collision remnant', surf: SURF.CHIMERA, deep:'#0d0b1a', mid:'#7c6f9a', bright:'#f0e6ff', r:0.80, orbit:12.9, speed:0.017, incl:-0.06, phase:0.2, spin:0.30 },
+  { name: 'OTTOMAN',   type: 'skating parlour', surf: SURF.FURNITURE, deep:'#6fa8d8', mid:'#bfe0f5', bright:'#eaf6ff', r:0.72, orbit:14.7, speed:0.014, incl: 0.05, phase:2.4, spin:0.05 },
+].map(p => ({
+  ...p,
+  cDeep:   new THREE.Color(p.deep),
+  cMid:    new THREE.Color(p.mid),
+  cBright: new THREE.Color(p.bright),
+  theta:   p.phase,
+  worldPos: new THREE.Vector3(),
+  mesh: null, halo: null, markerEl: null, labelEl: null, hitEl: null, line: null,
+  wasInteractive: false,
+}));
+
+// --- Renderer / scene / camera ----------------------------------------------
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight, false);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(
+  50, window.innerWidth / window.innerHeight, 0.1, 200
+);
+
+// --- Starfield: 600 points on a far shell, additive ------------------------
+const STAR_COUNT = 600;
+const starPos = new Float32Array(STAR_COUNT * 3);
+for (let i = 0; i < STAR_COUNT; i++) {
+  let x = Math.random() * 2 - 1, y = Math.random() * 2 - 1, z = Math.random() * 2 - 1;
+  const len = Math.sqrt(x * x + y * y + z * z) || 1;
+  starPos[i * 3]     = (x / len) * 60;
+  starPos[i * 3 + 1] = (y / len) * 60;
+  starPos[i * 3 + 2] = (z / len) * 60;
+}
+const starGeom = new THREE.BufferGeometry();
+starGeom.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+const starfield = new THREE.Points(starGeom, new THREE.PointsMaterial({
+  color: 0xdde6f5, size: 1.6, sizeAttenuation: false,
+  transparent: true, opacity: 0.35,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+}));
+scene.add(starfield);
+
+// --- Glow sprite texture (reused for the central star's corona) -------------
+function makeGlowTexture(coreStop, tint) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const x = c.getContext('2d');
+  const g = x.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0, '#ffffff');
+  g.addColorStop(coreStop, tint);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 128, 128);
+  for (const horizontal of [true, false]) {
+    const lg = horizontal
+      ? x.createLinearGradient(0, 64, 128, 64)
+      : x.createLinearGradient(64, 0, 64, 128);
+    lg.addColorStop(0, 'rgba(255,255,255,0)');
+    lg.addColorStop(0.5, 'rgba(255,255,255,0.85)');
+    lg.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = lg;
+    if (horizontal) x.fillRect(0, 63, 128, 2); else x.fillRect(63, 0, 2, 128);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// --- Central star: emissive sphere + corona/bloom sprites --------------------
+const starMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(STAR.r, 48, 32),
+  new THREE.ShaderMaterial({
+    uniforms: { uCore: { value: STAR.coreHot }, uRim: { value: STAR.color } },
+    vertexShader: /* glsl */ `
+      varying vec3 vN; varying vec3 vView;
+      void main() {
+        vN = normalize(normalMatrix * normal);
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vView = normalize(-mv.xyz);
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uCore; uniform vec3 uRim;
+      varying vec3 vN; varying vec3 vView;
+      void main() {
+        float f = pow(1.0 - max(dot(normalize(vN), normalize(vView)), 0.0), 1.6);
+        gl_FragColor = vec4(mix(uCore, uRim, f), 1.0);
+      }
+    `,
+  })
+);
+starMesh.position.copy(STAR.pos);
+scene.add(starMesh);
+{
+  const corona = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makeGlowTexture(0.35, '#ffd27a'), transparent: true, opacity: 0.9,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  }));
+  corona.position.copy(STAR.pos);
+  corona.scale.setScalar(STAR.r * 5.5);
+  scene.add(corona);
+  const bloom = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makeGlowTexture(0.16, '#ff9a4a'), transparent: true, opacity: 0.22,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  }));
+  bloom.position.copy(STAR.pos);
+  bloom.scale.setScalar(STAR.r * 11);
+  scene.add(bloom);
+}
+
+// --- Shared planet shader (ONE program; uType uniform picks the surface) -----
+const PLANET_VERT = /* glsl */ `
+  varying vec3 vObjPos;
+  varying vec3 vWorldNormal;
+  varying vec3 vWorldPos;
+  void main() {
+    vObjPos = position;
+    vWorldNormal = normalize(mat3(modelMatrix) * normal);
+    vec4 wp = modelMatrix * vec4(position, 1.0);
+    vWorldPos = wp.xyz;
+    gl_Position = projectionMatrix * viewMatrix * wp;
+  }
+`;
+
+const PLANET_FRAG = /* glsl */ `
+  precision highp float;
+  uniform int   uType;
+  uniform vec3  uLightDir[1];
+  uniform vec3  uLightCol[1];
+  uniform vec3  uDeep;
+  uniform vec3  uMid;
+  uniform vec3  uBright;
+  uniform float uTime;
+  uniform float uDetail;     // 1.6 / radius — normalizes noise frequency across planet sizes
+  varying vec3  vObjPos;
+  varying vec3  vWorldNormal;
+  varying vec3  vWorldPos;
+
+  // fract-mul hash (no sin → no mobile banding)
+  float hash(vec3 p) {
+    p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
+    p *= 17.0;
+    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+  }
+  float vnoise(vec3 p) {
+    vec3 i = floor(p), f = fract(p);
+    vec3 u = f * f * (3.0 - 2.0 * f);
+    return mix(
+      mix(mix(hash(i),               hash(i + vec3(1,0,0)), u.x),
+          mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), u.x), u.y),
+      mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), u.x),
+          mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), u.x), u.y),
+      u.z);
+  }
+  float fbm(vec3 p) {
+    float v = 0.0, a = 0.5;
+    for (int i = 0; i < 5; i++) { v += a * vnoise(p); p *= 2.0; a *= 0.5; }
+    return v;
+  }
+  float ridged(vec3 p) {
+    float v = 0.0, a = 0.6;
+    for (int i = 0; i < 2; i++) { v += a * (1.0 - abs(2.0 * vnoise(p) - 1.0)); p *= 2.1; a *= 0.5; }
+    return v;
+  }
+  vec3 warp(vec3 p, float amt) {
+    return p + amt * vec3(fbm(p + vec3(1.7)), fbm(p + vec3(9.2)), fbm(p + vec3(4.4)));
+  }
+  // 3x3x3 cellular — returns vec3(F1, F2, cellHash); F2-F1 gives panel seams
+  vec3 worley3(vec3 p) {
+    vec3 ip = floor(p), fp = fract(p);
+    float f1 = 1e9, f2 = 1e9, ch = 0.0;
+    for (int x = -1; x <= 1; x++)
+    for (int y = -1; y <= 1; y++)
+    for (int z = -1; z <= 1; z++) {
+      vec3 g = vec3(float(x), float(y), float(z));
+      vec3 o = vec3(hash(ip + g), hash(ip + g + vec3(11.5)), hash(ip + g + vec3(31.7)));
+      vec3 d = g + o - fp;
+      float dist = dot(d, d);
+      if (dist < f1) { f2 = f1; f1 = dist; ch = hash(ip + g + vec3(3.3)); }
+      else if (dist < f2) { f2 = dist; }
+    }
+    return vec3(sqrt(f1), sqrt(f2), ch);
+  }
+
+  void surfaceIce(vec3 op, out vec3 albedo, out float gloss, out vec3 emis) {
+    float n = fbm(op * 2.5);
+    float crack = smoothstep(0.78, 0.86, ridged(op * 6.0));
+    albedo = mix(uDeep, uMid, smoothstep(0.30, 0.55, n));
+    albedo = mix(albedo, uBright, smoothstep(0.55, 0.78, n));
+    float pole = smoothstep(0.55, 0.80, abs(normalize(op).y));
+    albedo = mix(albedo, uBright, pole * 0.85);
+    albedo = mix(albedo, uDeep * 0.85, crack * 0.8);
+    gloss = smoothstep(0.5, 0.8, n) * (1.0 - crack);
+    emis = vec3(0.0);
+  }
+
+  void surfaceLava(vec3 op, out vec3 albedo, out float gloss, out vec3 emis) {
+    float n = fbm(op * 2.8);
+    float crack = smoothstep(0.62, 0.80, ridged(op * 5.0));
+    float pulse = 0.6 + 0.4 * sin(uTime * 0.7 + n * 6.0);
+    albedo = mix(uDeep, uMid, smoothstep(0.35, 0.65, n));
+    gloss = 0.05;
+    emis = uBright * crack * pulse * 1.6;
+  }
+
+  void surfaceGas(vec3 op, out vec3 albedo, out float gloss, out vec3 emis) {
+    vec3 n3 = normalize(op);
+    vec3 wp = warp(op * 1.4, 0.35);
+    float band = sin(n3.y * 16.0 + wp.x * 2.0 + uTime * 0.05);
+    float t = band * 0.5 + 0.5;
+    albedo = mix(uDeep, uMid, smoothstep(0.2, 0.5, t));
+    albedo = mix(albedo, uBright, smoothstep(0.6, 0.95, t));
+    float storm = smoothstep(0.85, 0.95, fbm(wp * 3.0));
+    albedo = mix(albedo, uBright * 1.05, storm * 0.4);
+    gloss = 0.0; emis = vec3(0.0);
+  }
+
+  // MARQUEE — excavated dinosaur-fossil crust
+  void surfaceFossil(vec3 op, out vec3 albedo, out float gloss, out vec3 emis) {
+    vec3 n3 = normalize(op);
+    vec3 wp = warp(op * 2.2, 0.6);
+    float bed = fbm(wp * 1.6);
+    vec3 bone = mix(uMid, uBright, smoothstep(0.35, 0.70, bed));
+    bone = mix(bone, uDeep, smoothstep(0.0, 0.25, bed) * 0.5);
+
+    float phi   = atan(n3.z, n3.x);
+    float theta = asin(clamp(n3.y, -1.0, 1.0));
+    float spineBand = exp(-pow((theta - 0.15) / 0.10, 2.0));   // one excavated spine band
+    float vertebra = smoothstep(0.82, 0.98, abs(sin(phi * 22.0))) * spineBand;
+    float ribArc  = abs(fract(phi * 9.0) - 0.5);
+    float ribFall = smoothstep(0.20, -0.50, theta);            // ribs hang below the spine
+    float rib = smoothstep(0.46, 0.5, ribArc) * ribFall * (1.0 - spineBand * 0.6);
+    float fissure = smoothstep(0.80, 0.90, ridged(op * 7.0));
+
+    float boneMask = clamp(vertebra * 1.2 + rib, 0.0, 1.0);
+    albedo = mix(bone, uBright * 1.08, boneMask);
+    albedo = mix(albedo, uDeep * 0.7, fissure * 0.7);
+    gloss = boneMask * 0.6;                                    // polished-bone sheen sells it
+    emis = vec3(0.0);
+  }
+
+  // Soccer ball — truncated-icosahedron panels via cellular noise
+  void surfaceSoccer(vec3 op, out vec3 albedo, out float gloss, out vec3 emis) {
+    vec3 w = worley3(normalize(op) * 3.1);
+    float edge = w.y - w.x;                       // small near panel borders
+    float seam = smoothstep(0.0, 0.05, edge);     // 0 = dark seam, 1 = panel interior
+    float black = step(w.z, 0.375);               // ~12/32 panels black (the pentagons)
+    vec3 panel = mix(uBright, uDeep, black);
+    albedo = mix(uDeep * 0.35, panel, seam);
+    gloss = 0.35; emis = vec3(0.0);
+  }
+
+  // Skating ice rink — glossy cool blue-white with a network of white scratch arcs
+  void surfaceIceRink(vec3 op, out vec3 albedo, out float gloss, out vec3 emis) {
+    float n = fbm(op * 2.2);
+    vec3 base = mix(uDeep, uMid, smoothstep(0.12, 0.5, n));
+    base = mix(base, uBright, smoothstep(0.5, 0.78, n));
+    float s1 = smoothstep(0.86, 0.93, ridged(op * 5.0));    // coarse skate arcs
+    float s2 = smoothstep(0.90, 0.96, ridged(op * 11.0));   // fine cross-hatch
+    float scratch = max(s1 * 0.6, s2 * 0.45);
+    albedo = mix(base, vec3(1.0), scratch);
+    gloss = 0.92;        // glossy ice → strong specular streak
+    // cool self-cast so the rink still reads as cold blue ice under the warm gold star
+    emis = base * vec3(0.34, 0.45, 0.62);
+  }
+
+  void main() {
+    vec3 op = vObjPos * uDetail;
+    vec3 albedo; float gloss; vec3 emis;
+    if      (uType == 0) surfaceIce(op,    albedo, gloss, emis);
+    else if (uType == 1) surfaceLava(op,   albedo, gloss, emis);
+    else if (uType == 2) surfaceGas(op,    albedo, gloss, emis);
+    else if (uType == 3) surfaceFossil(op, albedo, gloss, emis);
+    else if (uType == 4) surfaceSoccer(op, albedo, gloss, emis);
+    else                 surfaceIceRink(op, albedo, gloss, emis);
+
+    vec3 N = normalize(vWorldNormal);
+    vec3 V = normalize(cameraPosition - vWorldPos);
+    vec3 col = albedo * 0.06;                                  // ambient floor — never pure black
+    float ndl = clamp((dot(N, uLightDir[0]) + 0.10) / 1.10, 0.0, 1.0);
+    col += albedo * uLightCol[0] * ndl;
+    vec3 H = normalize(uLightDir[0] + V);
+    col += uLightCol[0] * pow(max(dot(N, H), 0.0), 70.0) * 0.5 * gloss * ndl;
+    float fres = pow(1.0 - max(dot(N, V), 0.0), 2.5);
+    col += fres * uLightCol[0] * 0.35 * ndl;
+    col += emis;
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+const starLightCol = new THREE.Color(STAR.color).multiplyScalar(STAR.intensity);
+function makePlanetMat(p) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uType:     { value: p.surf },
+      uLightDir: { value: [new THREE.Vector3(0, 0, 1)] },
+      uLightCol: { value: [starLightCol] },
+      uDeep:     { value: p.cDeep },
+      uMid:      { value: p.cMid },
+      uBright:   { value: p.cBright },
+      uTime:     { value: 0 },
+      uDetail:   { value: 1.6 / p.r },
+    },
+    vertexShader: PLANET_VERT,
+    fragmentShader: PLANET_FRAG,
+  });
+}
+
+// --- OOF world: a planet whose crust is tiled with "OOF" (its own textured shader)
+function makeOofTexture() {
+  const c = document.createElement('canvas');
+  c.width = 1024; c.height = 512;
+  const x = c.getContext('2d');
+  x.fillStyle = '#1b1030'; x.fillRect(0, 0, 1024, 512);          // deep purple respawn void
+  x.font = '900 60px "Fira Code", monospace';
+  x.textAlign = 'center'; x.textBaseline = 'middle';
+  for (let row = 0; row < 6; row++) {
+    for (let col = 0; col < 8; col++) {
+      const ox = (col + (row % 2) * 0.5) * 128 + 36;
+      const oy = row * 85 + 44;
+      x.fillStyle = (row + col) % 2 ? '#ffd23f' : '#ff5d73';      // alternating yellow / hot pink
+      x.fillText('OOF', ox, oy);
+    }
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+const oofTex = makeOofTexture();
+const OOF_VERT = /* glsl */ `
+  varying vec2 vUv; varying vec3 vWorldNormal; varying vec3 vWorldPos;
+  void main() {
+    vUv = uv;
+    vWorldNormal = normalize(mat3(modelMatrix) * normal);
+    vec4 wp = modelMatrix * vec4(position, 1.0); vWorldPos = wp.xyz;
+    gl_Position = projectionMatrix * viewMatrix * wp;
+  }
+`;
+const OOF_FRAG = /* glsl */ `
+  precision highp float;
+  uniform sampler2D uMap; uniform vec3 uLightDir[1]; uniform vec3 uLightCol[1];
+  varying vec2 vUv; varying vec3 vWorldNormal; varying vec3 vWorldPos;
+  void main() {
+    vec3 albedo = texture2D(uMap, vUv).rgb;
+    vec3 N = normalize(vWorldNormal);
+    float ndl = clamp((dot(N, uLightDir[0]) + 0.12) / 1.12, 0.0, 1.0);
+    vec3 col = albedo * 0.12 + albedo * uLightCol[0] * ndl;
+    vec3 V = normalize(cameraPosition - vWorldPos);
+    float fres = pow(1.0 - max(dot(N, V), 0.0), 2.5);
+    col += fres * uLightCol[0] * 0.25 * ndl;
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+function makeOofMat() {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uMap:      { value: oofTex },
+      uLightDir: { value: [new THREE.Vector3(0, 0, 1)] },
+      uLightCol: { value: [starLightCol] },
+      uTime:     { value: 0 },
+    },
+    vertexShader: OOF_VERT, fragmentShader: OOF_FRAG,
+  });
+}
+
+// --- Halo (backface shell) — atmospheres only on ice + gas ------------------
+function makeHaloMat(inColor, outColor) {
+  return new THREE.ShaderMaterial({
+    uniforms: { uHaloIn: { value: new THREE.Color(inColor) }, uHaloOut: { value: new THREE.Color(outColor) } },
+    vertexShader: /* glsl */ `
+      varying float vRim;
+      void main() {
+        vec3 nv = normalize(normalMatrix * normal);
+        vRim = clamp(-nv.z, 0.0, 1.0);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uHaloIn; uniform vec3 uHaloOut;
+      varying float vRim;
+      void main() {
+        float tight = pow(vRim, 2.2);
+        float wide  = pow(vRim, 0.8) * 0.12;
+        float i = tight + wide;
+        gl_FragColor = vec4(mix(uHaloOut, uHaloIn, tight) * i, min(i * 0.9, 1.0));
+      }
+    `,
+    side: THREE.BackSide, transparent: true,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+}
+
+// --- KHIMAIRA: a collision remnant — NOT a sphere. A battered, bilobed/rubble
+// aggregate of all the other worlds fused together (silhouette per real contact
+// binaries — Arrokoth, comet 67P, Itokawa), with a giant impact basin + central
+// peak gouged into the core, co-orbiting fragments, and a thin post-impact ring.
+function lumps(x, y, z, s) {     // smooth coherent displacement in [-1,1]
+  return (
+    Math.sin(x * 3.1 + s) * Math.cos(y * 2.7 + s * 1.3) +
+    Math.sin(y * 4.3 + s * 0.7) * Math.cos(z * 3.9 + s * 2.1) +
+    Math.sin(z * 2.3 + s * 1.7) * Math.cos(x * 3.3 + s * 0.4)
+  ) / 3.0;
+}
+const _cdir = new THREE.Vector3(0.3, 0.5, 0.8).normalize();   // giant-basin direction
+function deformChunk(geo, amp, seed, crater) {
+  const pos = geo.attributes.position, v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    const len = v.length() || 1;
+    const dx = v.x / len, dy = v.y / len, dz = v.z / len;
+    let disp = amp * lumps(dx * 2.2, dy * 2.2, dz * 2.2, seed);   // battered lumps
+    if (crater) {
+      const ang = Math.acos(Math.max(-1, Math.min(1, dx * _cdir.x + dy * _cdir.y + dz * _cdir.z)));
+      const cr = 0.95;                                            // basin angular radius
+      if (ang < cr) {
+        const t = ang / cr;
+        disp += -0.42 * (1.0 - t * t);                           // bowl depression
+        disp += 0.12 * Math.exp(-Math.pow((t - 1.0) / 0.18, 2)); // raised terraced rim
+        if (ang < 0.22) disp += 0.5 * Math.exp(-Math.pow(ang / 0.12, 2)); // central peak spire
+      }
+    }
+    v.multiplyScalar(1 + disp);
+    pos.setXYZ(i, v.x, v.y, v.z);
+  }
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
+}
+// each fused lobe keeps its own world's terrain (lobes don't blend — Arrokoth)
+const CHUNK_SPECS = [
+  { surf: SURF.FOSSIL, deep:'#3a2c1e', mid:'#b8a17e', bright:'#efe4cf', r:0.42, pos:[ 0.00, 0.02, 0.00], crater:true },
+  { surf: SURF.LAVA,   deep:'#160a08', mid:'#6e2a14', bright:'#ff7a2a', r:0.30, pos:[ 0.42, 0.12,-0.10] },
+  { surf: SURF.ICE,    deep:'#2a3d5c', mid:'#8090a8', bright:'#e8eaf0', r:0.30, pos:[-0.36,-0.06, 0.20] },
+  { surf: SURF.GAS,    deep:'#3a2f4e', mid:'#b89a6a', bright:'#e8dcc0', r:0.34, pos:[ 0.10,-0.36, 0.18] },
+  { surf: SURF.SOCCER, deep:'#0d0d10', mid:'#9aa0a8', bright:'#f4f4f0', r:0.26, pos:[-0.18, 0.34,-0.06] },
+  { surf: SURF.OOF,    deep:'#1b1030', mid:'#7a4fd0', bright:'#ffd23f', r:0.28, pos:[ 0.16, 0.28, 0.30] },
+];
+function buildChimera(p) {
+  const g = new THREE.Group();
+  p.chunkMats = [];
+  CHUNK_SPECS.forEach((s, i) => {
+    const spec = { surf: s.surf, r: s.r,
+      cDeep: new THREE.Color(s.deep), cMid: new THREE.Color(s.mid), cBright: new THREE.Color(s.bright) };
+    const mat = s.surf === SURF.OOF ? makeOofMat() : makePlanetMat(spec);
+    const geo = new THREE.SphereGeometry(s.r, s.crater ? 56 : 36, s.crater ? 40 : 28);
+    deformChunk(geo, s.r * 0.42, i * 11.7 + 3.0, !!s.crater);
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(s.pos[0], s.pos[1], s.pos[2]);
+    m.rotation.set(i * 1.3, i * 0.7, i * 2.1);
+    g.add(m);
+    p.chunkMats.push(mat);
+  });
+  // co-orbiting rocky fragments (one shared bone-rock material)
+  const fragMat = makePlanetMat({ surf: SURF.FOSSIL, r: 0.06,
+    cDeep: new THREE.Color('#2a2018'), cMid: new THREE.Color('#6b5a44'), cBright: new THREE.Color('#b8a17e') });
+  p.chunkMats.push(fragMat);
+  const fragGeo = new THREE.IcosahedronGeometry(0.05, 0);
+  for (let i = 0; i < 9; i++) {
+    const a = i * 2.399, rad = 0.85 + (i % 3) * 0.12, el = Math.sin(i * 1.7) * 0.5;
+    const f = new THREE.Mesh(fragGeo, fragMat);
+    f.position.set(Math.cos(a) * rad, el, Math.sin(a) * rad);
+    f.scale.setScalar(0.6 + (i % 4) * 0.35);
+    f.rotation.set(i, i * 1.4, i * 0.6);
+    g.add(f);
+  }
+  // thin tilted debris ring — a temporary post-collision belt
+  const RN = 140, rp = new Float32Array(RN * 3);
+  for (let i = 0; i < RN; i++) {
+    const a = (i / RN) * Math.PI * 2, rad = 1.02 + Math.sin(i * 12.9) * 0.07, y = Math.sin(i * 7.3) * 0.03;
+    const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
+    rp[i*3] = x; rp[i*3+1] = y * 0.92 - z * 0.38; rp[i*3+2] = y * 0.38 + z * 0.92;  // tilt ~22°
+  }
+  const rg = new THREE.BufferGeometry();
+  rg.setAttribute('position', new THREE.BufferAttribute(rp, 3));
+  g.add(new THREE.Points(rg, new THREE.PointsMaterial({
+    color: 0xb8a89a, size: 1.4, sizeAttenuation: false,
+    transparent: true, opacity: 0.5, depthWrite: false,
+  })));
+  p.mesh = g;
+  scene.add(g);
+}
+
+// --- OTTOMAN: a furniture planet whose icy surface is a spherical skating rink.
+// Low-poly furniture (warm Baroque gold/burgundy vs cold ice) glides in curved
+// loops on blades, leans into the turns, and leaves white skate trails — the
+// floor lamp & coat rack pirouette (the brief's "star skaters"); one armchair is
+// oversized (the Magritte "Personal Values" scale trick).
+const FURN_COL = {
+  wood:'#7a4a24', gold:'#d9a441', burgundy:'#7a1f2b', cream:'#ede0c8',
+  dark:'#2a2018', blade:'#cfe6ff', brass:'#caa24a',
+};
+const _matCache = {};
+function fmat(hex) { return _matCache[hex] || (_matCache[hex] = new THREE.MeshBasicMaterial({ color: new THREE.Color(hex) })); }
+function fbox(w, h, d, hex, x, y, z) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), fmat(hex));
+  m.position.set(x, y, z); return m;
+}
+function legsWithBlades(g, hx, hz, hy) {     // 4 legs + icy skate blades at the feet
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    g.add(fbox(0.07, hy, 0.07, FURN_COL.wood, sx * hx, hy / 2, sz * hz));
+    g.add(fbox(0.05, 0.04, 0.22, FURN_COL.blade, sx * hx, 0.0, sz * hz));
+  }
+}
+function makeArmchair() {
+  const g = new THREE.Group();
+  legsWithBlades(g, 0.2, 0.2, 0.3);
+  g.add(fbox(0.55, 0.12, 0.5, FURN_COL.burgundy, 0, 0.36, 0));      // seat
+  g.add(fbox(0.55, 0.55, 0.1, FURN_COL.burgundy, 0, 0.64, -0.2));   // back
+  g.add(fbox(0.09, 0.22, 0.5, FURN_COL.wood, -0.25, 0.5, 0));       // arms
+  g.add(fbox(0.09, 0.22, 0.5, FURN_COL.wood, 0.25, 0.5, 0));
+  g.add(fbox(0.5, 0.07, 0.06, FURN_COL.gold, 0, 0.84, -0.22));      // gilt crest
+  return g;
+}
+function makeDiningChair() {
+  const g = new THREE.Group();
+  legsWithBlades(g, 0.16, 0.16, 0.38);
+  g.add(fbox(0.4, 0.08, 0.4, FURN_COL.wood, 0, 0.42, 0));
+  g.add(fbox(0.4, 0.5, 0.06, FURN_COL.burgundy, 0, 0.66, -0.17));
+  g.add(fbox(0.4, 0.06, 0.06, FURN_COL.gold, 0, 0.86, -0.17));
+  return g;
+}
+function makeFloorLamp() {
+  const g = new THREE.Group();
+  g.add(fbox(0.26, 0.05, 0.26, FURN_COL.dark, 0, 0.03, 0));         // base
+  g.add(fbox(0.06, 0.04, 0.34, FURN_COL.blade, 0, 0.0, 0));         // single blade
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.8, 8), fmat(FURN_COL.brass));
+  pole.position.set(0, 0.45, 0); g.add(pole);
+  const shade = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.26, 18), fmat(FURN_COL.cream));
+  shade.position.set(0, 0.95, 0); g.add(shade);
+  return g;
+}
+function makeCoatRack() {
+  const g = new THREE.Group();
+  g.add(fbox(0.26, 0.05, 0.26, FURN_COL.dark, 0, 0.03, 0));
+  g.add(fbox(0.06, 0.04, 0.34, FURN_COL.blade, 0, 0.0, 0));
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.95, 8), fmat(FURN_COL.wood));
+  pole.position.set(0, 0.52, 0); g.add(pole);
+  for (let i = 0; i < 5; i++) {                                     // radiating hooks (ballerina arms)
+    const h = fbox(0.05, 0.05, 0.2, FURN_COL.brass, 0, 0.9, 0.1);
+    h.rotation.y = i * (Math.PI * 2 / 5);
+    h.position.set(Math.sin(i * 1.257) * 0.1, 0.9, Math.cos(i * 1.257) * 0.1);
+    g.add(h);
+  }
+  return g;
+}
+function makeClock() {
+  const g = new THREE.Group();
+  g.add(fbox(0.42, 0.1, 0.3, FURN_COL.wood, 0, 0.05, 0));           // plinth
+  g.add(fbox(0.07, 0.04, 0.34, FURN_COL.blade, -0.16, 0.0, 0));     // blades
+  g.add(fbox(0.07, 0.04, 0.34, FURN_COL.blade, 0.16, 0.0, 0));
+  g.add(fbox(0.34, 0.95, 0.22, FURN_COL.wood, 0, 0.58, 0));         // tall body
+  g.add(fbox(0.36, 0.08, 0.24, FURN_COL.gold, 0, 1.06, 0));         // gilt cornice
+  const face = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.03, 16), fmat(FURN_COL.cream));
+  face.rotation.x = Math.PI / 2; face.position.set(0, 0.8, 0.12); g.add(face);
+  return g;
+}
+const FURN_BUILDERS = [makeArmchair, makeFloorLamp, makeCoatRack, makeClock, makeDiningChair, makeFloorLamp, makeCoatRack, makeArmchair];
+
+function buildFurnitureWorld(p) {
+  const g = new THREE.Group();
+  const R = 0.64;
+  p.iceR = R;
+  // the rink itself (ice-rink shader)
+  const iceMat = makePlanetMat({ surf: SURF.FURNITURE, r: R, cDeep: p.cDeep, cMid: p.cMid, cBright: p.cBright });
+  g.add(new THREE.Mesh(new THREE.SphereGeometry(R, 64, 48), iceMat));
+  p.iceMat = iceMat;
+  // skaters distributed over the rink (fibonacci directions)
+  p.skaters = [];
+  const N = FURN_BUILDERS.length;
+  const _up = new THREE.Vector3(0, 1, 0), _alt = new THREE.Vector3(1, 0, 0);
+  for (let i = 0; i < N; i++) {
+    const y = 1 - (i + 0.5) / N * 2;                 // -1..1
+    const rad = Math.sqrt(1 - y * y), th = i * 2.399;
+    const C = new THREE.Vector3(Math.cos(th) * rad, y, Math.sin(th) * rad).normalize();
+    const T1 = new THREE.Vector3().crossVectors(C, Math.abs(C.y) > 0.9 ? _alt : _up).normalize();
+    const T2 = new THREE.Vector3().crossVectors(C, T1).normalize();
+    const obj = FURN_BUILDERS[i]();
+    const oversized = (i === 7);                      // Magritte scale trick: one giant chair
+    obj.scale.setScalar(oversized ? 0.42 : 0.16 + (i % 3) * 0.02);
+    g.add(obj);
+    // skate trail (white, hugs the ice)
+    const TN = 22, tp = new Float32Array(TN * 3);
+    const tgeo = new THREE.BufferGeometry();
+    tgeo.setAttribute('position', new THREE.BufferAttribute(tp, 3));
+    const line = new THREE.Line(tgeo, new THREE.LineBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    g.add(line);
+    p.skaters.push({
+      obj, C, T1, T2,
+      loopR: 0.16 + (i % 4) * 0.06,
+      speed: (0.5 + (i % 3) * 0.35) * (i % 2 ? -1 : 1),
+      phase: i * 1.7,
+      bank: (i % 2 ? -1 : 1) * 0.34,
+      selfSpin: (FURN_BUILDERS[i] === makeFloorLamp || FURN_BUILDERS[i] === makeCoatRack) ? 1.6 : 0,
+      trail: { pts: tp, geo: tgeo, init: false },
+    });
+  }
+  p.mesh = g;
+  scene.add(g);
+}
+
+const _fd = new THREE.Vector3(), _fv = new THREE.Vector3(), _ff = new THREE.Vector3(),
+      _fr = new THREE.Vector3(), _fp = new THREE.Vector3(), _fm = new THREE.Matrix4();
+function updateFurnitureWorld(p, dt, t, moving) {
+  for (const s of p.skaters) {
+    if (moving) s.t = (s.t || s.phase) + s.speed * dt; else if (s.t === undefined) s.t = s.phase;
+    const ang = s.t, sr = Math.sin(s.loopR), cr = Math.cos(s.loopR);
+    _fd.copy(s.C).multiplyScalar(cr)
+      .addScaledVector(s.T1, sr * Math.cos(ang))
+      .addScaledVector(s.T2, sr * Math.sin(ang)).normalize();
+    const bob = 0.014 + 0.01 * Math.sin(t * 5 + s.phase);
+    _fp.copy(_fd).multiplyScalar(p.iceR + bob);
+    s.obj.position.copy(_fp);
+    _fv.copy(s.T1).multiplyScalar(-Math.sin(ang)).addScaledVector(s.T2, Math.cos(ang));
+    _ff.copy(_fv).addScaledVector(_fd, -_fv.dot(_fd)).normalize();   // forward = surface tangent
+    _fr.crossVectors(_ff, _fd).normalize();                          // right
+    _fm.makeBasis(_fr, _fd, _ff);                                    // +Y → up(normal), +Z → forward
+    s.obj.quaternion.setFromRotationMatrix(_fm);
+    s.obj.rotateZ(s.bank + 0.12 * Math.sin(t * 4 + s.phase));        // lean / carve into the turn
+    if (s.selfSpin) s.obj.rotateY(t * s.selfSpin);                   // pirouette
+    const tp = s.trail.pts;
+    if (!s.trail.init) { for (let k = 0; k < tp.length; k += 3) { tp[k]=_fp.x; tp[k+1]=_fp.y; tp[k+2]=_fp.z; } s.trail.init = true; }
+    else if (moving) { for (let k = tp.length - 3; k >= 3; k--) tp[k] = tp[k-3]; tp[0]=_fp.x; tp[1]=_fp.y; tp[2]=_fp.z; }
+    s.trail.geo.attributes.position.needsUpdate = true;
+  }
+}
+
+// --- Build the planet meshes (+ halos) --------------------------------------
+for (const p of PLANETS) {
+  if (p.surf === SURF.FURNITURE) { buildFurnitureWorld(p); continue; }
+  if (p.surf === SURF.CHIMERA) { buildChimera(p); continue; }
+  const mat = p.surf === SURF.OOF ? makeOofMat() : makePlanetMat(p);
+  p.mesh = new THREE.Mesh(new THREE.SphereGeometry(p.r, 64, 48), mat);
+  p.mesh.rotation.order = 'YXZ';
+  scene.add(p.mesh);
+  if (p.surf === SURF.ICE || p.surf === SURF.GAS) {
+    p.halo = new THREE.Mesh(new THREE.SphereGeometry(p.r, 32, 24),
+      makeHaloMat(p.surf === SURF.ICE ? '#bcd2ff' : '#d8c79a', p.bright));
+    p.halo.scale.setScalar(1.28);
+    scene.add(p.halo);
+  }
+}
+
+// --- Soccer-ball meteors: a small pool sharing one soccer material ----------
+const METEOR_R = 14;
+const meteorMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uType:     { value: SURF.SOCCER },
+    uLightDir: { value: [new THREE.Vector3(0.4, 0.7, 0.6).normalize()] },
+    uLightCol: { value: [new THREE.Color('#ffe6c0')] },
+    uDeep:     { value: new THREE.Color('#0d0d10') },
+    uMid:      { value: new THREE.Color('#9aa0a8') },
+    uBright:   { value: new THREE.Color('#f4f4f0') },
+    uTime:     { value: 0 },
+    uDetail:   { value: 1.0 },
+  },
+  vertexShader: PLANET_VERT, fragmentShader: PLANET_FRAG,
+});
+const meteorGeom = new THREE.SphereGeometry(0.06, 20, 14);
+const METEORS = [];
+function spawnMeteor(m) {
+  // start on one hemisphere of the bounding sphere, fly roughly across to the other side
+  const a = Math.random() * Math.PI * 2, b = Math.acos(Math.random() * 2 - 1);
+  const start = new THREE.Vector3(
+    Math.sin(b) * Math.cos(a), Math.cos(b), Math.sin(b) * Math.sin(a)
+  ).multiplyScalar(METEOR_R);
+  m.mesh.position.copy(start);
+  // velocity aimed near the opposite side, with some jitter, so it crosses the scene
+  const aim = start.clone().multiplyScalar(-1).add(new THREE.Vector3(
+    (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10
+  ));
+  m.vel.copy(aim).normalize().multiplyScalar(0.8 + Math.random() * 0.9);
+  m.spin.set((Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2);
+}
+for (let i = 0; i < 6; i++) {
+  const mesh = new THREE.Mesh(meteorGeom, meteorMat);
+  scene.add(mesh);
+  const m = { mesh, vel: new THREE.Vector3(), spin: new THREE.Vector3() };
+  spawnMeteor(m);
+  // de-cluster the initial burst by advancing each a different amount along its path
+  m.mesh.position.addScaledVector(m.vel, i * 2.4);
+  METEORS.push(m);
+}
+
+// --- Porsche rain: low-poly cars falling through the system (the OOF world's weather)
+function makeCar() {
+  const g = new THREE.Group();
+  const bodyMat  = new THREE.MeshBasicMaterial({ color: 0xd5001c });   // Porsche guards red
+  const darkMat  = new THREE.MeshBasicMaterial({ color: 0x141414 });
+  const glassMat = new THREE.MeshBasicMaterial({ color: 0x9fd8ff });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.12, 0.22), bodyMat); g.add(body);
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.11, 0.19), glassMat);
+  cabin.position.set(-0.02, 0.10, 0); g.add(cabin);
+  const nose = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.06, 0.20), bodyMat);
+  nose.position.set(0.30, -0.02, 0); g.add(nose);
+  const spoiler = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.02, 0.24), darkMat);
+  spoiler.position.set(-0.26, 0.07, 0); g.add(spoiler);
+  const wheelGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.05, 12);
+  for (const [wx, wz] of [[0.18, 0.12], [0.18, -0.12], [-0.18, 0.12], [-0.18, -0.12]]) {
+    const w = new THREE.Mesh(wheelGeo, darkMat);
+    w.rotation.x = Math.PI / 2; w.position.set(wx, -0.06, wz); g.add(w);
+  }
+  g.scale.setScalar(0.55);
+  return g;
+}
+const RAIN_TOP = 13, RAIN_BOT = -13, RAIN_SPREAD = 12;
+const CARS = [];
+function spawnCar(c, initial) {
+  c.group.position.set(
+    (Math.random() * 2 - 1) * RAIN_SPREAD,
+    initial ? (Math.random() * 2 - 1) * RAIN_TOP : RAIN_TOP + Math.random() * 2,
+    (Math.random() * 2 - 1) * RAIN_SPREAD
+  );
+  c.vy = 2.4 + Math.random() * 2.0;
+  c.group.rotation.set(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28);
+  c.spin = (Math.random() - 0.5) * 1.6;
+}
+for (let i = 0; i < 10; i++) {
+  const group = makeCar();
+  scene.add(group);
+  const c = { group, vy: 0, spin: 0 };
+  spawnCar(c, true);
+  CARS.push(c);
+}
+
+// --- Soccer-ball IMPACTORS: meteors that home in on PELE XI and crash into it -
+const pele = PLANETS.find(p => p.surf === SURF.SOCCER);
+const crasherGeom = new THREE.SphereGeometry(0.09, 20, 14);
+const CRASHERS = [];
+const _toPele = new THREE.Vector3();
+function spawnCrasher(c, initial) {
+  // start on a random direction a few units out from PELE, then fly straight in
+  const a = Math.random() * Math.PI * 2, b = Math.acos(Math.random() * 2 - 1);
+  c.dir.set(Math.sin(b) * Math.cos(a), Math.cos(b), Math.sin(b) * Math.sin(a));
+  c.mesh.position.copy(pele.worldPos).addScaledVector(c.dir, 4.0 + Math.random() * 3.0 + (initial ? Math.random() * 2.0 : 0));
+  c.speed = 2.6 + Math.random() * 2.2;
+  c.spin.set((Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3);
+}
+for (let i = 0; i < 5; i++) {
+  const mesh = new THREE.Mesh(crasherGeom, meteorMat);   // same soccer-ball shader
+  scene.add(mesh);
+  const c = { mesh, dir: new THREE.Vector3(), speed: 0, spin: new THREE.Vector3() };
+  spawnCrasher(c, true);
+  CRASHERS.push(c);
+}
+
+// --- Impact flashes: a small additive burst when a soccer ball hits PELE ------
+const FLASH_LIFE = 0.45;
+const flashTex = makeGlowTexture(0.32, '#ffffff');
+const FLASHES = [];
+for (let i = 0; i < 6; i++) {
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: flashTex, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  }));
+  sprite.scale.setScalar(0.01);
+  scene.add(sprite);
+  FLASHES.push({ sprite, life: 0 });
+}
+function triggerFlash(pos) {
+  const f = FLASHES.find(f => f.life <= 0) || FLASHES[0];
+  f.sprite.position.copy(pos);
+  f.life = FLASH_LIFE;
+}
+
+// --- Destination overlay: marker + label + hit-disc + leader line per planet -
+const linesSvg = document.getElementById('lines');
+const SVG_NS = 'http://www.w3.org/2000/svg';
+for (const p of PLANETS) {
+  p.line = document.createElementNS(SVG_NS, 'line');
+  p.line.setAttribute('stroke', 'rgba(229,232,238,0.55)');
+  p.line.setAttribute('stroke-width', '1');
+  p.line.setAttribute('stroke-dasharray', '3 3');
+  linesSvg.appendChild(p.line);
+
+  p.hitEl = document.createElement('div');
+  p.hitEl.className = 'hit';
+  document.body.appendChild(p.hitEl);
+
+  p.markerEl = document.createElement('div');
+  p.markerEl.className = 'marker';
+  document.body.appendChild(p.markerEl);
+
+  p.labelEl = document.createElement('div');
+  p.labelEl.className = 'label';
+  p.labelEl.innerHTML = `<div class="lname">${p.name}</div><div class="ltype">${p.type}</div>`;
+  document.body.appendChild(p.labelEl);
+}
+
+// --- Motion / focus state ----------------------------------------------------
+const QP = new URLSearchParams(location.search);
+const PREFLIGHT = QP.has('preflight');
+const OMEGA = 4.5;                       // critically-damped spring stiffness (~1.2s settle)
+const OVERVIEW_POS = new THREE.Vector3(0, 14, 31.5); // frames out to OTTOMAN's orbit (14.7)
+const OVERVIEW_TGT = new THREE.Vector3(0, 0, 0);
+
+function makeVSpring(initial) {
+  return { x: initial.clone(), v: new THREE.Vector3(), target: initial.clone() };
+}
+const camPos = makeVSpring(OVERVIEW_POS);
+const camTgt = makeVSpring(OVERVIEW_TGT);
+const _acc = new THREE.Vector3();
+function springStepV(s, dt) {
+  // v += (-2ωv - ω²(x-target)) dt ; x += v dt   — componentwise critical damping
+  _acc.copy(s.x).sub(s.target).multiplyScalar(-OMEGA * OMEGA);
+  _acc.addScaledVector(s.v, -2.0 * OMEGA);
+  s.v.addScaledVector(_acc, dt);
+  s.x.addScaledVector(s.v, dt);
+}
+
+let focused = null;
+const _dir = new THREE.Vector3(), _off = new THREE.Vector3(), _side = new THREE.Vector3();
+const _UP = new THREE.Vector3(0, 1, 0);
+function applyFocusTargets() {
+  if (!focused) {
+    camPos.target.copy(OVERVIEW_POS);
+    camTgt.target.copy(OVERVIEW_TGT);
+  } else {
+    // 3/4 view of the LIT hemisphere: bias the standoff toward the star (-dir) so the
+    // sunlit face points at us, plus to the side and slightly above for a terminator.
+    _dir.copy(focused.worldPos).normalize();             // outward from star
+    _side.crossVectors(_dir, _UP).normalize();           // orbital tangent
+    _off.copy(_dir).multiplyScalar(-0.45)                // toward the star = lit side
+        .addScaledVector(_side, 0.80)
+        .addScaledVector(_UP, 0.42)
+        .normalize();
+    camTgt.target.copy(focused.worldPos);
+    camPos.target.copy(focused.worldPos).addScaledVector(_off, focused.r * 7.0 + 1.5);
+  }
+}
+function setFocus(p) {
+  focused = p;
+  for (const q of PLANETS) {
+    q.markerEl.classList.toggle('active', q === p);
+    q.labelEl.classList.toggle('active', q === p);
+  }
+  applyFocusTargets();
+}
+
+// --- Interaction: REAL DOM clicks. hit-disc/marker/label focus; empty → overview
+const down = { x: 0, y: 0 };
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+if (!reducedMotion) {
+  window.addEventListener('pointerdown', e => { down.x = e.clientX; down.y = e.clientY; });
+  window.addEventListener('click', e => {
+    if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6) return;   // drag guard
+    if (e.target.closest('.hud, a')) return;
+    const focusEl = e.target.closest('.hit, .marker, .label');
+    if (focusEl) { setFocus(focusEl.__planet); return; }
+    setFocus(null);   // clicked empty space → pull back to overview
+  });
+  for (const p of PLANETS) {
+    for (const el of [p.hitEl, p.markerEl, p.labelEl]) el.__planet = p;
+    for (const el of [p.markerEl, p.labelEl]) {
+      el.addEventListener('pointerenter', () => { p.markerEl.classList.add('hot'); p.labelEl.classList.add('hot'); });
+      el.addEventListener('pointerleave', () => { p.markerEl.classList.remove('hot'); p.labelEl.classList.remove('hot'); });
+    }
+  }
+} else {
+  document.querySelector('.hint').innerHTML = '<b>STATIC</b> reduced motion · single frame';
+}
+
+// --- Per-frame overlay projection -------------------------------------------
+const _proj = new THREE.Vector3();
+function updateOverlay() {
+  const W = window.innerWidth, H = window.innerHeight;
+  const cx = W / 2, cy = H / 2;
+  const vFOV = camera.fov * Math.PI / 180;
+  for (const p of PLANETS) {
+    _proj.copy(p.worldPos).project(camera);
+    const onScreen = _proj.z < 1 && Math.abs(_proj.x) < 1.2 && Math.abs(_proj.y) < 1.2;
+    let op = onScreen ? 1 : 0;
+    if (focused && p !== focused) op *= 0.4;   // declutter when one world is focused
+
+    const sx = (_proj.x * 0.5 + 0.5) * W;
+    const sy = (-_proj.y * 0.5 + 0.5) * H;
+    let dx = sx - cx, dy = sy - cy;
+    const dl = Math.hypot(dx, dy) || 1;
+    dx /= dl; dy /= dl;
+    const lx = sx + dx * 70, ly = sy + dy * 70;
+
+    // projected on-screen radius of the planet → sizes the hit disc
+    const dist = camera.position.distanceTo(p.worldPos) || 1;
+    const rPix = Math.max(14, (p.r / dist) * (H / 2) / Math.tan(vFOV / 2));
+
+    p.markerEl.style.transform = `translate(${sx}px, ${sy}px) translate(-50%, -50%)`;
+    p.markerEl.style.setProperty('--rx', dx.toFixed(3));
+    p.markerEl.style.setProperty('--ry', dy.toFixed(3));
+    p.labelEl.style.transform = `translate(${lx}px, ${ly}px) translate(-50%, -100%)`;
+    p.hitEl.style.transform = `translate(${sx}px, ${sy}px) translate(-50%, -50%)`;
+    p.hitEl.style.width = p.hitEl.style.height = `${rPix * 2}px`;
+
+    p.line.setAttribute('x1', sx); p.line.setAttribute('y1', sy);
+    p.line.setAttribute('x2', lx); p.line.setAttribute('y2', ly);
+    p.line.setAttribute('stroke-opacity', op * 0.7);
+    p.markerEl.style.opacity = op;
+    p.labelEl.style.opacity = op;
+
+    const interactive = onScreen;
+    if (p.wasInteractive !== interactive) {
+      p.wasInteractive = interactive;
+      const pe = interactive ? 'auto' : 'none';
+      p.markerEl.style.pointerEvents = pe;
+      p.labelEl.style.pointerEvents = pe;
+      p.hitEl.style.pointerEvents = pe;
+    }
+  }
+}
+
+// --- Resize ------------------------------------------------------------------
+function onResize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(w, h, false);
+}
+window.addEventListener('resize', onResize);
+
+// --- Frame: orbit + spin + camera spring + overlay --------------------------
+const _starDir = new THREE.Vector3();
+function stepWorld(dt, nowSec) {
+  const moving = !PREFLIGHT;
+  for (const p of PLANETS) {
+    if (moving) p.theta += p.speed * dt;
+    const x = Math.cos(p.theta) * p.orbit;
+    const z = Math.sin(p.theta) * p.orbit;
+    p.mesh.position.set(x, Math.sin(p.incl) * z, Math.cos(p.incl) * z);
+    p.worldPos.copy(p.mesh.position);
+    if (p.halo) p.halo.position.copy(p.worldPos);
+    if (moving) p.mesh.rotation.y += p.spin * dt;
+    _starDir.copy(STAR.pos).sub(p.worldPos).normalize();   // key light = the central star
+    if (p.chunkMats) {                                     // KHIMAIRA = a group of chunk materials
+      for (const m of p.chunkMats) {
+        m.uniforms.uLightDir.value[0].copy(_starDir);
+        m.uniforms.uTime.value = nowSec;
+      }
+    } else if (p.iceMat) {                                 // OTTOMAN = ice rink + skating furniture
+      p.iceMat.uniforms.uLightDir.value[0].copy(_starDir);
+      p.iceMat.uniforms.uTime.value = nowSec;
+      updateFurnitureWorld(p, dt, nowSec, moving);
+    } else {
+      p.mesh.material.uniforms.uLightDir.value[0].copy(_starDir);
+      p.mesh.material.uniforms.uTime.value = nowSec;
+    }
+  }
+  meteorMat.uniforms.uTime.value = nowSec;
+  for (const m of METEORS) {
+    if (moving) {
+      m.mesh.position.addScaledVector(m.vel, dt);
+      m.mesh.rotation.x += m.spin.x * dt;
+      m.mesh.rotation.y += m.spin.y * dt;
+      if (m.mesh.position.length() > METEOR_R) spawnMeteor(m);
+    }
+  }
+  for (const c of CARS) {
+    if (moving) {
+      c.group.position.y -= c.vy * dt;                   // it's raining Porsches
+      c.group.rotation.z += c.spin * dt;
+      c.group.rotation.x += c.spin * 0.5 * dt;
+      if (c.group.position.y < RAIN_BOT) spawnCar(c, false);
+    }
+  }
+  // soccer-ball impactors home straight into PELE XI and crash (flash + respawn)
+  for (const c of CRASHERS) {
+    if (moving) {
+      _toPele.copy(pele.worldPos).sub(c.mesh.position);
+      if (_toPele.length() < pele.r + 0.09) {            // contact → crash
+        triggerFlash(c.mesh.position);
+        spawnCrasher(c, false);
+      } else {
+        _toPele.normalize();
+        c.mesh.position.addScaledVector(_toPele, c.speed * dt);
+        c.mesh.rotation.x += c.spin.x * dt;
+        c.mesh.rotation.y += c.spin.y * dt;
+      }
+    }
+  }
+  for (const f of FLASHES) {
+    if (f.life > 0 && moving) f.life -= dt;
+    const t = 1 - Math.max(f.life, 0) / FLASH_LIFE;       // 0 at spawn → 1 at death
+    f.sprite.material.opacity = f.life > 0 ? (1 - t) : 0;
+    f.sprite.scale.setScalar(0.12 + t * 0.95);
+  }
+  // camera focus spring (target recomputed every frame so a focused world stays framed)
+  applyFocusTargets();
+  springStepV(camPos, dt);
+  springStepV(camTgt, dt);
+  camera.position.copy(camPos.x);
+  camera.lookAt(camTgt.x);
+  updateOverlay();
+}
+
+if (PREFLIGHT) window.__system = {
+  PLANETS, STAR, camera, camPos, camTgt, setFocus,
+  get focused() { return focused; },
+};
+
+let last = performance.now() / 1000;
+function tick() {
+  if (!reducedMotion) requestAnimationFrame(tick);
+  const now = performance.now() / 1000;
+  const dt = Math.min(now - last, 0.05);
+  last = now;
+  stepWorld(dt, now);
+  renderer.render(scene, camera);
+}
+
+function start() {
+  // settle the camera onto the overview immediately (no spring-in from origin)
+  camera.position.copy(OVERVIEW_POS);
+  camera.lookAt(OVERVIEW_TGT);
+  if (reducedMotion) {
+    stepWorld(0, 0);          // one static frame, no loop, no listeners
+    renderer.render(scene, camera);
+  } else {
+    requestAnimationFrame(tick);
+  }
+}
+
+if (document.fonts?.ready) document.fonts.ready.then(start);
+else start();
+</script>
+
+</body>
+</html>

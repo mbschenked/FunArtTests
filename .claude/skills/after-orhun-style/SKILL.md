@@ -25,6 +25,7 @@ Single-file browser art studies. No build step, no npm. Every piece is one self-
 - `devicePixelRatio` capped at 2; canvas buffer size kept separate from CSS size. When using `renderer.setSize(w, h, false)`, the canvas CSS MUST set `width:100%; height:100%` — without it the canvas displays at buffer size (2× at dpr 2) and the scene lands off-center.
 - rAF loop with clamped dt; `resize` listener rebuilds size-dependent state.
 - `prefers-reduced-motion: reduce` → render exactly one static frame: no rAF loop, no interaction listeners.
+- When JS positions DOM overlay elements via inline `style.transform` pixel translates, NEVER use the standalone CSS `scale`/`translate`/`rotate` properties on those elements (e.g. for hover states) — the individual properties compose OUTSIDE the `transform` property and multiply the inline positioning, throwing the element across the screen. Put the effect inside the inline transform chain via a registered `@property` custom property instead (keeps transitions).
 - WebGL text uses the glyph-atlas pattern: 1024×32 canvas texture, 32 cells of 32×32; `texture.flipY = false` with shader-side v-flip.
 
 ## Shipping a piece (protocol)
