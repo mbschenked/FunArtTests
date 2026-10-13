@@ -12,6 +12,14 @@ Three browser-renderable adaptations of [orhun](https://github.com/orhun)'s term
 - **Warped Console** — matrix-rain texture on a vertex-shader-deformed 3D plane (`ratty`)
 - **Boot Scatter** — Canvas 2D scatter-point progressive reveal across rotating sources (`ratatui-splash-screen`)
 
+### [`camera-shake-lab/`](camera-shake-lab/) &nbsp; · &nbsp; [▶ live](https://mbschenked.github.io/FunArtTests/camera-shake-lab/)
+
+An interactive visualizer for Unreal Engine 5.8 camera shakes:
+
+- **Details-panel replica** — every field of a Wave Oscillator or Perlin Noise shake, engine defaults included
+- **Live views** — camera view, per-axis timeline and peak offsets redraw as you change a value
+- **Gotchas + presets** — what the engine source does that the editor doesn't tell you, plus gun kick / hit / landing / explosion starting points
+
 ### [`threads-of-god-2d/`](threads-of-god-2d/) &nbsp; · &nbsp; [▶ live](https://mbschenked.github.io/FunArtTests/threads-of-god-2d/)
 
 A playable Sekiro-style boss duel — **Micheal vs Arelius** — porting the combat grammar of my UE5 project [ThreadsOfGod](https://github.com/mbschenked/ThreadsOfGod) to vanilla Canvas:

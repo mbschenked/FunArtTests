@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Camera Shake Lab</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a Details-panel replica on the left, three live views on the right, then a 1:1 field reference. */
+:root{
+  --bg:#eef1f5; --panel:#ffffff; --panel2:#f6f8fb; --fg:#1b2330; --muted:#5a6678; --line:#d4dae3; --accent:#2f66c9;
+  --code:#e6ebf2; --warn:#a4561b;
+  --cX:#7b57c9; --cY:#2f66c9; --cZ:#c2562b; --cPitch:#2f8a4e; --cYaw:#1a8a8a; --cRoll:#c23d7a; --cFOV:#8a7a1f;
+  --sky:#c9d8ea; --ground:#a9b49a; --sceneLine:#5c6b55; --target:#3a4250;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#12171f; --panel:#1b222d; --panel2:#151b24; --fg:#e3e8ef; --muted:#97a3b5; --line:#2d3848; --accent:#6f9cf0;
+  --code:#243041; --warn:#e3a06a;
+  --cX:#a98bf0; --cY:#6f9cf0; --cZ:#ee8a5e; --cPitch:#5fc283; --cYaw:#4fc9c9; --cRoll:#ee7ab0; --cFOV:#d4c25a;
+  --sky:#2a3a52; --ground:#2f3a2c; --sceneLine:#6d7f66; --target:#c9d2de; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#12171f; --panel:#1b222d; --panel2:#151b24; --fg:#e3e8ef; --muted:#97a3b5; --line:#2d3848; --accent:#6f9cf0;
+  --code:#243041; --warn:#e3a06a;
+  --cX:#a98bf0; --cY:#6f9cf0; --cZ:#ee8a5e; --cPitch:#5fc283; --cYaw:#4fc9c9; --cRoll:#ee7ab0; --cFOV:#d4c25a;
+  --sky:#2a3a52; --ground:#2f3a2c; --sceneLine:#6d7f66; --target:#c9d2de; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font:15px/1.55 var(--sans)}
+.wrap{max-width:1180px;margin:0 auto;padding-block:28px 64px;padding-inline:16px;display:flex;flex-direction:column;gap:34px}
+h1{font-size:1.9rem;line-height:1.15;margin:0 0 6px;text-wrap:balance}
+h2{font-size:1.25rem;margin:0 0 10px;text-wrap:balance}
+h3{font-size:1rem;margin:18px 0 6px}
+p{margin:0 0 10px;max-width:72ch}
+.lede{color:var(--muted);font-size:1.02rem}
+code{font-family:var(--mono);font-size:.86em;background:var(--code);padding:1px 5px;border-radius:4px}
+.lab{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);gap:16px;align-items:start}
+.views{position:sticky;top:calc(env(safe-area-inset-top,0px) + 8px)}
+@media (max-width:860px){.lab{grid-template-columns:minmax(0,1fr)}.views{position:static;order:-1}.dp{max-height:62vh;overflow-y:auto}}
+/* Details panel replica */
+.dp{background:var(--panel);border:1px solid var(--line);border-radius:8px;font-size:.85rem;min-width:0;overflow:hidden}
+.dp-title{padding:8px 12px;font-weight:600;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;align-items:center}
+.dp-title span{color:var(--muted);font-weight:400;font-size:.78rem}
+.cat{border-bottom:1px solid var(--line)}
+.cat>summary{list-style:none;cursor:pointer;padding:6px 12px;background:var(--panel2);font-weight:600;font-size:.8rem;letter-spacing:.02em}
+.cat>summary::before{content:"▾ ";color:var(--muted)}
+.cat:not([open])>summary::before{content:"▸ "}
+.cat>summary::-webkit-details-marker{display:none}
+.r{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:8px;align-items:center;padding:3px 12px}
+.r.ind{padding-left:28px}
+.r label{color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.r .sub{color:var(--muted);font-size:.74rem}
+.osc-h{padding:5px 12px 2px;font-weight:600;display:flex;gap:8px;align-items:baseline}
+.osc-h i{font-style:normal;color:var(--muted);font-weight:400;font-size:.74rem}
+.sw{display:inline-block;width:9px;height:9px;border-radius:2px}
+input[type=number],select{font:inherit;font-family:var(--mono);font-size:.8rem;width:100%;padding:2px 6px;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:4px;min-width:0}
+input[type=number].changed{border-color:var(--accent)}
+.dp input[type=number]{cursor:ew-resize;touch-action:pan-y;-moz-appearance:textfield;appearance:textfield}
+.dp input[type=number]::-webkit-inner-spin-button,.dp input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.dp input[type=number]:focus{cursor:text}
+.dp input[type=number].scrub{border-color:var(--accent);background:var(--panel)}
+body.scrubbing,body.scrubbing *{cursor:ew-resize!important;user-select:none}
+.def{font-size:.7rem;color:var(--muted)}
+.na{padding:10px 12px;color:var(--muted)}
+/* views */
+.views{display:flex;flex-direction:column;gap:12px;min-width:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;min-width:0}
+.card h4{margin:0 0 8px;font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center}
+canvas{width:100%;max-width:100%;display:block;border-radius:6px;background:var(--panel2)}
+.two{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:12px;align-items:start}
+@media (max-width:640px){.two{grid-template-columns:minmax(0,1fr)}}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+button{font:600 .8rem var(--sans);padding:5px 11px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--fg);cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button[aria-pressed=true]{background:var(--code);border-color:var(--accent)}
+button:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.scrub{display:flex;gap:10px;align-items:center}
+.scrub input{flex:1;min-width:0}
+.scrub output{font-family:var(--mono);font-size:.8rem;font-variant-numeric:tabular-nums;min-width:7ch;text-align:right}
+.ro{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:6px}
+.ro div{background:var(--panel2);border-radius:6px;padding:5px 8px;font-size:.75rem;color:var(--muted)}
+.ro b{display:block;font-family:var(--mono);font-size:.9rem;color:var(--fg);font-variant-numeric:tabular-nums}
+.msg{font-size:.8rem;color:var(--warn);min-height:1.2em;margin:6px 0 0}
+.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:.75rem;color:var(--muted);text-transform:none;letter-spacing:0}
+.legend span{display:inline-flex;gap:4px;align-items:center}
+/* reference */
+.tbl{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+th{font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);background:var(--panel2)}
+td.src{font-family:var(--mono);font-size:.72rem;color:var(--muted);white-space:nowrap}
+td.d{font-family:var(--mono);font-size:.82rem;white-space:nowrap}
+.gotchas{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.gotchas div{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:6px;padding:10px 14px;min-width:0}
+.gotchas b{display:block;margin-bottom:4px}
+.gotchas p{margin:0;font-size:.88rem}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+</style>
+
+<div class="wrap">
+<header>
+  <h1>Camera Shake Lab</h1>
+  <p class="lede">A copy of the Details panel you get in a camera shake Blueprint's <b>Class Defaults</b> in UE 5.8, field for field, with the same defaults. Change a value and the views redraw. Wave Oscillator and Perlin Noise are simulated with the engine's own formulas, read from the 5.8 source.</p>
+</header>
+
+<section>
+  <div class="lab">
+    <div class="dp" id="dp">
+      <div class="dp-title">Details <span>Class Defaults</span></div>
+      <details class="cat" open><summary>Camera Shake</summary>
+        <div class="r"><label for="single">Single Instance</label><input type="checkbox" id="single"></div>
+      </details>
+      <details class="cat" open><summary>Camera Shake Pattern</summary>
+        <div class="r"><label for="pattern">Root Shake Pattern</label>
+          <select id="pattern">
+            <option value="wave">Wave Oscillator Camera Shake Pattern</option>
+            <option value="perlin">Perlin Noise Camera Shake Pattern</option>
+            <option value="composite">Composite Camera Shake Pattern</option>
+            <option value="sequence">Sequence Camera Shake Pattern</option>
+          </select></div>
+      </details>
+      <div id="patternFields"></div>
+    </div>
+
+    <div class="views">
+      <div class="row">
+        <button class="primary" id="play">Play</button>
+        <button id="reroll">Re-roll random</button>
+        <span class="def" style="margin-left:auto">Presets:</span>
+        <select id="preset" aria-label="Preset" style="width:auto">
+          <option value="">Choose…</option>
+          <option value="defaults">Engine defaults (new Wave Oscillator)</option>
+          <option value="kick">Gun kick (pitch up, one-way)</option>
+          <option value="hit">Hit from the left (diagonal)</option>
+          <option value="land">Landing thud (one-way down)</option>
+          <option value="boom">Explosion (Perlin)</option>
+        </select>
+      </div>
+      <div class="two">
+        <div class="card"><h4>Camera view <span class="legend">target 3 m away · base FOV 90°</span></h4>
+          <canvas id="cam" aria-label="What the camera sees at the scrub time"></canvas></div>
+        <div class="card"><h4><span>Path</span>
+          <span class="row"><button id="vLoc" aria-pressed="true">Location</button><button id="vRot" aria-pressed="false">Rotation</button></span></h4>
+          <canvas id="path" aria-label="Path of the camera offset"></canvas>
+          <p class="def" id="pathCap" style="margin:6px 0 0"></p></div>
+      </div>
+      <div class="card"><h4><span>Over time</span><span class="legend" id="legend"></span></h4>
+        <canvas id="time" aria-label="Every channel over time; click or drag to scrub"></canvas>
+        <div class="scrub" style="margin-top:8px"><label for="t" class="def">Time</label><input id="t" type="range" min="0" max="1" step="0.001" value="0"><output id="tOut">0.000 s</output></div>
+        <p class="def" style="margin:4px 0 0">Each line is scaled to its own peak. The real sizes are in the readout below.</p>
+      </div>
+      <div class="card"><h4>Peak offsets (absolute)</h4><div class="ro" id="ro"></div><p class="msg" id="msg"></p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Gotchas the source shows</h2>
+  <div class="gotchas">
+    <div><b>Rotation is off by default</b><p>A new Wave Oscillator or Perlin pattern sets <code>Rotation Amplitude Multiplier = 0</code>. Pitch, Yaw and Roll do nothing until you raise it. The same goes for <code>FOV Amplitude = 0</code>.</p></div>
+    <div><b>Initial Offset Type defaults to Random</b><p>Each axis starts at a random spot on its wave, so two axes with the same Frequency still won't move together. Set them to <code>Zero</code> to get a straight diagonal or a known first direction.</p></div>
+    <div><b>Perlin Frequency is not Hz</b><p>Wave advances by <code>Frequency × 2π</code> per second, so Frequency 1 is one full swing. Perlin advances by <code>Frequency</code> lattice cells per second, so Frequency 1 is about one random bump. Perlin has no Initial Offset Type: it always starts at a random cell.</p></div>
+    <div><b>Blend In eats short shakes</b><p>Blend In Time defaults to 0.2 s and Blend Out Time to 0.2 s, both linear. On a 0.2 s kick that blend flattens the whole thing. Set Blend In Time to 0 for a punchy start.</p></div>
+    <div><b>Duration 0 means forever</b><p><code>Duration</code> zero or less is infinite. The shake runs until you stop it. The lab shows the first 4 s.</p></div>
+    <div><b>Single Instance doesn't change the shape</b><p>It only decides what happens when the shake is played again while it's still running. True restarts the running one. False stacks a second copy.</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>Every field, 1:1</h2>
+  <p>Open the camera shake Blueprint, click <b>Class Defaults</b> in the toolbar, and the fields show in the Details panel in this order. Wave Oscillator and Perlin Noise share the same layout except where noted.</p>
+  <div class="tbl"><table>
+    <tr><th>Category</th><th>Field</th><th>Default</th><th>What it does</th><th>5.8 source</th></tr>
+    <tr><td>Camera Shake</td><td>Single Instance</td><td class="d">false</td><td>True: only one copy of this shake plays at a time; playing it again restarts the timer.</td><td class="src">CameraShakeBase.h:531</td></tr>
+    <tr><td>Camera Shake Pattern</td><td>Root Shake Pattern</td><td class="d">—</td><td>Which pattern drives the shake. Its fields appear below it.</td><td class="src">CameraShakeBase.h:612</td></tr>
+    <tr><td>Location</td><td>Location Amplitude Multiplier</td><td class="d">1</td><td>Multiplies X, Y and Z Amplitude.</td><td class="src">WaveOscillator…Pattern.h:67</td></tr>
+    <tr><td>Location</td><td>Location Frequency Multiplier</td><td class="d">1</td><td>Multiplies X, Y and Z Frequency.</td><td class="src">…Pattern.h:71</td></tr>
+    <tr><td>Location</td><td>X · Y · Z → Amplitude</td><td class="d">1</td><td>How far it swings, in cm. X forward, Y right, Z up (camera space).</td><td class="src">…Pattern.h:28, 40</td></tr>
+    <tr><td>Location</td><td>X · Y · Z → Frequency</td><td class="d">1</td><td>Wave: swings per second. Perlin: noise cells per second.</td><td class="src">…Pattern.h:32, 41</td></tr>
+    <tr><td>Location</td><td>X · Y · Z → Initial Offset Type <i>(Wave only)</i></td><td class="d">Random</td><td>Random: start at a random spot on the wave. Zero: start at 0 and move toward + first.</td><td class="src">…Pattern.h:36, 42</td></tr>
+    <tr><td>Rotation</td><td>Rotation Amplitude Multiplier</td><td class="d">0 ⚠</td><td>Multiplies Pitch, Yaw and Roll Amplitude. Zero means no rotation at all.</td><td class="src">…Pattern.cpp:30</td></tr>
+    <tr><td>Rotation</td><td>Rotation Frequency Multiplier</td><td class="d">1</td><td>Multiplies Pitch, Yaw and Roll Frequency.</td><td class="src">…Pattern.h:91</td></tr>
+    <tr><td>Rotation</td><td>Pitch · Yaw · Roll → Amplitude / Frequency / Initial Offset Type</td><td class="d">1 / 1 / Random</td><td>Same three fields, in degrees. Pitch nods, Yaw turns, Roll tilts.</td><td class="src">…Pattern.h:96–104</td></tr>
+    <tr><td>FOV</td><td>FOV → Amplitude / Frequency / Initial Offset Type</td><td class="d">0 ⚠ / 1 / Random</td><td>Adds degrees to the field of view. No multiplier fields.</td><td class="src">…Pattern.h:108, .cpp:31</td></tr>
+    <tr><td>Timing</td><td>Duration</td><td class="d">1</td><td>Seconds. Zero or less = infinite.</td><td class="src">SimpleCameraShakePattern.h:26</td></tr>
+    <tr><td>Timing</td><td>Blend In Time</td><td class="d">0.2</td><td>Linear fade from 0 to full. Zero or less = none.</td><td class="src">SimpleCameraShakePattern.h:30</td></tr>
+    <tr><td>Timing</td><td>Blend Out Time</td><td class="d">0.2</td><td>Linear fade to 0 over the last part of Duration. Zero or less = none.</td><td class="src">SimpleCameraShakePattern.h:34</td></tr>
+  </table></div>
+
+  <h3>The other two patterns</h3>
+  <div class="tbl"><table>
+    <tr><th>Pattern</th><th>Field</th><th>What it does</th><th>5.8 source</th></tr>
+    <tr><td>Composite</td><td>Child Patterns</td><td>A list of patterns that play together, summed. Each child has its own full set of fields.</td><td class="src">CompositeCameraShakePattern.h:34</td></tr>
+    <tr><td>Sequence</td><td>Sequence</td><td>The Camera Animation Sequence asset to play.</td><td class="src">SequenceCameraShake.h:33</td></tr>
+    <tr><td>Sequence</td><td>Play Rate</td><td>How fast the animation plays (min 0.001).</td><td class="src">SequenceCameraShake.h:37</td></tr>
+    <tr><td>Sequence</td><td>Scale</td><td>How strongly it plays (min 0).</td><td class="src">SequenceCameraShake.h:41</td></tr>
+    <tr><td>Sequence</td><td>Blend In Time · Blend Out Time</td><td>Linear blends.</td><td class="src">SequenceCameraShake.h:45, 49</td></tr>
+    <tr><td>Sequence</td><td>Random Segment · Random Segment Duration</td><td>Play a random slice of the sequence for that many seconds. The sequence loops if needed.</td><td class="src">SequenceCameraShake.h:53, 62</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <h2>How the engine computes it</h2>
+  <p>Every frame, for each axis: <code>offset += DeltaTime × Frequency × FrequencyMultiplier × 2π</code>, then <code>value = Amplitude × AmplitudeMultiplier × sin(offset)</code> (WaveOscillatorCameraShakePattern.cpp:15–24). Perlin uses the same steps without the <code>2π</code> and with <code>PerlinNoise1D</code> in place of <code>sin</code> (PerlinNoiseCameraShakePattern.cpp:7–16). Then everything, FOV included, is multiplied by the blend weight: <code>time ÷ BlendInTime</code> while blending in, times <code>1 − blendOutTime ÷ BlendOutTime</code> while blending out (CameraShakeBase.cpp:173, 186). The lab runs those steps at 120 frames per second.</p>
+  <p>To aim a shake when you play it, use the <code>Start Camera Shake</code> node on the Player Camera Manager. Set <code>Play Space</code> to User Defined and pass a rotator in <code>User Play Space Rot</code>. <code>Scale</code> multiplies the whole shake.</p>
+</section>
+</div>
+
+<script>
+(function(){
+"use strict";
+const PERM=[63,9,212,205,31,128,72,59,137,203,195,170,181,115,165,40,116,139,175,225,132,99,222,2,41,15,197,93,169,90,228,43,221,38,206,204,73,17,97,10,96,47,32,138,136,30,219,78,224,13,193,88,134,211,7,112,176,19,106,83,75,217,85,0,98,140,229,80,118,151,117,251,103,242,81,238,172,82,110,4,227,77,243,46,12,189,34,188,200,161,68,76,171,194,57,48,247,233,51,105,5,23,42,50,216,45,239,148,249,84,70,125,108,241,62,66,64,240,173,185,250,49,6,37,26,21,244,60,223,255,16,145,27,109,58,102,142,253,120,149,160,124,156,79,186,135,127,14,121,22,65,54,153,91,213,174,24,252,131,192,190,202,208,35,94,231,56,95,183,163,111,147,25,67,36,92,236,71,166,1,187,100,130,143,237,178,158,104,184,159,177,52,214,230,119,87,114,201,179,198,3,248,182,39,11,152,196,113,20,232,69,141,207,234,53,86,180,226,74,150,218,29,133,8,44,123,28,146,89,101,154,220,126,155,122,210,168,254,162,129,33,18,209,61,191,199,157,245,55,164,167,215,246,144,107,235];
+const $=id=>document.getElementById(id);
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const DT=1/120, INF_SHOW=4;
+
+// UE 5.8 FMath::PerlinNoise1D (UnrealMath.cpp:3611) with its Grad1 and SmoothCurve.
+const G1=[-8/8,-7/8,-6/8,-5/8,-4/8,-3/8,-2/8,-1/8,1/8,2/8,3/8,4/8,5/8,6/8,7/8,8/8];
+function perlin1D(x){const fl=Math.floor(x),xi=fl&255;x-=fl;const xm1=x-1;
+  const A=PERM[xi],B=PERM[(xi+1)&255];const u=x*x*x*(x*(x*6-15)+10);
+  const ga=G1[A&15]*x,gb=G1[B&15]*xm1;return 2*(ga+(gb-ga)*u);}
+
+const CH=[
+  {k:"X",grp:"loc",hint:"forward / back",unit:"cm"},{k:"Y",grp:"loc",hint:"right / left",unit:"cm"},{k:"Z",grp:"loc",hint:"up / down",unit:"cm"},
+  {k:"Pitch",grp:"rot",hint:"nod up / down",unit:"°"},{k:"Yaw",grp:"rot",hint:"turn right / left",unit:"°"},{k:"Roll",grp:"rot",hint:"tilt",unit:"°"},
+  {k:"FOV",grp:"fov",hint:"zoom (adds to FOV)",unit:"°"}];
+
+function engineDefaults(){
+  const osc={};CH.forEach(c=>osc[c.k]={a:c.k==="FOV"?0:1,f:1,o:"Random"});
+  return {pattern:"wave",single:false,locAm:1,locFm:1,rotAm:0,rotFm:1,osc,dur:1,bi:0.2,bo:0.2};
+}
+const DEF=engineDefaults();
+let S=engineDefaults();
+let seeds={}; let view="loc"; let tCur=0; let anim=null; let sim=null;
+
+function rollSeeds(){CH.forEach(c=>{seeds[c.k]={wave:Math.random()*Math.PI*2,perlin:Math.floor(Math.random()*255)}})}
+
+// ---- Details panel build ----
+function numRow(id,label,val,def,step,indent){
+  return `<div class="r${indent?" ind":""}"><label for="${id}">${label}</label><span class="row" style="gap:6px;flex-wrap:nowrap"><input type="number" id="${id}" step="${step}" value="${val}"><span class="def" title="Engine default">${def}</span></span></div>`;}
+function oscBlock(c,isWave){
+  const o=S.osc[c.k],d=DEF.osc[c.k];
+  let h=`<div class="osc-h"><span class="sw" style="background:var(--c${c.k})"></span>${c.k}<i>${c.hint}, ${c.unit==="cm"?"cm":"degrees"}</i></div>`;
+  h+=numRow(`a-${c.k}`,"Amplitude",o.a,d.a,0.1,true);
+  h+=numRow(`f-${c.k}`,"Frequency",o.f,d.f,0.1,true);
+  if(isWave)h+=`<div class="r ind"><label for="o-${c.k}">Initial Offset Type</label><span class="row" style="gap:6px;flex-wrap:nowrap"><select id="o-${c.k}"><option${o.o==="Random"?" selected":""}>Random</option><option${o.o==="Zero"?" selected":""}>Zero</option></select><span class="def">Random</span></span></div>`;
+  return h;}
+function buildFields(){
+  const p=S.pattern,box=$("patternFields");
+  if(p==="composite"){box.innerHTML=`<details class="cat" open><summary>Camera Shake</summary><div class="r"><label>Child Patterns</label><span class="def">0 Array elements ⊕</span></div><p class="na">Each child is a full pattern of its own. The lab can't preview a Composite: build each child here as Wave or Perlin first, then add them together in the editor.</p></details>`;return;}
+  if(p==="sequence"){box.innerHTML=`<details class="cat" open><summary>Camera Shake</summary>
+    <div class="r"><label>Sequence</label><span class="def">None (Camera Animation Sequence)</span></div>
+    <div class="r"><label>Play Rate</label><span class="def">min 0.001</span></div>
+    <div class="r"><label>Scale</label><span class="def">min 0</span></div>
+    <div class="r"><label>Blend In Time</label><span class="def">min 0</span></div>
+    <div class="r"><label>Blend Out Time</label><span class="def">min 0</span></div>
+    <div class="r"><label>Random Segment</label><span class="def">checkbox</span></div>
+    <div class="r"><label>Random Segment Duration</label><span class="def">needs Random Segment</span></div>
+    <p class="na">The motion comes from a camera animation you key in Sequencer, so there's nothing to simulate here.</p></details>`;return;}
+  const w=p==="wave";
+  let h=`<details class="cat" open><summary>Location</summary>`+numRow("locAm","Location Amplitude Multiplier",S.locAm,1,0.1)+numRow("locFm","Location Frequency Multiplier",S.locFm,1,0.1);
+  CH.filter(c=>c.grp==="loc").forEach(c=>h+=oscBlock(c,w));h+=`</details>`;
+  h+=`<details class="cat" open><summary>Rotation</summary>`+numRow("rotAm","Rotation Amplitude Multiplier",S.rotAm,0,0.1)+numRow("rotFm","Rotation Frequency Multiplier",S.rotFm,1,0.1);
+  CH.filter(c=>c.grp==="rot").forEach(c=>h+=oscBlock(c,w));h+=`</details>`;
+  h+=`<details class="cat" open><summary>FOV</summary>`+oscBlock(CH[6],w)+`</details>`;
+  h+=`<details class="cat" open><summary>Timing</summary>`+numRow("dur","Duration",S.dur,1,0.05)+numRow("bi","Blend In Time",S.bi,0.2,0.05)+numRow("bo","Blend Out Time",S.bo,0.2,0.05)+`</details>`;
+  box.innerHTML=h;
+  box.querySelectorAll("input,select").forEach(el=>{el.addEventListener("input",onField);el.addEventListener("change",onField)});
+  markChanged();
+}
+function num(v){const n=parseFloat(v);return isFinite(n)?n:0}
+function onField(e){
+  const id=e.target.id,v=e.target.value;
+  if(["locAm","locFm","rotAm","rotFm","dur","bi","bo"].includes(id))S[id]=num(v);
+  else{const [kind,k]=id.split("-");if(kind==="a")S.osc[k].a=num(v);if(kind==="f")S.osc[k].f=num(v);if(kind==="o")S.osc[k].o=v;}
+  markChanged();recompute(false);
+}
+function markChanged(){
+  const pairs={locAm:DEF.locAm,locFm:DEF.locFm,rotAm:DEF.rotAm,rotFm:DEF.rotFm,dur:DEF.dur,bi:DEF.bi,bo:DEF.bo};
+  for(const k in pairs){const el=$(k);if(el)el.classList.toggle("changed",num(el.value)!==pairs[k]);}
+  CH.forEach(c=>{["a","f"].forEach(f=>{const el=$(f+"-"+c.k);if(el)el.classList.toggle("changed",num(el.value)!==DEF.osc[c.k][f])})});
+}
+
+// ---- Simulation (engine order: advance offset, evaluate, then blend weight) ----
+function simulate(){
+  if(S.pattern!=="wave"&&S.pattern!=="perlin")return null;
+  const wave=S.pattern==="wave",infinite=S.dur<=0,end=infinite?INF_SHOW:S.dur;
+  const off={},out={t:[]};CH.forEach(c=>{out[c.k]=[];
+    off[c.k]=wave?(S.osc[c.k].o==="Random"?seeds[c.k].wave:0):seeds[c.k].perlin;});
+  // t = 0 sample: the camera before the first update.
+  out.t.push(0);CH.forEach(c=>out[c.k].push(0));
+  let el=0;
+  for(let i=1;i<=Math.ceil(end/DT)+1;i++){
+    el+=DT;
+    if(!infinite&&el>=S.dur){out.t.push(Math.min(el,end));CH.forEach(c=>out[c.k].push(0));break;}
+    if(infinite&&el>end)break;
+    let w=1;if(S.bi>0&&el<S.bi)w*=el/S.bi;
+    if(!infinite&&S.bo>0){const rem=S.dur-el;if(rem<S.bo)w*=1-(S.bo-rem)/S.bo;}
+    out.t.push(el);
+    CH.forEach(c=>{
+      const o=S.osc[c.k];
+      const am=c.grp==="loc"?S.locAm:c.grp==="rot"?S.rotAm:1, fm=c.grp==="loc"?S.locFm:c.grp==="rot"?S.rotFm:1;
+      const A=o.a*am;let v=0;
+      if(A!==0){off[c.k]+=DT*o.f*fm*(wave?2*Math.PI:1);v=A*(wave?Math.sin(off[c.k]):perlin1D(off[c.k]));}
+      out[c.k].push(v*w);});
+  }
+  out.end=end;out.infinite=infinite;
+  out.peak={};CH.forEach(c=>out.peak[c.k]=out[c.k].reduce((m,v)=>Math.max(m,Math.abs(v)),0));
+  return out;
+}
+function at(t){ // interpolated sample
+  if(!sim)return null;const T=sim.t;let i=Math.min(T.length-1,Math.max(0,Math.floor(t/DT)));
+  while(i<T.length-1&&T[i+1]<=t)i++;const j=Math.min(T.length-1,i+1);const span=T[j]-T[i]||1;const u=Math.min(1,Math.max(0,(t-T[i])/span));
+  const s={};CH.forEach(c=>s[c.k]=sim[c.k][i]+(sim[c.k][j]-sim[c.k][i])*u);return s;}
+
+// ---- Drawing ----
+function fit(c,ratio){const d=window.devicePixelRatio||1,w=c.getBoundingClientRect().width||300;c.width=Math.round(w*d);c.height=Math.round(w*ratio*d);return d}
+function niceStep(ext){const raw=ext/3,p=Math.pow(10,Math.floor(Math.log10(raw||1)));for(const m of [1,2,5,10])if(m*p>=raw)return m*p;return 10*p}
+function fmt(v){const a=Math.abs(v);return a>=100?v.toFixed(0):a>=10?v.toFixed(1):a>=1?v.toFixed(2):v.toFixed(3)}
+
+function drawPath(){
+  const c=$("path"),d=fit(c,0.85),g=c.getContext("2d"),W=c.width,H=c.height;g.clearRect(0,0,W,H);
+  const line=css("--line"),mut=css("--muted");
+  const hk=view==="loc"?"Y":"Yaw",vk=view==="loc"?"Z":"Pitch",unit=view==="loc"?"cm":"°";
+  $("pathCap").textContent=view==="loc"?"The camera seen from behind: Y across, Z up. The cross is where it starts.":"Where the camera points: Yaw across, Pitch up. The cross is where it starts.";
+  if(!sim){g.fillStyle=mut;g.font=`${12*d}px IBM Plex Sans,sans-serif`;g.fillText("No preview for this pattern.",12*d,24*d);return}
+  const ext=Math.max(sim.peak[hk],sim.peak[vk],1e-6)*1.15,s=Math.min(W,H)/2/ext,step=niceStep(ext);
+  g.strokeStyle=line;g.lineWidth=d;g.beginPath();
+  for(let v=step;v<ext*1.6;v+=step){[v,-v].forEach(q=>{g.moveTo(W/2+q*s,0);g.lineTo(W/2+q*s,H);g.moveTo(0,H/2-q*s);g.lineTo(W,H/2-q*s)})}
+  g.stroke();g.lineWidth=1.5*d;g.beginPath();g.moveTo(W/2-8*d,H/2);g.lineTo(W/2+8*d,H/2);g.moveTo(W/2,H/2-8*d);g.lineTo(W/2,H/2+8*d);g.strokeStyle=mut;g.stroke();
+  g.fillStyle=mut;g.font=`${10.5*d}px IBM Plex Mono,monospace`;
+  g.fillText(`+${vk} up`,W/2+6*d,13*d);g.fillText(`+${hk}`,W-(hk.length*7+14)*d,H/2-6*d);g.fillText(`grid ${fmt(step)} ${unit}`,6*d,H-6*d);
+  g.strokeStyle=css(`--c${vk}`);g.lineWidth=2*d;g.beginPath();
+  sim.t.forEach((_,i)=>{const x=W/2+sim[hk][i]*s,y=H/2-sim[vk][i]*s;i?g.lineTo(x,y):g.moveTo(x,y)});g.stroke();
+  const p=at(tCur);g.fillStyle=css("--accent");g.beginPath();g.arc(W/2+p[hk]*s,H/2-p[vk]*s,4.5*d,0,7);g.fill();
+}
+
+function drawTime(){
+  const c=$("time"),d=fit(c,0.26),g=c.getContext("2d"),W=c.width,H=c.height;g.clearRect(0,0,W,H);
+  const line=css("--line"),mut=css("--muted");
+  g.strokeStyle=line;g.lineWidth=d;g.beginPath();g.moveTo(0,H/2);g.lineTo(W,H/2);g.stroke();
+  const leg=[];
+  if(sim){
+    // blend weight envelope
+    CH.forEach(ch=>{const pk=sim.peak[ch.k];if(pk<1e-9)return;leg.push(ch.k);
+      g.strokeStyle=css(`--c${ch.k}`);g.lineWidth=1.6*d;g.beginPath();
+      sim.t.forEach((t,i)=>{const x=t/sim.end*W,y=H/2-(sim[ch.k][i]/pk)*(H/2-6*d);i?g.lineTo(x,y):g.moveTo(x,y)});g.stroke();});
+    const x=tCur/sim.end*W;g.strokeStyle=css("--fg");g.lineWidth=d;g.setLineDash([4*d,3*d]);g.beginPath();g.moveTo(x,0);g.lineTo(x,H);g.stroke();g.setLineDash([]);
+    g.fillStyle=mut;g.font=`${10.5*d}px IBM Plex Mono,monospace`;g.fillText("0 s",4*d,H-4*d);const lab=sim.end.toFixed(2)+" s"+(sim.infinite?" (∞)":"");g.fillText(lab,W-(lab.length*6.6+4)*d,H-4*d);
+  }
+  $("legend").innerHTML=leg.length?leg.map(k=>`<span><span class="sw" style="background:var(--c${k})"></span>${k}</span>`).join(""):"no moving channels";
+}
+
+function drawCam(){
+  const c=$("cam"),d=fit(c,0.5625),g=c.getContext("2d"),W=c.width,H=c.height;
+  const s=at(tCur)||{X:0,Y:0,Z:0,Pitch:0,Yaw:0,Roll:0,FOV:0};
+  const f=(W/2)/Math.tan(Math.PI/4),D=300,ppd=f*Math.PI/180;
+  const fovNow=Math.min(170,Math.max(5,90+s.FOV)),zoom=Math.tan(Math.PI/4)/Math.tan(fovNow*Math.PI/360)*(D/Math.max(50,D-s.X));
+  g.save();g.fillStyle=css("--sky");g.fillRect(0,0,W,H);
+  g.translate(W/2,H/2);g.rotate(-s.Roll*Math.PI/180);g.scale(zoom,zoom);
+  g.translate(-s.Yaw*ppd-(s.Y/D)*f, s.Pitch*ppd+(s.Z/D)*f);
+  const R=Math.max(W,H)*2,hz=0.02*H;
+  g.fillStyle=css("--sky");g.fillRect(-R,-R,2*R,R+hz);
+  g.fillStyle=css("--ground");g.fillRect(-R,hz,2*R,R);
+  g.strokeStyle=css("--sceneLine");g.lineWidth=d;g.beginPath();
+  for(let i=-14;i<=14;i++){g.moveTo(i*W*0.012,hz);g.lineTo(i*W*0.35,R)}
+  for(let k=1;k<9;k++){const y=hz+H*0.6/k;g.moveTo(-R,y);g.lineTo(R,y)}
+  g.stroke();
+  // target: a figure 180 cm tall at 3 m, feet on the ground plane
+  const cm=f/D,feet=hz+H*0.6/2.2,tall=180*cm*0.55;
+  g.fillStyle=css("--target");
+  g.fillRect(-18*cm*0.55,feet-tall,36*cm*0.55,tall*0.82);
+  g.beginPath();g.arc(0,feet-tall-12*cm*0.55,12*cm*0.55,0,7);g.fill();
+  g.fillRect(-W*0.28,feet-tall*0.45,W*0.06,tall*0.45);g.fillRect(W*0.22,feet-tall*0.6,W*0.05,tall*0.6);
+  g.restore();
+  // fixed crosshair
+  g.strokeStyle="rgba(255,255,255,.9)";g.lineWidth=1.5*d;g.beginPath();
+  g.moveTo(W/2-10*d,H/2);g.lineTo(W/2-3*d,H/2);g.moveTo(W/2+3*d,H/2);g.lineTo(W/2+10*d,H/2);
+  g.moveTo(W/2,H/2-10*d);g.lineTo(W/2,H/2-3*d);g.moveTo(W/2,H/2+3*d);g.lineTo(W/2,H/2+10*d);g.stroke();
+}
+
+function readout(){
+  const ro=$("ro"),msg=$("msg");
+  if(!sim){ro.innerHTML="";msg.textContent=S.pattern==="composite"?"Composite: preview each child as Wave or Perlin.":"Sequence: motion comes from the camera animation asset.";return}
+  ro.innerHTML=CH.map(c=>`<div><span class="sw" style="background:var(--c${c.k})"></span> ${c.k}<b>${fmt(sim.peak[c.k])} ${c.unit}</b></div>`).join("")+`<div>Length<b>${sim.infinite?"∞":sim.end.toFixed(2)+" s"}</b></div>`;
+  const notes=[];
+  if(S.rotAm===0&&CH.some(c=>c.grp==="rot"&&S.osc[c.k].a!==0))notes.push("Rotation Amplitude Multiplier is 0, so Pitch/Yaw/Roll are off.");
+  if(sim.infinite)notes.push("Duration ≤ 0 is infinite; showing the first 4 s.");
+  if(!sim.infinite&&S.bi+S.bo>S.dur)notes.push("Blend In + Blend Out is longer than Duration, so the shake never reaches full strength.");
+  const lp=Math.max(sim.peak.X,sim.peak.Y,sim.peak.Z),rp=Math.max(sim.peak.Pitch,sim.peak.Yaw,sim.peak.Roll);
+  if(lp>0&&lp<2&&rp<0.2&&sim.peak.FOV<0.5)notes.push("Peaks under 2 cm with no rotation are barely visible in game.");
+  msg.textContent=notes.join(" ");
+}
+
+function drawAll(){drawCam();drawPath();drawTime();$("tOut").value=tCur.toFixed(3)+" s"}
+function recompute(reroll){
+  if(reroll)rollSeeds();sim=simulate();
+  const tr=$("t");tr.max=sim?sim.end:1;tCur=Math.min(tCur,sim?sim.end:0);tr.value=tCur;
+  readout();drawAll();
+}
+
+// ---- Controls ----
+$("pattern").addEventListener("change",e=>{S.pattern=e.target.value;buildFields();recompute(false)});
+$("single").addEventListener("change",e=>{S.single=e.target.checked});
+$("reroll").onclick=()=>recompute(true);
+$("t").addEventListener("input",e=>{stop();tCur=num(e.target.value);drawAll()});
+function setView(v){view=v;$("vLoc").setAttribute("aria-pressed",v==="loc");$("vRot").setAttribute("aria-pressed",v==="rot");drawPath()}
+$("vLoc").onclick=()=>setView("loc");$("vRot").onclick=()=>setView("rot");
+function stop(){if(anim){cancelAnimationFrame(anim);anim=null}}
+$("play").onclick=()=>{
+  if(!sim)return;stop();recompute(true);
+  if(matchMedia("(prefers-reduced-motion: reduce)").matches){tCur=sim.end;$("t").value=tCur;drawAll();return}
+  const t0=performance.now();
+  const step=now=>{tCur=Math.min(sim.end,(now-t0)/1000);$("t").value=tCur;drawAll();if(tCur<sim.end)anim=requestAnimationFrame(step);else anim=null};
+  anim=requestAnimationFrame(step);
+};
+const tc=$("time");
+function scrubAt(e){if(!sim)return;const r=tc.getBoundingClientRect();tCur=Math.min(sim.end,Math.max(0,(e.clientX-r.left)/r.width*sim.end));$("t").value=tCur;drawAll()}
+tc.addEventListener("pointerdown",e=>{stop();tc.setPointerCapture(e.pointerId);scrubAt(e)});
+tc.addEventListener("pointermove",e=>{if(tc.hasPointerCapture(e.pointerId))scrubAt(e)});
+
+function zeroOsc(){const o={};CH.forEach(c=>o[c.k]={a:0,f:1,o:"Zero"});return o}
+const PRESETS={
+  defaults:()=>engineDefaults(),
+  kick:()=>{const s=engineDefaults();s.osc=zeroOsc();s.locAm=0;s.rotAm=1;s.osc.Pitch={a:1.5,f:3.33,o:"Zero"};s.dur=0.15;s.bi=0;s.bo=0;return s},
+  hit:()=>{const s=engineDefaults();s.osc=zeroOsc();s.osc.Y={a:-3,f:6,o:"Zero"};s.osc.Z={a:2,f:6,o:"Zero"};s.rotAm=1;s.osc.Roll={a:1.5,f:6,o:"Zero"};s.dur=0.5;s.bi=0;s.bo=0.3;return s},
+  land:()=>{const s=engineDefaults();s.osc=zeroOsc();s.osc.Z={a:-4,f:2,o:"Zero"};s.rotAm=1;s.osc.Pitch={a:-1,f:2,o:"Zero"};s.dur=0.25;s.bi=0;s.bo=0;return s},
+  boom:()=>{const s=engineDefaults();s.pattern="perlin";s.osc={X:{a:2,f:12,o:"Random"},Y:{a:5,f:15,o:"Random"},Z:{a:5,f:14,o:"Random"},Pitch:{a:1.5,f:10,o:"Random"},Yaw:{a:1.5,f:10,o:"Random"},Roll:{a:2,f:8,o:"Random"},FOV:{a:2,f:6,o:"Random"}};s.rotAm=1;s.dur=1.2;s.bi=0.05;s.bo=0.8;return s}
+};
+$("preset").addEventListener("change",e=>{const p=PRESETS[e.target.value];if(!p)return;S=p();$("pattern").value=S.pattern;buildFields();tCur=0;recompute(true);e.target.value=""});
+
+addEventListener("resize",drawAll);
+const mq=matchMedia("(prefers-color-scheme: dark)");mq.addEventListener&&mq.addEventListener("change",drawAll);
+new MutationObserver(drawAll).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});
+
+// Drag a number box left/right to change it (like Unreal's spin boxes). Click without dragging = type.
+// Shift = 10x faster, Ctrl = 10x finer.
+(function scrubNumbers(){
+  let el=null,x0=0,v0=0,step=0.1,moved=false,pid=null;
+  const dec=s=>{const t=String(s).split(".")[1];return t?t.length:0};
+  document.addEventListener("pointerdown",e=>{
+    const t=e.target;
+    if(!(t instanceof HTMLInputElement)||t.type!=="number"||!t.closest(".dp"))return;
+    if(document.activeElement===t||e.button!==0)return; // already typing: let the caret work
+    e.preventDefault();
+    el=t;x0=e.clientX;v0=num(t.value);step=parseFloat(t.step)||0.1;moved=false;pid=e.pointerId;
+    try{t.setPointerCapture(pid)}catch(_){}
+  });
+  document.addEventListener("pointermove",e=>{
+    if(!el||e.pointerId!==pid)return;
+    const dx=e.clientX-x0;
+    if(!moved&&Math.abs(dx)<3)return;
+    if(!moved){moved=true;el.classList.add("scrub");document.body.classList.add("scrubbing")}
+    const k=e.shiftKey?10:e.ctrlKey?0.1:1;
+    const d=dec(step)+(e.ctrlKey?1:0);
+    const v=v0+Math.round(dx/4)*step*k; // one step per 4px
+    const s=(Math.round(v*10**d)/10**d).toFixed(d);
+    if(el.value!==s){el.value=s;el.dispatchEvent(new Event("input",{bubbles:true}))}
+  });
+  const end=e=>{
+    if(!el||(e&&e.pointerId!==pid))return;
+    const t=el;el=null;
+    try{t.releasePointerCapture(pid)}catch(_){}
+    t.classList.remove("scrub");document.body.classList.remove("scrubbing");
+    if(moved)t.dispatchEvent(new Event("change",{bubbles:true}));
+    else if(e.type==="pointerup"){t.focus();t.select()} // a cancelled touch (page scroll) must not open the keyboard
+  };
+  document.addEventListener("pointerup",end);
+  document.addEventListener("pointercancel",end);
+})();
+
+rollSeeds();buildFields();recompute(false);
+})();
+</script>
