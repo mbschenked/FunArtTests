@@ -1,0 +1,2153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>VFX Range</title>
+<link rel="icon" href="data:,">
+<script type="importmap">
+{
+  "imports": {
+    "three":         "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "lil-gui":       "https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.min.js"
+  }
+}
+</script>
+<style>
+  :root {
+    --ink:     rgba(228, 232, 238, 0.93);
+    --ink-dim: rgba(150, 164, 184, 0.88);
+    --accent:  #ffb454;                       /* muzzle amber */
+    --panel:   rgba(9, 12, 17, 0.80);
+    --line:    rgba(255, 255, 255, 0.14);
+    --mono:    ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: #06080c; color: var(--ink);
+    font: 11px/1.4 var(--mono);
+  }
+
+  /* buffer is w*dpr, CSS size stays w: without width/height 100% the canvas shows at buffer size */
+  #gl {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    display: block; cursor: crosshair; touch-action: none;
+  }
+
+  #fallback {
+    position: fixed; inset: 0; z-index: 30;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; text-align: center; line-height: 1.7;
+    color: var(--ink-dim); background: #06080c;
+    letter-spacing: 0.08em;
+    white-space: pre-line; overflow-wrap: anywhere; overflow: auto;   /* an uncaught error is written here, newlines kept */
+  }
+  #fallback[hidden] { display: none; }
+
+  /* ---- HUD labels (no scanlines / vignette on purpose: they would contaminate VFX judgement) ---- */
+  .hud {
+    position: fixed; z-index: 10; pointer-events: none;
+    letter-spacing: 0.12em; text-transform: uppercase;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 0 7px rgba(0,0,0,0.65);
+  }
+  .tl { top: 12px; left: 14px; }
+  .tl h1 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.24em; }
+  .tl .sub { margin-top: 2px; font-size: 10px; color: var(--ink-dim); }
+  .tl .sub b { color: var(--accent); font-weight: 500; }
+  .tr { top: 12px; right: 14px; text-align: right; font-size: 10px; color: var(--ink-dim); line-height: 1.6; }
+  .tr b { color: var(--ink); font-weight: 500; }
+  .legend {
+    top: 12px; left: 50%; transform: translateX(-50%);
+    padding: 3px 9px; font-size: 10px; white-space: nowrap;
+    color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 4px;
+  }
+  .legend[hidden] { display: none; }
+  .legend i { display: inline-block; width: 8px; height: 8px; margin: 0 4px 0 8px; vertical-align: -1px; }
+
+  /* ---- bottom dock ---- */
+  .dock {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    padding: 0 10px 10px; pointer-events: none;
+  }
+  .dock > * { pointer-events: auto; }
+  .status {
+    max-width: 100%; padding: 3px 9px; border-radius: 4px;
+    font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; text-align: center;
+    color: var(--ink-dim); background: rgba(9, 12, 17, 0.62);
+  }
+  .bar {
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 12px;
+    max-width: min(100%, 1240px); padding: 6px 8px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  }
+  .grp { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  button, input {
+    font: inherit; letter-spacing: 0.05em; color: var(--ink);
+    background: rgba(255,255,255,0.06); border: 1px solid var(--line); border-radius: 5px;
+    min-height: 30px; padding: 5px 8px;
+  }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { background: rgba(255,255,255,0.13); }
+  button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: rgba(255,180,84,0.12); }
+  button.primary { color: #14100a; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+  button.primary:hover:not(:disabled) { background: #ffc477; }
+  button:disabled, input:disabled { opacity: 0.36; cursor: default; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  kbd { font: inherit; opacity: 0.55; margin-right: 0.45em; }
+  .rpm { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-dim); }
+  .rpm input { width: 66px; text-align: right; }
+  .hud-off .hud, .hud-off .status, .hud-off .keys { display: none; }
+  .keys { font-size: 10px; letter-spacing: 0.06em; color: var(--ink-dim); text-align: center; text-shadow: 0 1px 2px rgba(0,0,0,0.9); }
+
+  @media (max-width: 760px) {
+    .tr, .keys { display: none; }
+    .legend { top: 52px; width: calc(100% - 28px); white-space: normal; text-align: center; line-height: 1.7; }
+  }
+  @media (max-width: 600px) {
+    kbd { display: none; }
+    .tl h1 { font-size: 11px; letter-spacing: 0.18em; }
+    .bar { gap: 6px 10px; }
+    button, input { padding: 5px 8px; }
+  }
+
+  /* ---- tuning panel: lil-gui, created the first time an effect reads ctx.gui ----
+     Docked top right UNDER the HUD (title block, stats, distortion legend) and above the bottom dock: layoutPanel()
+     measures them and writes --panel-top / --dock-h. The root is a flex column, so when it is taller than the space
+     its own .children scroll and the title bar stays put. Hidden with the HUD (H, &hud=0), in ?preflight unless
+     &panel=1 (body.panel-off), and while it holds no controller. */
+  :root { --panel-top: 56px; --dock-h: 110px; }
+  .lil-gui.root.range-panel {
+    position: fixed; z-index: 15;
+    top: var(--panel-top); right: 14px;
+    --width: 264px;
+    width: min(var(--width), calc(100vw - 28px));
+    max-height: calc(100vh - var(--panel-top) - var(--dock-h) - 10px);
+    border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+    --font-family: var(--mono); --font-family-mono: var(--mono);
+    --font-size: 11px; --input-font-size: 11px;
+    --background-color: rgba(9, 12, 17, 0.88);
+    --text-color: var(--ink);
+    --title-background-color: rgba(255, 255, 255, 0.07);
+    --title-text-color: var(--ink);
+    --widget-color: rgba(255, 255, 255, 0.10);
+    --hover-color: rgba(255, 255, 255, 0.17);
+    --focus-color: rgba(255, 180, 84, 0.45);
+    --number-color: var(--accent);
+    --string-color: #9bd7ff;
+  }
+  @supports (height: 100dvh) {
+    .lil-gui.root.range-panel { max-height: calc(100dvh - var(--panel-top) - var(--dock-h) - 10px); }
+  }
+  .lil-gui.root.range-panel > .title { text-transform: uppercase; letter-spacing: 0.14em; font-size: 10px; }
+  .range-panel button, .range-panel input { min-height: 0; letter-spacing: normal; }   /* the page-wide skin sets 30 px / 0.05em; lil-gui sizes its own widgets */
+  .lil-gui.root.range-panel:not(:has(.controller)) { display: none; }
+  .hud-off .range-panel, .panel-off .range-panel { display: none !important; }
+</style>
+</head>
+<body>
+
+<canvas id="gl" role="img" aria-label="Third-person shooter test range at dusk or night, rendered with WebGL2"></canvas>
+<div id="fallback" role="status">Loading Three.js r160 from cdn.jsdelivr.net. If this message stays, the CDN, import-map support or WebGL2 is unavailable.<noscript><br>JavaScript is disabled; this page needs it to run WebGL.</noscript></div>
+
+<header class="hud tl">
+  <h1>VFX range</h1>
+  <div class="sub">effect slot: <b id="fxName">-</b></div>
+</header>
+<aside class="hud tr" id="readout" aria-hidden="true">
+  <div>fps <b id="roFps">-</b> / draw calls <b id="roCalls">-</b></div>
+  <div>tris <b id="roTris">-</b> / buffer <b id="roBuf">-</b></div>
+</aside>
+<div class="hud legend" id="legend" hidden>
+  distortion buffer (full res)
+  <i style="background:#ff3b3b"></i>+x <i style="background:#2de3e3"></i>-x
+  <i style="background:#35e35a"></i>+y <i style="background:#e335d0"></i>-y
+  <span style="color:var(--ink-dim)"> / grey = none, full colour = 1% of the screen</span>
+</div>
+
+<footer class="dock">
+  <div class="keys" id="keys">space fire / 1-4 camera / a auto / q w e speed / p pause / . step 1/60 / shift+. step 1/240 / d distortion / n night / h hide hud</div>
+  <div class="status" id="status" aria-live="off">starting</div>
+  <div class="bar" role="toolbar" aria-label="Range controls">
+    <div class="grp" role="group" aria-label="Camera presets">
+      <button type="button" data-cam="shoulder" aria-pressed="true"><kbd>1</kbd>shoulder</button>
+      <button type="button" data-cam="side" aria-pressed="false"><kbd>2</kbd>side</button>
+      <button type="button" data-cam="incoming" aria-pressed="false"><kbd>3</kbd>incoming</button>
+      <button type="button" data-cam="muzzle" aria-pressed="false"><kbd>4</kbd>muzzle</button>
+    </div>
+    <div class="grp" role="group" aria-label="Fire">
+      <button type="button" id="btnFire" class="primary" title="Fire one shot (Space, or click the view)"><kbd>space</kbd>fire</button>
+      <button type="button" id="btnAuto" aria-pressed="false" title="Toggle auto-fire (A)"><kbd>a</kbd>auto</button>
+      <label class="rpm"><input id="rpm" type="number" min="30" max="1500" step="10" value="600" inputmode="numeric" aria-label="Auto-fire rate, rounds per minute">rpm</label>
+    </div>
+    <div class="grp" role="group" aria-label="Simulation time">
+      <button type="button" data-speed="1" aria-pressed="true" title="Real time (Q)"><kbd>q</kbd>1x</button>
+      <button type="button" data-speed="0.25" aria-pressed="false" title="Quarter speed (W)"><kbd>w</kbd>0.25x</button>
+      <button type="button" data-speed="0.05" aria-pressed="false" title="Twentieth speed (E)"><kbd>e</kbd>0.05x</button>
+      <button type="button" id="btnPause" aria-pressed="false" title="Pause the simulation clock (P)"><kbd>p</kbd>pause</button>
+      <button type="button" id="btnStep" title="Advance 1/60 s (4 substeps) while paused (.)"><kbd>.</kbd>step</button>
+      <button type="button" id="btnStep1" title="Advance one 1/240 s substep while paused (Shift + .)"><kbd>&#8679;.</kbd>1/240</button>
+    </div>
+    <div class="grp" role="group" aria-label="View">
+      <button type="button" id="btnLook" aria-pressed="false" title="Toggle dusk / night lighting (N)"><kbd>n</kbd>night</button>
+      <button type="button" id="btnDist" aria-pressed="false" title="Show the distortion buffer (D)"><kbd>d</kbd>distortion</button>
+    </div>
+  </div>
+</footer>
+
+<script>
+/* Error surface: a classic script on purpose, so it still runs when the module below fails to compile. An uncaught
+ * error or unhandled rejection (a SyntaxError in the effect slot from a name that collides with one the range
+ * declares, a throw inside an effect callback) is written into #fallback; before this, the loading text below
+ * stayed up and blamed the CDN. Left alone on purpose: a CDN or import-map failure raises no uncaught error (the
+ * module just never runs), so the loading text stays; the WebGL messages come from fatal() in the module, which sets
+ * data-fatal so the rethrow that follows cannot overwrite them. The first error wins. */
+(function () {
+  var shown = false;
+  function show(kind, detail, where) {
+    var el = document.getElementById('fallback');
+    if (shown || !el || el.hasAttribute('data-fatal')) return;
+    shown = true;
+    el.hidden = false;
+    el.setAttribute('role', 'alert');
+    var text = 'The range stopped on an uncaught ' + kind + '.\n' + detail + (where ? '\n' + where : '');
+    if (/already been declared/.test(detail)) {
+      text += '\nA top-level name in the effect slot collides with one the range declares. Alias the import, or keep the slot inside its IIFE (see NAMES IN SCOPE in the file header).';
+    }
+    el.textContent = text;
+  }
+  window.addEventListener('error', function (e) {
+    if (/ResizeObserver loop/.test(String(e.message))) return;   // a harmless browser notice, not a failure
+    var err = e.error;
+    var detail = err && err.message ? (err.name || 'Error') + ': ' + err.message : String(e.message || 'unknown error').replace(/^Uncaught /, '');
+    show('error', detail, e.lineno ? 'line ' + e.lineno + (e.colno ? ':' + e.colno : '') : '');
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason;
+    show('promise rejection', r && r.message ? (r.name || 'Error') + ': ' + r.message : String(r), '');
+  });
+})();
+</script>
+
+<script type="module">
+/* ============================================================================
+ * VFX RANGE: shared, effect-agnostic test range for real-time VFX studies.
+ * Reference target for the studies built on it: Uncharted 4: A Thief's End
+ * (Naughty Dog, 2016). Homage study, not affiliated with or endorsed by them.
+ *
+ * BUDGET     16.6 ms per frame (60 fps). Measured with the full pipeline on an Apple-silicon
+ *            Mac, a full-screen distortion layer active (best of 24 runs of 40 frames, ?preflight): 2.7 ms at
+ *            1280x720, 5.6 ms at 1920x1080, 9.6 ms for a 2560x1440 buffer. The range as it was before the
+ *            per-texel bloom prefilter measured 2.7 / 5.6 / 9.5 ms in the same session, so the prefilter costs
+ *            <= 0.1 ms; an earlier, quieter session had read 2.6 / 5.4 / 9.3 ms (2.5 / 5.2 / 9.0 for the
+ *            half-res distortion pipeline the full-res one replaced). Planning figure kept conservative at ~3.4 ms
+ *            per megapixel, so live mode caps the drawing buffer at 4.2 MPix on top of the
+ *            devicePixelRatio cap of 2 (static modes: 8.5 MPix). Draw calls <= 60 per frame
+ *            INCLUDING post (live: HUD, and __range.drawCalls). Shoulder view with the placeholder
+ *            firing = 44: sun shadow map 11, scene 17 (16 + the streak), distortion mesh 1,
+ *            distortion composite 1, bloom 13, output 1. With nothing firing: 42.
+ *
+ * UNITS / AXES   metres, +Y up. The shooter stands at the origin and fires
+ *            toward -Z, the way the default three.js camera looks, so +X is the
+ *            shooter's right.
+ *
+ * MUZZLE CONVENTION   ctx.muzzle is an Object3D named "muzzle" parented to the
+ *            rifle, sitting exactly at the barrel tip. Its LOCAL +Z AXIS POINTS
+ *            DOWN THE BARREL (the rifle is authored barrel-along-+Z and the
+ *            rifle group is yawed 180 degrees so that axis lands on world -Z).
+ *            Object3D.getWorldDirection() returns the world image of local +Z,
+ *            so   muzzle.getWorldDirection(v)   IS the bullet direction.
+ *            The rifle recoils (a few mm, <2 deg) and is drawn at the pose of the last
+ *            1/240 s substep, so read the muzzle pose at fire() time (the range refreshes
+ *            its matrixWorld first) and re-read it each update() / render() if the effect
+ *            must stay attached to the gun.
+ *
+ * TIME   The simulation runs in fixed 1/240 s SUBSTEPS (update() is called once per substep). The instant
+ *            that is DRAWN is renderTime = sim time + the sub-substep remainder (0 .. 1/240 s), a continuous
+ *            clock that the optional EFFECT.render() receives. Order inside one display frame:
+ *              1. whole substeps:  for each, rifle recoil, update(1/240, t), then an auto-fire shot if one is due
+ *              2. shots queued by Space / click / the Fire button: fire() runs at the newest substep
+ *              3. render(renderTime, frame), then the composer draws
+ *            So a queued shot's first drawn frame has age (renderTime - the fire() time) below 1/240 s, never a
+ *            whole display frame, and an effect that implements render() is drawn at the exact instant instead of
+ *            the 1/240 s grain: a 900 m/s round moves 3.75 m per substep, so place anything fast from renderTime
+ *            in render(), not from the substep time in update(). Slow motion (0.25x, 0.05x) advances renderTime
+ *            every display frame, so render()-driven visuals stay smooth at any speed (an effect that only
+ *            implements update() steps, as before).
+ *            While paused the clock is frozen at renderTime (fire still works, and its first frame has age
+ *            < 1/240 s). Step (.) moves 4 substeps = 1/60 s, Shift+. moves 1 substep = 1/240 s (live loop only).
+ *            Display frame number: in the live loop the count of frames drawn so far; in the static modes
+ *            (no cadence) floor(renderTime * 60). fire() gets the number of the first frame that will show the
+ *            shot, so "display frames on screen" = frame - that number, in both modes.
+ *
+ * LOOKS   Two lighting states share the geometry and the surface albedos: DUSK (default) and NIGHT, switched with
+ *            key N, the night button, or ?look=night|dusk (any mode). Each look sets the sky, fog, key light, ambient
+ *            fill and exposure (see LOOKS). The target is a mid-dark backdrop so additive effects judge like
+ *            the Uncharted 4 frames (night interiors median luma 30-42, daylight about 100): measured on the final
+ *            sRGB frame (Rec.709 luma, 1280x720, shot=none) the dusk median is 68 / 73 / 67 / 75 (shoulder / side /
+ *            incoming / muzzle), p90 86-89, with the lit wall face at 59-64 (below the median); the night median
+ *            is 31 / 33 / 40 / 38.
+ *
+ * HDR PIPELINE   scene -> 4x MSAA RGBA16F (+ depth texture) -> distortion composite -> [effect
+ *            passes] -> UnrealBloomPass -> OutputPass (tone map E, see TONE MAPPING, + sRGB).
+ *            Values are scene-referred linear radiance. 1.0 is diffuse white and
+ *            the bloom threshold; the soft knee starts at 0.7. The environment is
+ *            built to stay under ~0.3 (all four views, nothing firing, 1280x720: dusk p50 0.07, max 0.25;
+ *            night p50 0.03, max 0.08; measure it: __range.hdrStats(1280, 720) with ?shot=none), so ONLY emissive
+ *            values above ~1.0 bloom: bloom on minus bloom off is exactly 0 over a whole environment-only frame,
+ *            both looks. Emissive effects want 2..60. Render targets are not tone mapped, so
+ *            materials output raw HDR. Bloom is UnrealBloomPass with two r160 fixes (see the
+ *            comment where it is built): a soft-knee prefilter and a linear strength. The prefilter applies
+ *            the knee to every full-resolution texel BEFORE the 4x4 box downsample (all 16 texels are fetched,
+ *            none skipped), so a line 2 px wide blooms in proportion to its own radiance instead of only
+ *            starting at ~4/w times the threshold, and a patch keeps its old halo. Probe (1280x720, shape on a
+ *            black frame, halo = bloom on minus off, mean linear radiance 6..14 px above the shape, 2 px hard
+ *            line / 30 px patch): R = 1.5: 0.0001 / 0.037 before, 0.016 / 0.047 after; R = 3: 0.031 / 0.166 before,
+ *            0.062 / 0.189 after; R = 10: 0.249 / 0.820 before, 0.280 / 0.852 after. Patch-to-line ratio 286, 5.4,
+ *            3.3 before; 3.0, 3.0, 3.0 after. Sliding a Gaussian line (sigma 0.85 px) by sub-pixel steps moves its
+ *            halo by <= 6% at all three R (31% at R = 3 before); a hard-edged 2 px line still swings 2:1 at
+ *            R = 1.5 (one or two texels clear the knee), 1.3:1 at 3 and 1.06:1 at 10. So thin lines should
+ *            still carry a Gaussian cross-section of sigma >= 0.7 px (see the placeholder streak).
+ *
+ * DISTORTION CHANNEL   Add meshes to ctx.distortionScene whose fragment shader
+ *            writes a SIGNED UV OFFSET to .rg (UV units: 0.01 = 1% of the screen
+ *            width/height). They render, additively, into a FULL-resolution RGBA16F
+ *            buffer; the composite pass then shows the scene colour from
+ *            (uv + offset): content appears to move by -offset. Spread
+ *            ctx.distortionMaterialParams into your ShaderMaterial for the
+ *            right blending (it never writes depth: do not turn depthWrite on). Depth test is per
+ *            pixel against the full-resolution depth of everything in `scene` that writes depth
+ *            (ground, blocks, wall, rifle, figure, and any opaque debris an effect adds), so
+ *            geometry in front of a distortion volume is not warped. Two guards in the composite
+ *            keep hairline parts and silhouettes clean: a pixel with markedly nearer geometry
+ *            next to it is not displaced, and a displaced lookup that would land on much nearer
+ *            geometry (depth ratio < 0.55, fully accepted above 0.8) falls back to the undisplaced
+ *            pixel, so the rifle never smears onto the wall behind a haze volume. Limits: the depth is
+ *            one sample per pixel (the MSAA resolve), so a part thinner than ~1 px can drop out of
+ *            the test; and the guard compares depth with the pixel being shaded, not with the volume
+ *            (which the range does not know). Emissive radiance above ~1.0 is exempt (it is
+ *            neither displaced nor sampled by displaced lookups), so a bright flash
+ *            or tracer never ghosts through its own distortion halo. Key D shows
+ *            the buffer. A distortion material must NOT sample ctx.sceneDepth (the depth texture is attached
+ *            to this buffer's framebuffer: see SCENE DEPTH); the hard per-pixel depth test above is what it gets.
+ *
+ * EFFECT SLOT API   (the EFFECT SLOT section near the bottom is the only part a
+ *            builder replaces; it must define   const EFFECT = {...}   below)
+ *   EFFECT = {
+ *     name:            string                     shown in the HUD
+ *     init(ctx):       build meshes, materials, passes; add to scene / distortionScene
+ *     fire(n, rng, frame):  shot number n begins NOW, at sim time T = the t of the last update() call
+ *                      (0 before the first). Runs between update() calls, never inside one, and a
+ *                      shot queued by the player starts at the newest substep. rng is mulberry32(n):
+ *                      every shot looks identical each run. frame (optional): the display-frame number
+ *                      of the first frame that shows this shot (see TIME). Make the shot drawable here or in
+ *                      render(): update() is not called between fire() and that first frame.
+ *     update(dt, t):   called once per 1/240 s sim substep (dt is always 1/240),
+ *                      t = sim time in s (a whole multiple of 1/240). Deterministic: no wall-clock,
+ *                      no Math.random(). Put state and lifetimes here.
+ *     render(renderTime, frame)?:   OPTIONAL, added so effects can show sub-substep motion and
+ *                      1-2 frame flashes. Called once per DRAWN frame (also while paused, and again with
+ *                      the same arguments after a resize / camera change in the static modes), right before the
+ *                      composer: renderTime is the exact instant being drawn (>= the last update's t,
+ *                      < t + 1/240; in ?preflight exactly the requested t), frame the display-frame number.
+ *                      Pure presentation: derive positions, uniforms, light intensity and visibility from
+ *                      renderTime and your update() state, do not advance state here. Refresh anything that
+ *                      depends on the viewport or the camera here too.
+ *     dispose():       remove and free everything init() created
+ *     state()?:        optional, returns a small JSON-able snapshot for __range.effect
+ *   }
+ *   ctx = {
+ *     THREE, scene, distortionScene, camera, renderer,
+ *     muzzle,               Object3D "muzzle" (see convention above)
+ *     muzzleLight,          PointLight on the muzzle, intensity 0 by default, parked 0.35 m ahead of
+ *                           the tip (muzzle-local z = 0.35). The effect drives it per update() / render()
+ *                           (intensity, colour, distance, even its position). Candela, decay 2, distance 0 (no
+ *                           cutoff). Scale at the default position (float render, before tone mapping):
+ *                           1 cd adds ~0.019 radiance to the ground under the tip (past ~50 cd it blows
+ *                           out and blooms), ~0.004 to the ground 2 m ahead and ~0.0003 to the wall 11.6 m down
+ *                           the barrel (1000 cd for +0.3). NEAR FIELD: a point light a few cm from a surface
+ *                           blows it out at any intensity, and PointLight.distance does not help: in r160 it
+ *                           only windows the FAR field, (1 - (d/distance)^4)^2, and leaves the near field at
+ *                           1/max(d^2, 0.01). Keeping the light forward is the only near-field control: keep
+ *                           it >= 0.3 m ahead of the tip (20 cd at 0.06 m lights the flash hider to 8.8 and
+ *                           .distance = 3, 1 or 0.5 leaves that at 8.8; at 0.35 m it reads 0.21).
+ *     impactTargets,        Mesh[] to raycast against: ground, stone blocks, broken wall
+ *                           (an InstancedMesh). The barrel axis meets the wall near z = -12.6.
+ *     rng,                  (seed) => mulberry32 generator; fire() receives rng(n)
+ *     addPass(pass),        insert an EffectComposer Pass into the HDR chain right
+ *                           before bloom (after the distortion composite); returns a function that
+ *                           removes it again
+ *     sceneDepth,           THREE.DepthTexture: the opaque scene depth of THIS frame, full resolution
+ *                           (see SCENE DEPTH / SOFT PARTICLES: readable from addPass passes only)
+ *     sceneDepthGLSL,       string of GLSL to paste into a fragment shader: float rangeViewDepth(float d,
+ *                           vec2 nearFar), a raw depth sample -> metres along the view axis
+ *     gui,                  lil-gui GUI for tuning controls, created on first read (see TUNING PANEL)
+ *     redraw(),             static modes: re-run render(renderTime) and draw one frame; live loop: no-op
+ *     distortionMaterialParams,  blending/depth state for distortion materials; keep
+ *                           distortion meshes on layer 0 (the default)
+ *     rifle                 the rifle Group (extra)
+ *   }
+ *   Pitfalls: refresh camera matrices before CPU-side projection (the range does it
+ *   once per frame: camera.updateMatrixWorld() also refreshes matrixWorldInverse).
+ *   Do not allocate per frame. Reduced-motion and ?preflight load run init + one
+ *   fire + a fixed number of update() calls, then render(t) once. Uncaught errors (and unhandled
+ *   rejections) are written into #fallback by a classic script before the module, with the
+ *   line number, so a slot mistake no longer looks like a CDN failure.
+ *
+ * NAMES IN SCOPE   The slot is part of this module, so it shares the module's top-level scope. A slot-level
+ *            declaration or import whose local name is on the list below is a SyntaxError that stops the whole page
+ *            (the error surface prints it; before it existed the fallback blamed the CDN). The range already imports
+ *            THREE, EffectComposer, UnrealBloomPass, OutputPass, Pass, FullScreenQuad, RoundedBoxGeometry,
+ *            mergeGeometries and GUI (lil-gui): use them DIRECTLY, with no import line. Pass and FullScreenQuad are
+ *            there for effect passes (see SCENE DEPTH); THREE is the same module as ctx.THREE. Any OTHER import the
+ *            slot makes needs an alias, a local name that is not on the list: prefix it with fx, as in
+ *            import { Lensflare as FxLensflare } from '...'. Names starting with fx are reserved for slots and never
+ *            used here, so prefix every slot-level name with fx too, and keep everything else inside ONE IIFE, as the
+ *            placeholder does (the slot is then a single  const EFFECT = <IIFE>  declaration), which makes EFFECT the
+ *            only new top-level name.
+ *            Declared at the top level now (const / let / function / class / import):
+ *            imports: THREE, EffectComposer, UnrealBloomPass, OutputPass, Pass, FullScreenQuad,
+ *                RoundedBoxGeometry, mergeGeometries, GUI
+ *            CONSTANTS: BLOCKS, BLOOM, CAMERAS, CONCRETE_A, CONCRETE_B, DEFAULT_LOOK, DEPTH_GLSL, DIRT,
+ *                DISPLAY_HZ, DPR_MAX, FIGURE, FULLSCREEN_VERT, GUNMETAL, LOOKS, PANEL_COLLAPSE_BELOW,
+ *                PIXEL_BUDGET, POLYMER, PREFLIGHT, PROC_ALBEDO, PROC_BUMP, PROC_HEAD, QP, RECOIL_KICK,
+ *                RECOIL_PITCH, RECOIL_W, RECOIL_Z, REDUCED, RIFLE_REST, SCALE_LABEL, SHOW_FIGURE, STATIC,
+ *                STATIC_T, STEP_FRAME, STEP_SUB, STONE_A, STONE_B, STONE_GRIME, SUBSTEP, SUN_DIR, SUN_TARGET,
+ *                WALL_FACE_Z
+ *            objects, functions, classes: $, addEffectPass, applyCamera, applyLook, benchmark, bloomPass,
+ *                _bufSize, buildEnvironment, camera, cameraName, cameraOverride, canvas, composer, ctx,
+ *                debugPass, DistortionDebugPass, distortionMaterialParams, distortionPass, DistortionPass,
+ *                distortionScene, effectRedraw, fallbackEl, fatal, figureFeet, fill, fireShot, fpsEma, frameNow,
+ *                getGui, ground, groundMaterial, guiRoot, hasCamera, hasLook, hdrStats, impactTargets,
+ *                isEditable, layoutPanel, _lookColor, lookEnvironments, lookName, makeProceduralMaterial,
+ *                makeRidge, mulberry32, muzzle, muzzleLight, num, outputPass, ownsKey, paintRidge, pixelRatioFor,
+ *                rangeReady, recoil, redraw, redrawing, redrawNow, reducedLabel, refreshUi, renderer,
+ *                renderFrame, renderTimeNow, requestFire, requestStep, resize, ridgeFar, ridgeNear, rifle, scene,
+ *                scenePass, ScenePass, _screen, screenOf, setCamera, setLook, setScale, setText, sim, sky,
+ *                skyColors, skyGeometry, skyMaterial, stepRecoil, stepSim, stoneMaterial, sun, syncButtons,
+ *                toggleAuto, toggleDistortion, toggleHud, togglePause, ui
+ *            plus EFFECT, the slot's own.
+ *
+ * SCENE DEPTH / SOFT PARTICLES   ctx.sceneDepth is the DepthTexture the scene pass resolves every frame: the
+ *            full-resolution depth of everything in `scene` that writes depth (ground, blocks, wall, rifle, figure,
+ *            opaque debris an effect adds; additive effects do not), one sample per pixel (the MSAA resolve, taken at
+ *            a sub-pixel sample position, so it can sit up to ~0.04 m off the pixel centre's depth on the ground at 12 m),
+ *            24-bit, nearest filtering, cleared to 1.0 (the far plane) where nothing was drawn. It has the same size as
+ *            every composer buffer, so texelFetch(tex, ivec2(gl_FragCoord.xy), 0) in a pass hits the pixel being
+ *            drawn, and it is the same object for the whole session (a resize reallocates it behind the object).
+ *            To get metres along the view axis from a sample d use ctx.sceneDepthGLSL, which defines
+ *            float rangeViewDepth(float d, vec2 nearFar) with nearFar = (ctx.camera.near, ctx.camera.far) = (0.04,
+ *            1500); the distortion composite runs the very same function. Checked against the analytic depth of the
+ *            ground at seven pixels: within 0.35% (the sample-position offset above). A particle's own depth is
+ *            -(modelViewMatrix * vec4(position, 1.0)).z from its vertex shader.
+ *            FEEDBACK LOOP: WebGL forbids sampling a texture that is attached to the framebuffer being drawn (the
+ *            draw call fails with GL_INVALID_OPERATION: measured, gl.getError() = 1282). The depth texture is attached
+ *            to the distortion buffer, so a material in distortionScene must never sample it. A material in `scene`
+ *            raises no error (the target being drawn is the multisampled one, the texture hangs on its resolve
+ *            framebuffer) but reads LAST frame's depth, and the far plane on the first frame: do not use it.
+ *            So soft particles are drawn after both, from an effect-owned scene that a Pass added with
+ *            ctx.addPass renders into the composer's HDR buffer (which has its own depth buffer, so there is no
+ *            loop); the shader compares ctx.sceneDepth with its own depth and fades itself (and hides itself behind
+ *            geometry, so it needs no depth test). Pattern, verified with a throwaway probe (soft-particle quads
+ *            crossing the ground and a stone block: no GL error, no hard clip line):
+ *              const softScene = new THREE.Scene();                        // your own scene: no fog, no lights unless you add them
+ *              class SoftPass extends Pass {                               // Pass is already imported
+ *                constructor() { super(); this.needsSwap = false; }        // draw ON the HDR image, no ping-pong
+ *                render(renderer, writeBuffer, readBuffer) {
+ *                  const clear = renderer.autoClear; renderer.autoClear = false;   // the default would erase the image
+ *                  renderer.setRenderTarget(readBuffer);
+ *                  renderer.render(softScene, ctx.camera);
+ *                  renderer.autoClear = clear;
+ *                }
+ *              }
+ *              const removeSoftPass = ctx.addPass(new SoftPass());         // call it in dispose()
+ *              // ShaderMaterial: transparent: true, depthTest: false, depthWrite: false, uniforms tSceneDepth: { value: ctx.sceneDepth },
+ *              // uNearFar: { value: new THREE.Vector2(ctx.camera.near, ctx.camera.far) }, uSoft: { value: 0.3 } (metres)
+ *              //   vertex:   varying float vViewZ;  ...  vec4 mv = modelViewMatrix * vec4(position, 1.0); vViewZ = -mv.z; gl_Position = projectionMatrix * mv;
+ *              //   fragment: ${ctx.sceneDepthGLSL}  uniform highp sampler2D tSceneDepth;  uniform vec2 uNearFar;  uniform float uSoft;  varying float vViewZ;
+ *              //     float sceneZ = rangeViewDepth(texelFetch(tSceneDepth, ivec2(gl_FragCoord.xy), 0).r, uNearFar);
+ *              //     float fade = smoothstep(0.0, 1.0, (sceneZ - vViewZ) / uSoft);   // 0 at or behind a surface, 1 uSoft metres in front of it
+ *            The fade is a distance in depth, so on a surface seen at a grazing angle it spans few pixels (the ground
+ *            at 12 m from the shoulder camera: 0.1 m of depth per pixel, so uSoft = 0.35 is ~4 px and 1.0 is ~10 px).
+ *            Such a pass is drawn after the distortion composite, so its content is not distorted, and before bloom, so
+ *            it can bloom. Do not allocate per frame in render().
+ *
+ * TUNING PANEL   ctx.gui is a lil-gui 0.19.2 GUI (import map entry "lil-gui", imported here as GUI) that the range
+ *            creates the first time it is read, so a page whose effect never touches it has no panel. Add controls in
+ *            init(), ideally in a folder of your own that dispose() destroys (never destroy ctx.gui itself, the range owns it):
+ *              const f = ctx.gui.addFolder('streak'); f.add(params, 'width', 0.005, 0.05, 0.001).onChange(ctx.redraw);
+ *            (gui.save() / gui.load(json) give presets and copy-settings; reading ctx.gui by destructuring or spread
+ *            creates the panel too.) Dock: top right under the HUD (title block, stats, distortion legend) and above the
+ *            bottom bar, so it never covers them (layoutPanel() measures both), and it scrolls inside itself when it
+ *            is taller than that space. It starts collapsed when the window is narrower than 700 px, hides with the HUD
+ *            (H, &hud=0), is hidden in ?preflight unless &panel=1 (test renders stay clean; the controls still work),
+ *            and shows nothing while it holds no controller.
+ *            ctx.redraw(): the static modes (reduced motion, ?preflight) have no loop, so after a panel change call it:
+ *            it re-runs render(renderTime) for the SAME instant and draws one frame. In the live loop it does nothing (the
+ *            next frame shows the change). Only render() runs again: fire() and update() ran once for the static frame, so
+ *            read tuning values in render() (or in what it calls), not only in fire() / update().
+ *            Keyboard: shortcuts ignore key events aimed at an input, textarea, select or contenteditable element, so
+ *            typing a value into a panel field (or the rpm field) fires nothing and switches nothing. Space on a focused
+ *            panel title or button belongs to the panel, and a mouse click on a panel title, button or checkbox hands
+ *            the keyboard back to the shortcuts.
+ *
+ * TEST MODE   ?preflight&cam=<shoulder|side|incoming|muzzle>&t=<seconds>&shot=<n>
+ *            Fires shot n at sim time 0 (shot=none or -1 fires nothing), runs update() for the
+ *            whole 1/240 s substeps up to t, then calls render(t) with EXACTLY t (no rounding) and
+ *            draws that frame, stops the loop, sets document.title =
+ *            "PREFLIGHT READY" and exposes the read-only window.__range.
+ *            Extras: &look=dusk|night, &debug=distortion shows the buffer, &hud=0 hides the HUD,
+ *            &panel=1 shows the tuning panel (hidden here by default, so test renders stay clean),
+ *            &campos=x,y,z &camtarget=x,y,z &fov=deg override the preset framing
+ *            (fov is the vertical field of view at 16:9).
+ *            preserveDrawingBuffer is on only in this mode.
+ *
+ * window.__range   read-only (frozen: getters and helpers only), set in every mode: simTime (last substep),
+ *            renderTime (the instant drawn), frame, step, lastShot, cameraPreset, look, preflight,
+ *            reducedMotion, effect {name, state}, drawCalls, triangles, muzzleScreen [x, y] in CSS px,
+ *            screenOf(x, y, z) (CSS px of a world point), hdrStats() (luminance statistics of the
+ *            HDR scene), benchmark(frames) (ms per full frame).
+ * ============================================================================ */
+
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import GUI from 'lil-gui';
+
+// --- Tone mapping --------------------------------------------------------------
+// TONE MAPPING: option "E", Max's pick on 12 Oct 2026 (the A/B is refs/frames/_tm-compare.png, private). OutputPass maps
+// the HDR chain's linear radiance to the screen with ACES filmic's curve (three.js r160's RRTAndODTFit) applied to R, G
+// and B separately, WITHOUT the ACES input / output colour matrices. Greys tone exactly as ACES filmic did. A saturated
+// colour keeps its saturation until each channel reaches its own shoulder (amber turns lemon, then white, as it
+// brightens), where ACES's matrices bled blue into bright yellows: the pale-gold tracer body, the cream flash.
+// ?tm=aces brings back ACES filmic, with its own exposures (LOOKS[].acesExposure), for A/B comparisons.
+// r160's OutputPass has no CustomToneMapping branch; one is added where outputPass is built.
+const TONE_MAP = new URLSearchParams(location.search).get('tm') === 'aces' ? 'aces' : 'e';
+{
+  const placeholder = 'vec3 CustomToneMapping( vec3 color ) { return color; }';
+  if (!THREE.ShaderChunk.tonemapping_pars_fragment.includes(placeholder)) throw new Error('tone map E: the CustomToneMapping placeholder is not in this three.js build');
+  THREE.ShaderChunk.tonemapping_pars_fragment = THREE.ShaderChunk.tonemapping_pars_fragment.replace(placeholder, /* glsl */`
+// Tone map E. color: linear scene-referred radiance (1.0 = diffuse white); toneMappingExposure: the look's exposure.
+// Returns linear display RGB in [0, 1]; OutputPass applies the sRGB transfer afterwards.
+vec3 CustomToneMapping( vec3 color ) {
+	return saturate( RRTAndODTFit( max( color, vec3( 0.0 ) ) * ( toneMappingExposure / 0.6 ) ) );   // ACES's pre-scale, per channel
+}`);
+}
+
+// --- Palette and tuning (hex is sRGB; THREE.Color converts to linear) --------
+// A LOOK is the lighting state of the range: sky dome, fog, key light, ambient fill, exposure.
+// Surface albedos below do not change with the look. Key N (or ?look=night) switches.
+//   zenith / mid / horizon / glow / ground   sky dome colours (see the sky uniforms); horizon is also the fog colour
+//   sun, sunIntensity                        key light colour and three.js lux-like intensity (dusk: the sun, night: the moon)
+//   sunElevation / sunAzimuth                degrees above the horizon; azimuth 0 = from +Z (behind the shooter), negative swings
+//                                            toward +X (the shooter's right), positive toward -X (the left)
+//   fillSky / fillGround / fillIntensity     hemisphere ambient: cool from above, warm bounce from below
+//   fogDensity, exposure                     FogExp2 density (1/m) and tone-mapping exposure (tone map E)
+//   acesExposure                             the exposure under ?tm=aces; each E exposure matches its backdrop's mean
+//                                            luma under ACES (shot=none, 12 Oct 2026: dusk 1.098-1.100, night 1.137-1.140,
+//                                            day 1.0015)
+//   ridgeFar / ridgeNear                     crest colours of the two distant silhouette ridges
+const LOOKS = {
+  dusk: {
+    zenith: '#070e22', mid: '#1c2a4c', horizon: '#6e5766', glow: '#ff9a62', ground: '#241f23',
+    sun: '#ffb98a', sunIntensity: 4.0, sunElevation: 11, sunAzimuth: -78,
+    fillSky: '#7f95c4', fillGround: '#4b3d3a', fillIntensity: 1.6,
+    fogDensity: 0.015, exposure: 1.099, acesExposure: 1.1,
+    ridgeFar: '#3e3f56', ridgeNear: '#222438',
+  },
+  night: {
+    zenith: '#03060f', mid: '#0d152b', horizon: '#232f4e', glow: '#5a70a8', ground: '#080b14',
+    sun: '#b4c4ea', sunIntensity: 1.2, sunElevation: 40, sunAzimuth: 25,
+    fillSky: '#6a7fa8', fillGround: '#1a1620', fillIntensity: 0.95,
+    fogDensity: 0.014, exposure: 1.139, acesExposure: 1.15,
+    ridgeFar: '#141b30', ridgeNear: '#0c1224',
+  },
+};
+const DEFAULT_LOOK = 'dusk';
+const BLOOM = { strength: 0.6, radius: 0.4, threshold: 1.0, knee: 0.3 };
+const CONCRETE_A = '#8c8b87', CONCRETE_B = '#6b6b6c', DIRT = '#60584f';
+const STONE_A = '#8f8a81', STONE_B = '#6d6b67', STONE_GRIME = '#403d3c';
+const GUNMETAL = '#5f656e', POLYMER = '#3b3e43', FIGURE = '#747b86';
+const SHOW_FIGURE = true;           // grey stand-in shooter; false leaves just the rifle
+const SUBSTEP = 1 / 240;            // fixed simulation step, seconds
+const STEP_FRAME = 4;               // substeps in one "Step" press: 4 / 240 = 1/60 s
+const STEP_SUB = 1;                 // substeps in one "1/240" press (Shift + .)
+const DISPLAY_HZ = 60;              // nominal display rate: frame numbers in the static modes, and the 1/60 s Step
+const DPR_MAX = 2;
+
+// --- Query params / mode ------------------------------------------------------
+const QP = new URLSearchParams(location.search);
+const PREFLIGHT = QP.has('preflight');
+const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const STATIC = PREFLIGHT || REDUCED;           // no rAF loop, one frame
+const STATIC_T = 0.03;                         // s: where the reduced-motion frame freezes the effect
+const num = (key, def) => { const v = parseFloat(QP.get(key)); return Number.isFinite(v) ? v : def; };
+const hasLook = (name) => Object.prototype.hasOwnProperty.call(LOOKS, name);
+
+// Drawing-buffer pixel budget. The whole pipeline costs ~3.4 ms per megapixel on the reference GPU (Apple
+// silicon), so live mode caps the buffer at 4.2 MPix (~14 ms) on top of the DPR cap; the single-frame static
+// modes only need memory headroom.
+const PIXEL_BUDGET = STATIC ? 8.5e6 : 4.2e6;
+
+const fallbackEl = document.getElementById('fallback');
+function fatal(message) {
+  fallbackEl.hidden = false;
+  fallbackEl.textContent = message;
+  fallbackEl.dataset.fatal = '1';          // the error surface (classic script above) must not overwrite this message
+}
+
+// --- Seeded RNG ----------------------------------------------------------------
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// --- Renderer ------------------------------------------------------------------
+const canvas = document.getElementById('gl');
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({
+    canvas, antialias: false, powerPreference: 'high-performance',
+    preserveDrawingBuffer: PREFLIGHT,          // only the test mode needs the buffer to survive for capture
+  });
+} catch (err) {
+  fatal('WebGL could not start in this browser, so the range cannot render.');
+  throw err;
+}
+if (!renderer.capabilities.isWebGL2) {
+  fatal('WebGL2 is required for the HalfFloat render targets.');
+  throw new Error('WebGL2 required');
+}
+// devicePixelRatio, capped at 2 and then by the pixel budget above
+const pixelRatioFor = (w, h) => Math.max(0.5, Math.min(window.devicePixelRatio || 1, DPR_MAX, Math.sqrt(PIXEL_BUDGET / (w * h))));
+renderer.setPixelRatio(pixelRatioFor(window.innerWidth, window.innerHeight));
+renderer.setSize(window.innerWidth, window.innerHeight, false);   // canvas CSS size is 100%, see <style>
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = TONE_MAP === 'aces' ? THREE.ACESFilmicToneMapping : THREE.CustomToneMapping;   // applied by OutputPass, not by the HDR targets
+renderer.toneMappingExposure = 1;                                  // the look sets the real value (applyLook)
+renderer.setClearColor(0x000000, 1);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.info.autoReset = false;                                  // one reset per frame, so calls cover every pass
+
+const scene = new THREE.Scene();
+const distortionScene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.04, 1500);
+scene.add(camera);
+
+// --- Sky dome (also the source of the image-based light) -------------------------
+// Uniforms (all colours are linear, scene-referred radiance; 1.0 = diffuse white):
+//   uSunDir   world-space unit vector toward the sun (unitless)
+//   uZenith   radiance straight up              uMid     radiance ~40 deg above the horizon
+//   uHorizon  radiance at the horizon, away from the sun (equals the scene fog colour)
+//   uGlow     radiance added around the sun     uGround  radiance of the hemisphere below the horizon
+// The dome is rendered translation-free (view rotation only), so it is infinitely far away.
+// Output is soft-limited to 0.70 so the sky can never reach the bloom knee.
+const SUN_DIR = new THREE.Vector3(0, 1, 0);                // rewritten in place by applyLook()
+const skyColors = {
+  zenith: new THREE.Color(), mid: new THREE.Color(), horizon: new THREE.Color(), glow: new THREE.Color(), ground: new THREE.Color(),
+};
+const skyMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    uSunDir:  { value: SUN_DIR },
+    uZenith:  { value: skyColors.zenith },
+    uMid:     { value: skyColors.mid },
+    uHorizon: { value: skyColors.horizon },
+    uGlow:    { value: skyColors.glow },
+    uGround:  { value: skyColors.ground },
+  },
+  side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false,
+  vertexShader: /* glsl */`
+    varying vec3 vDir;
+    void main() {
+      vDir = position;                                                  // unit sphere: local position == world direction
+      gl_Position = projectionMatrix * vec4(mat3(viewMatrix) * position, 1.0);
+    }`,
+  fragmentShader: /* glsl */`
+    uniform vec3 uSunDir;
+    uniform vec3 uZenith;
+    uniform vec3 uMid;
+    uniform vec3 uHorizon;
+    uniform vec3 uGlow;
+    uniform vec3 uGround;
+    varying vec3 vDir;
+
+    float hash21(vec2 p) {
+      vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+      p3 += dot(p3, p3.yzx + 33.33);
+      return fract((p3.x + p3.y) * p3.z);
+    }
+    float vn2(vec2 p) {
+      vec2 i = floor(p), f = fract(p);
+      f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+                 mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+    }
+    float fbm2(vec2 p) {
+      float s = 0.0, a = 0.5;
+      for (int i = 0; i < 4; i++) { s += a * vn2(p); p = p * 2.07 + 11.3; a *= 0.5; }
+      return s;
+    }
+
+    void main() {
+      vec3 d = normalize(vDir);
+      float up = max(d.y, 0.0);
+
+      vec3 col = mix(uHorizon, uMid, smoothstep(0.0, 0.32, up));
+      col = mix(col, uZenith, smoothstep(0.20, 0.95, up));
+
+      float sd = clamp(dot(d, uSunDir), 0.0, 1.0);
+      float lowBand = exp(-up * 4.5);                                   // glow hugs the horizon
+      col += uGlow * (0.20 * pow(sd, 3.0) + 0.16 * pow(sd, 10.0) + 0.34 * pow(sd, 60.0)) * lowBand;
+      col += uGlow * 0.55 * smoothstep(0.9990, 0.99985, sd);            // soft sun disc
+
+      // high cloud bands, lit warm on the sun side
+      vec2 cp = d.xz / (up + 0.14);
+      float c = fbm2(vec2(cp.x * 0.5, cp.y * 1.8) + 4.0);
+      float cm = smoothstep(0.50, 0.80, c) * smoothstep(0.03, 0.22, up) * (1.0 - smoothstep(0.55, 0.95, up));
+      vec3 cloud = mix(uMid * 1.45, uGlow * 0.62, pow(sd, 2.0));
+      col = mix(col, cloud, cm * 0.5);
+
+      col = mix(col, uGround, 1.0 - smoothstep(-0.07, 0.0, d.y));
+
+      // soft shoulder: asymptote 0.70, so the sky never blooms
+      vec3 over = max(col - 0.5, 0.0);
+      col = min(col, vec3(0.5)) + 0.2 * (1.0 - exp(-over / 0.2));
+
+      // dither against banding in the dark gradient; the amplitude follows the radiance because the tone map + sRGB
+      // turn a given radiance step into far more output levels in the shadows than in the glow
+      col += (hash21(gl_FragCoord.xy) - 0.5) * (0.0006 + 0.010 * dot(col, vec3(0.2126, 0.7152, 0.0722)));
+      gl_FragColor = vec4(col, 1.0);
+    }`,
+});
+const skyGeometry = new THREE.SphereGeometry(1, 48, 24);
+const sky = new THREE.Mesh(skyGeometry, skyMaterial);
+sky.frustumCulled = false;
+sky.renderOrder = -1000;
+scene.add(sky);
+
+// Image-based light: render the same dome into a PMREM cube. It gives the gunmetal something to
+// reflect and the diffuse surfaces a sky fill. One cube per look, built the first time the look is used
+// (the dome reads the sky colours, so applyLook() sets them first), then cached.
+function buildEnvironment() {
+  const probeScene = new THREE.Scene();
+  const probeDome = new THREE.Mesh(skyGeometry, skyMaterial);
+  probeDome.scale.setScalar(50);
+  probeDome.frustumCulled = false;
+  probeScene.add(probeDome);
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const target = pmrem.fromScene(probeScene, 0, 0.1, 100);
+  pmrem.dispose();
+  return target;
+}
+
+// --- Fog, sun, shadows ----------------------------------------------------------
+// Colours, densities and intensities are placeholders here: applyLook() (below the ridges) writes the real ones.
+scene.fog = new THREE.FogExp2(0xffffff, 0.01);
+
+const SUN_TARGET = new THREE.Vector3(0.6, 0.8, -6.5);
+const sun = new THREE.DirectionalLight(0xffffff, 1);
+sun.target.position.copy(SUN_TARGET);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -15, right: 15, top: 15, bottom: -15, near: 30, far: 100 });
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.03;
+scene.add(sun, sun.target);
+const fill = new THREE.HemisphereLight(0xffffff, 0x888888, 1);   // cool ambient fill, warm ground bounce
+scene.add(fill);
+
+// --- Procedural surfaces ----------------------------------------------------------
+// MeshStandardMaterial patched through onBeforeCompile. Everything is solid noise
+// in WORLD space (no UVs, so blocks, wall and ground share one continuous look and
+// nothing stretches or pinches). Every octave fades out as its wavelength approaches two
+// pixels (the footprint comes from fwidth of the world position), so the top octave never
+// exceeds what one pixel can resolve and nothing shimmers.
+// Uniforms:
+//   uColA / uColB / uColC   linear albedo palette: ground = concrete light / concrete dark / dirt;
+//                           stone = light stone / dark stone / grime
+//   uBump                   multiplier on the bump height (1.0 = the metre-scale heights written below)
+// Defines: PROC_GROUND (concrete slab + dirt) or PROC_STONE (weathered masonry).
+const PROC_HEAD = /* glsl */`
+  varying vec3 vPWorld;
+  uniform vec3  uColA;
+  uniform vec3  uColB;
+  uniform vec3  uColC;
+  uniform float uBump;
+  float gH = 0.0;          // procedural height in metres: source of the bump
+  float gRoughMul = 1.0;
+
+  float hash31(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.zyx + 31.32);
+    return fract((p.x + p.y) * p.z);
+  }
+  float hash21(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+  }
+  float vnoise(vec3 p) {
+    vec3 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(hash31(i),                  hash31(i + vec3(1.0, 0.0, 0.0)), f.x),
+                   mix(hash31(i + vec3(0.0, 1.0, 0.0)), hash31(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),
+               mix(mix(hash31(i + vec3(0.0, 0.0, 1.0)), hash31(i + vec3(1.0, 0.0, 1.0)), f.x),
+                   mix(hash31(i + vec3(0.0, 1.0, 1.0)), hash31(i + vec3(1.0, 1.0, 1.0)), f.x), f.y), f.z);
+  }
+  // single band: p in metres, freq in cycles per metre, px = pixel footprint in metres. Result about [-1, 1].
+  float nz(vec3 p, float freq, float px) {
+    return (vnoise(p * freq) - 0.5) * 2.0 * (1.0 - smoothstep(0.20, 0.50, px * freq));
+  }
+  // five octaves from base frequency freq; each octave dies out as it approaches Nyquist
+  float fbm5(vec3 p, float freq, float px) {
+    float s = 0.0, a = 0.5;
+    for (int i = 0; i < 5; i++) {
+      s += a * nz(p, freq, px);
+      freq *= 2.03; a *= 0.5; p += vec3(11.7, 5.3, 8.1);
+    }
+    return s;
+  }
+`;
+
+const PROC_ALBEDO = /* glsl */`
+  {
+    vec3 P = vPWorld;
+    float px = max(length(fwidth(P)), 1e-4);          // world size of about one pixel, metres
+    vec3 albedo;
+    #if defined( PROC_GROUND )
+      float macro = fbm5(P + vec3(3.1, 0.0, 7.7), 0.05, px);
+      float meso  = fbm5(P, 0.9, px);
+      // ragged concrete slab: |x| < 9.2 m (four 4.6 m panels), -17 m < z < 8 m
+      float sd = max(abs(P.x) - 9.2, max(P.z - 8.0, -17.0 - P.z)) + macro * 0.9 + meso * 0.25;
+      float slab = 1.0 - smoothstep(-0.04, 0.10, sd);
+
+      // concrete: aggregate grain, panel tint, expansion joints, soft stains
+      float grain = fbm5(P, 6.0, px);
+      vec3 conc = mix(uColA, uColB, smoothstep(-0.30, 0.40, macro * 1.6 + meso * 0.6));
+      conc *= 1.0 + grain * 0.10;
+      conc *= 1.0 + (hash21(vec2(floor((P.x + 2.3) / 4.6), floor(P.z / 3.0))) - 0.5) * 0.10;
+      float djx = abs(fract((P.x + 2.3) / 4.6 + 0.5) - 0.5) * 4.6;
+      float djz = abs(fract(P.z / 3.0 + 0.5) - 0.5) * 3.0;
+      float jline = (1.0 - smoothstep(0.006, 0.006 + px * 1.3, min(djx, djz))) * slab;
+      float stain = smoothstep(0.55, 0.85, fbm5(P + vec3(9.0, 0.0, 2.0), 0.22, px) + 0.5);   // soft dark patches (oil, damp)
+      conc *= 1.0 - 0.55 * jline - 0.22 * stain;
+
+      // dirt and gravel
+      vec3 dirt = uColC * (0.86 + 0.26 * smoothstep(-0.30, 0.40, macro * 1.2 + meso * 0.8));
+      float peb = smoothstep(0.80, 0.90, vnoise(P * 22.0)) * (1.0 - smoothstep(0.20, 0.50, px * 22.0));
+      dirt = mix(dirt, uColC * 1.5, peb * 0.35);
+      dirt *= 1.0 + nz(P, 3.0, px) * 0.07;
+
+      albedo = mix(dirt, conc, slab);
+      float hConc = grain * 0.0012 - jline * 0.006;
+      float hDirt = meso * 0.018 + nz(P, 8.0, px) * 0.003 + peb * 0.004;
+      gH = mix(hDirt, hConc, slab) * uBump;
+      gRoughMul = mix(1.0, 0.94, slab);
+    #elif defined( PROC_STONE )
+      float lo   = fbm5(P, 0.8, px);
+      float mid  = fbm5(P, 4.0, px);
+      float hi   = nz(P, 24.0, px);
+      float strata = nz(vec3(P.x * 0.3, P.y * 9.0, P.z * 0.3), 1.0, px * 9.0);
+      float streak = fbm5(vec3(P.x * 5.0, P.y * 0.7, P.z * 5.0), 1.0, px * 5.0);
+      vec3 stone = mix(uColA, uColB, smoothstep(-0.35, 0.35, lo * 1.4 + strata * 0.25));
+      stone *= 1.0 + mid * 0.18 + hi * 0.06;
+      float grime = clamp(smoothstep(0.10, 0.55, streak) * 0.55 + smoothstep(0.35, 0.0, P.y) * 0.35, 0.0, 0.8);
+      stone = mix(stone, uColC, grime);
+      float pit = smoothstep(0.66, 0.74, vnoise(P * 30.0)) * (1.0 - smoothstep(0.20, 0.50, px * 30.0));
+      stone *= 1.0 - 0.35 * pit;
+      albedo = stone;
+      gH = (mid * 0.010 + hi * 0.0025 - pit * 0.004) * uBump;
+      gRoughMul = 1.0 - 0.10 * pit;
+    #else
+      albedo = vec3(1.0);
+    #endif
+    diffuseColor.rgb *= albedo;
+  }
+`;
+
+// Mikkelsen's surface-gradient bump on the procedural height gH (metres): the
+// slope is dH/dpixel over dP/dpixel, so the strength is physical and does not
+// grow with distance the way a normalised-derivative bump does.
+const PROC_BUMP = /* glsl */`
+  {
+    vec3 sx = dFdx(- vViewPosition);
+    vec3 sy = dFdy(- vViewPosition);
+    float dHx = dFdx(gH);
+    float dHy = dFdy(gH);
+    vec3 R1 = cross(sy, normal);
+    vec3 R2 = cross(normal, sx);
+    float det = dot(sx, R1) * faceDirection;
+    vec3 grad = sign(det) * (dHx * R1 + dHy * R2);
+    normal = normalize(abs(det) * normal - grad);
+  }
+`;
+
+function makeProceduralMaterial(kind, colors, { envMapIntensity = 0.7, roughness = 0.95, bump = 1 } = {}) {
+  const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness, metalness: 0, envMapIntensity });
+  material.defines['PROC_' + kind] = '';
+  const uniforms = {
+    uColA: { value: new THREE.Color(colors[0]) },
+    uColB: { value: new THREE.Color(colors[1]) },
+    uColC: { value: new THREE.Color(colors[2]) },
+    uBump: { value: bump },
+  };
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vPWorld;')
+      .replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
+        {
+          vec4 pw = vec4(transformed, 1.0);
+          #ifdef USE_INSTANCING
+            pw = instanceMatrix * pw;
+          #endif
+          vPWorld = (modelMatrix * pw).xyz;
+        }`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\n' + PROC_HEAD)
+      .replace('#include <map_fragment>', PROC_ALBEDO)
+      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = clamp(roughness * gRoughMul, 0.04, 1.0);')
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + PROC_BUMP);
+  };
+  material.customProgramCacheKey = () => 'range-proc-' + kind;
+  material.userData.procUniforms = uniforms;      // live handles (uColA/B/C, uBump) for tests and tuning
+  return material;
+}
+
+const impactTargets = [];
+
+// --- Ground ---------------------------------------------------------------------
+const groundMaterial = makeProceduralMaterial('GROUND', [CONCRETE_A, CONCRETE_B, DIRT], { envMapIntensity: 0.4, roughness: 0.96, bump: 1 });
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(900, 900).rotateX(-Math.PI / 2), groundMaterial);
+ground.name = 'ground';
+ground.receiveShadow = true;
+scene.add(ground);
+impactTargets.push(ground);
+
+// --- Distant ridges: unlit silhouettes that hide the ground/sky seam --------------
+// Three vertex rings: below ground and ground level are the fog colour (so the ridge dissolves
+// into the fogged ground with no seam), the crest is the dark silhouette colour. paintRidge() writes the
+// colours, so a look change can recolour the same mesh.
+function makeRidge(radius, base, amp, seed) {
+  const rnd = mulberry32(seed);
+  const phase = [rnd() * 6.28, rnd() * 6.28, rnd() * 6.28, rnd() * 6.28];
+  const segments = 160;
+  const positions = new Float32Array((segments + 1) * 3 * 3);
+  const indices = [];
+  for (let i = 0; i <= segments; i++) {
+    const a = (i / segments) * Math.PI * 2;
+    const h = base + amp * (0.50 * Math.sin(a * 3 + phase[0]) + 0.28 * Math.sin(a * 7 + phase[1])
+                          + 0.14 * Math.sin(a * 17 + phase[2]) + 0.08 * Math.sin(a * 41 + phase[3]));
+    const x = Math.sin(a) * radius, z = Math.cos(a) * radius;
+    positions.set([x, h, z, x, 0, z, x, -8, z], i * 9);
+    if (i < segments) {
+      const k = i * 3;
+      indices.push(k, k + 1, k + 3, k + 1, k + 4, k + 3, k + 1, k + 2, k + 4, k + 2, k + 5, k + 4);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array((segments + 1) * 3 * 3), 3));
+  geometry.setIndex(indices);
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ vertexColors: true, fog: false, side: THREE.DoubleSide }));
+  mesh.frustumCulled = false;
+  return mesh;
+}
+function paintRidge(mesh, crest, fog) {
+  const attr = mesh.geometry.attributes.color, a = attr.array;
+  for (let i = 0; i < a.length; i += 9) {
+    a[i] = crest.r; a[i + 1] = crest.g; a[i + 2] = crest.b;
+    a[i + 3] = a[i + 6] = fog.r; a[i + 4] = a[i + 7] = fog.g; a[i + 5] = a[i + 8] = fog.b;
+  }
+  attr.needsUpdate = true;
+}
+const ridgeFar = makeRidge(520, 24, 16, 7), ridgeNear = makeRidge(330, 14, 10, 19);
+scene.add(ridgeFar, ridgeNear);
+
+// --- Looks (dusk / night) ------------------------------------------------------------------------
+// applyLook() rewrites every look-dependent value in place: sky colours, fog, key light, fill, exposure,
+// ridge colours and the image-based light. Nothing is rebuilt except the PMREM cube, once per look.
+const lookEnvironments = {};
+const _lookColor = new THREE.Color();
+let lookName = '';
+function applyLook(name) {
+  const L = LOOKS[name];
+  for (const key of Object.keys(skyColors)) skyColors[key].set(L[key]);
+  const el = THREE.MathUtils.degToRad(L.sunElevation), az = THREE.MathUtils.degToRad(L.sunAzimuth);
+  SUN_DIR.set(-Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el));
+  scene.fog.color.copy(skyColors.horizon);
+  scene.fog.density = L.fogDensity;
+  sun.color.set(L.sun);
+  sun.intensity = L.sunIntensity;
+  sun.position.copy(SUN_DIR).multiplyScalar(62).add(SUN_TARGET);
+  fill.color.set(L.fillSky);
+  fill.groundColor.set(L.fillGround);
+  fill.intensity = L.fillIntensity;
+  renderer.toneMappingExposure = TONE_MAP === 'aces' ? L.acesExposure : L.exposure;
+  paintRidge(ridgeFar, _lookColor.set(L.ridgeFar), skyColors.horizon);
+  paintRidge(ridgeNear, _lookColor.set(L.ridgeNear), skyColors.horizon);
+  if (!lookEnvironments[name]) lookEnvironments[name] = buildEnvironment();
+  scene.environment = lookEnvironments[name].texture;
+  lookName = name;
+}
+applyLook(hasLook(QP.get('look')) ? QP.get('look') : DEFAULT_LOOK);
+
+// --- Backdrop: broken wall + stone blocks -------------------------------------------
+const stoneMaterial = makeProceduralMaterial('STONE', [STONE_A, STONE_B, STONE_GRIME], { envMapIntensity: 0.45, roughness: 0.93, bump: 1 });
+const WALL_FACE_Z = -12.6;             // front face of the wall
+{
+  // Random-bond masonry: every course is filled with blocks of random width, then blocks that
+  // stand above the jagged skyline are dropped. One InstancedMesh, one draw call.
+  const rnd = mulberry32(2024);
+  const X0 = -2.4, X1 = 4.2, COL = 0.3;
+  const skyline = [];
+  for (let i = 0, n = Math.round((X1 - X0) / COL); i < n; i++) {
+    const t = i / (n - 1);
+    skyline.push(Math.max(0.35, 2.8 - 2.25 * Math.pow(t, 0.85) + (rnd() - 0.5) * 0.7));
+  }
+  const items = [];                                    // cx, cy, w, h, d
+  let y = 0, course = 0;
+  while (y < 3.1) {
+    const h = 0.25 + rnd() * 0.11;
+    let x = X0 - (course % 2 ? 0 : 0.3) - rnd() * 0.25;
+    while (x < X1) {
+      const w = 0.38 + rnd() * 0.52;
+      const cx = x + w / 2;
+      const col = Math.min(skyline.length - 1, Math.max(0, Math.floor((cx - X0) / COL)));
+      if (cx > X0 - 0.15 && cx < X1 && y + h <= skyline[col] + 0.12) items.push([cx, y + h / 2, w, h, 0.34 + rnd() * 0.14]);
+      x += w + 0.006;
+    }
+    y += h + 0.006; course++;
+  }
+  const rubble = 14;
+  const wall = new THREE.InstancedMesh(new RoundedBoxGeometry(1, 1, 1, 2, 0.045), stoneMaterial, items.length + rubble);
+  wall.name = 'brokenWall';
+  wall.castShadow = true; wall.receiveShadow = true;
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), p = new THREE.Vector3(), sc = new THREE.Vector3(), tint = new THREE.Color();
+  let n = 0;
+  for (const [cx, cy, w, h, d] of items) {
+    p.set(cx + (rnd() - 0.5) * 0.015, cy, WALL_FACE_Z - d * 0.5 + (rnd() - 0.5) * 0.04);
+    e.set((rnd() - 0.5) * 0.012, (rnd() - 0.5) * 0.04, (rnd() - 0.5) * 0.012);
+    q.setFromEuler(e);
+    sc.set(w, h, d);
+    m.compose(p, q, sc);
+    wall.setMatrixAt(n, m);
+    const v = 0.80 + rnd() * 0.34, t = (rnd() - 0.5) * 0.10;
+    wall.setColorAt(n, tint.setRGB(v * (1 + t), v, v * (1 - t)));
+    n++;
+  }
+  for (let i = 0; i < rubble; i++) {                   // fallen pieces around the base
+    const w = 0.18 + rnd() * 0.30, h = 0.12 + rnd() * 0.16, d = 0.16 + rnd() * 0.22;
+    p.set(-2.8 + rnd() * 7.4, h * 0.45, WALL_FACE_Z + 0.25 + rnd() * 2.1);
+    e.set((rnd() - 0.5) * 0.5, rnd() * 6.28, (rnd() - 0.5) * 0.5);
+    q.setFromEuler(e);
+    sc.set(w, h, d);
+    m.compose(p, q, sc);
+    wall.setMatrixAt(n, m);
+    const v = 0.74 + rnd() * 0.3;
+    wall.setColorAt(n, tint.setRGB(v, v, v));
+    n++;
+  }
+  wall.instanceMatrix.needsUpdate = true;
+  wall.instanceColor.needsUpdate = true;
+  scene.add(wall);
+  impactTargets.push(wall);
+}
+
+const BLOCKS = [                       // x, z, width, height, depth, yaw (rad), tilt (rad)
+  [-3.7, -11.0, 1.15, 0.92, 1.00,  0.35, 0.03],
+  [ 3.9, -10.3, 1.65, 0.70, 0.92, -0.50, 0.02],
+  [-1.4,  -9.5, 0.90, 0.58, 0.72,  0.12, 0.00],
+  [ 5.7, -13.6, 1.25, 1.10, 1.20,  0.80, 0.04],
+  [-5.6, -13.9, 1.55, 0.70, 0.85, -0.25, 0.00],
+  [ 2.7, -14.6, 0.62, 1.85, 0.62,  0.30, 0.07],
+];
+BLOCKS.forEach(([x, z, w, h, d, yaw, tilt], i) => {
+  const block = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 3, 0.05), stoneMaterial);
+  block.name = 'stoneBlock' + i;
+  block.position.set(x, h * 0.5 - 0.03, z);
+  block.rotation.set(tilt, yaw, -tilt * 0.6, 'YXZ');
+  block.castShadow = true; block.receiveShadow = true;
+  scene.add(block);
+  impactTargets.push(block);
+});
+
+// --- Rifle: procedural, dark gunmetal ---------------------------------------------------
+// Authored with the barrel along local +Z, the bore axis through the local origin, local +Y up.
+// The rifle group is then yawed 180 degrees about Y so that +Z lands on world -Z (down-range).
+const RIFLE_REST = new THREE.Vector3(0.22, 1.42, -0.29);
+const rifle = new THREE.Group();
+rifle.name = 'rifle';
+rifle.position.copy(RIFLE_REST);
+rifle.rotation.y = Math.PI;
+scene.add(rifle);
+
+const muzzle = new THREE.Object3D();
+muzzle.name = 'muzzle';
+rifle.add(muzzle);
+
+{
+  const metal = [], polymer = [], hider = [];
+  const box = (list, w, h, d, x, y, z, rx = 0) => {
+    const g = new THREE.BoxGeometry(w, h, d); if (rx) g.rotateX(rx); g.translate(x, y, z); list.push(g);
+  };
+  const cyl = (list, r, len, x, y, z, segs = 14, open = false) => {
+    const g = new THREE.CylinderGeometry(r, r, len, segs, 1, open); g.rotateX(Math.PI / 2); g.translate(x, y, z); list.push(g);
+  };
+  box(metal, 0.046, 0.088, 0.250, 0, -0.018, -0.005);              // receiver
+  box(metal, 0.024, 0.010, 0.420, 0, 0.031, 0.070);                // top rail
+  cyl(metal, 0.030, 0.270, 0, 0.000, 0.255, 8);                    // handguard
+  cyl(metal, 0.0085, 0.260, 0, 0.000, 0.500, 12);                  // barrel
+  box(metal, 0.020, 0.020, 0.030, 0, 0.010, 0.400);                // gas block
+  box(metal, 0.004, 0.034, 0.006, 0, 0.040, 0.404);                // front sight post
+  box(polymer, 0.040, 0.080, 0.190, 0, -0.035, -0.205);            // stock
+  box(polymer, 0.044, 0.095, 0.022, 0, -0.040, -0.312);            // butt pad
+  box(polymer, 0.032, 0.095, 0.042, 0, -0.098, -0.075, 0.35);      // pistol grip, leaning back
+  box(polymer, 0.026, 0.150, 0.052, 0, -0.140, 0.040, -0.12);      // magazine
+  box(polymer, 0.030, 0.014, 0.060, 0, 0.043, 0.000);              // optic mount
+  cyl(polymer, 0.0185, 0.130, 0, 0.0625, 0.000, 18);               // optic tube
+  cyl(polymer, 0.0225, 0.014, 0, 0.0625, 0.068, 18);               // objective bell
+  cyl(polymer, 0.0215, 0.012, 0, 0.0625, -0.066, 18);              // eyepiece ring
+  box(polymer, 0.005, 0.026, 0.052, -0.0235, 0.004, 0.020);        // ejection port cover (shooter's right side)
+  box(polymer, 0.008, 0.012, 0.070, 0, -0.072, 0.012);             // trigger guard
+  cyl(hider, 0.0135, 0.075, 0, 0, 0.6575, 12, true);               // flash hider: z 0.620 .. 0.695
+  const bore = new THREE.CircleGeometry(0.0075, 12); bore.translate(0, 0, 0.664);
+  polymer.push(bore);
+
+  const metalMat = new THREE.MeshStandardMaterial({ color: GUNMETAL, metalness: 0.8, roughness: 0.6, envMapIntensity: 1.2 });
+  const polyMat  = new THREE.MeshStandardMaterial({ color: POLYMER, metalness: 0.05, roughness: 0.72, envMapIntensity: 0.6 });
+  const hiderMat = new THREE.MeshStandardMaterial({ color: GUNMETAL, metalness: 0.8, roughness: 0.6, envMapIntensity: 1.2, side: THREE.DoubleSide });
+  for (const [list, mat, name] of [[metal, metalMat, 'rifleMetal'], [polymer, polyMat, 'riflePolymer'], [hider, hiderMat, 'rifleHider']]) {
+    const mesh = new THREE.Mesh(mergeGeometries(list, false), mat);
+    mesh.name = name; mesh.castShadow = true; mesh.receiveShadow = true;
+    rifle.add(mesh);
+  }
+  muzzle.position.set(0, 0, 0.695);                                // barrel tip: local +Z points down the barrel
+}
+
+const muzzleLight = new THREE.PointLight(0xffc48f, 0, 0, 2);       // candela, decay 2, no distance cutoff
+muzzleLight.name = 'muzzleLight';
+// 0.35 m ahead of the tip, along +Z. A point light a few cm from a surface blows it out at any intensity, and in r160
+// PointLight.distance only windows the FAR field ((1 - (d/distance)^4)^2), so keeping the light forward is the
+// only near-field control. Effects that move the light should keep it >= ~0.3 m ahead of the tip.
+muzzleLight.position.set(0, 0, 0.35);
+muzzle.add(muzzleLight);
+
+// Recoil: critically-ish damped spring on a fixed step (deterministic). z is the setback toward the shooter.
+const recoil = { x: 0, v: 0 };
+const RECOIL_W = 2 * Math.PI * 13, RECOIL_Z = 0.62, RECOIL_KICK = 1.35 /* m/s */, RECOIL_PITCH = 1.6 /* rad per metre of setback */;
+function stepRecoil(dt) {
+  recoil.v += (-RECOIL_W * RECOIL_W * recoil.x - 2 * RECOIL_Z * RECOIL_W * recoil.v) * dt;
+  recoil.x += recoil.v * dt;
+  rifle.position.z = RIFLE_REST.z + recoil.x;
+  rifle.rotation.x = recoil.x * RECOIL_PITCH;
+}
+
+// --- Stand-in shooter (grey mannequin, merged into one mesh) -----------------------------------
+// Gives the over-the-shoulder view a body and a sense of scale. Arms and legs are two-bone IK
+// chains onto the rifle's grips and the floor. SHOW_FIGURE = false removes it.
+const figureFeet = [];
+if (SHOW_FIGURE) {
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  const up = V(0, 1, 0);
+  const parts = [];
+  const capsule = (a, b, r, sx = 1, sz = 1) => {
+    const len = a.distanceTo(b);
+    const g = new THREE.CapsuleGeometry(r, Math.max(len - 2 * r, 0.001), 4, 10);
+    const q = new THREE.Quaternion().setFromUnitVectors(up, b.clone().sub(a).normalize());
+    g.applyMatrix4(new THREE.Matrix4().compose(a.clone().add(b).multiplyScalar(0.5), q, V(sx, 1, sz)));
+    parts.push(g);
+  };
+  const ball = (c, r) => { parts.push(new THREE.SphereGeometry(r, 14, 10).translate(c.x, c.y, c.z)); };
+  const twoBone = (S, H, l1, l2, pole) => {
+    const d = H.clone().sub(S);
+    const dist = Math.min(Math.max(d.length(), Math.abs(l1 - l2) + 0.01), (l1 + l2) * 0.998);
+    const dir = d.normalize();
+    const a = (l1 * l1 - l2 * l2 + dist * dist) / (2 * dist);
+    const h = Math.sqrt(Math.max(l1 * l1 - a * a, 0));
+    const pp = pole.clone().sub(dir.clone().multiplyScalar(pole.dot(dir))).normalize();
+    return S.clone().add(dir.multiplyScalar(a)).add(pp.multiplyScalar(h));
+  };
+
+  rifle.updateMatrixWorld(true);
+  const gripR = rifle.localToWorld(V(0, -0.105, -0.072));          // pistol grip
+  const gripL = rifle.localToWorld(V(0, -0.040, 0.215));           // handguard
+  const shR = V(0.23, 1.44, 0.10), shL = V(-0.15, 1.43, -0.08);
+  const neckBase = V(0.05, 1.47, 0.05), head = V(0.17, 1.62, -0.01);
+  const pelvis = V(0.02, 0.91, 0.12);
+  const hipR = V(0.13, 0.90, 0.16), hipL = V(-0.09, 0.90, 0.07);
+  const footR = V(0.23, 0.07, 0.24), footL = V(-0.13, 0.07, -0.24);
+
+  // torso: the classic mannequin pill (a vertical capsule, wide and shallow) on a pelvis block
+  parts.push(new THREE.CapsuleGeometry(0.135, 0.20, 6, 20).scale(1.32, 1, 0.66).translate(0.01, 1.20, 0.09));
+  parts.push(new THREE.SphereGeometry(0.130, 16, 12).scale(1.18, 0.80, 0.90).translate(0.02, 0.93, 0.12));
+  capsule(neckBase, V(0.13, 1.56, 0.01), 0.048);                   // neck
+  ball(head, 0.098);
+  capsule(neckBase, shR, 0.05); capsule(neckBase, shL, 0.05);       // clavicles
+  ball(shR, 0.065); ball(shL, 0.065);
+  const elbowR = twoBone(shR, gripR, 0.29, 0.27, V(0.5, -1, 0.35));
+  const elbowL = twoBone(shL, gripL, 0.29, 0.27, V(-0.1, -1, 0.15));
+  capsule(shR, elbowR, 0.046); capsule(elbowR, gripR, 0.039); ball(gripR, 0.048);
+  capsule(shL, elbowL, 0.046); capsule(elbowL, gripL, 0.039); ball(gripL, 0.048);
+  const kneeR = twoBone(hipR, footR, 0.47, 0.46, V(0.15, 0.2, -1));
+  const kneeL = twoBone(hipL, footL, 0.47, 0.46, V(-0.1, 0.2, -1));
+  capsule(hipR, kneeR, 0.082); capsule(kneeR, footR, 0.062);
+  capsule(hipL, kneeL, 0.082); capsule(kneeL, footL, 0.062);
+  capsule(pelvis, hipR, 0.082); capsule(pelvis, hipL, 0.082);
+  for (const [foot, yaw] of [[footR, -0.35], [footL, 0.15]]) {      // boots
+    parts.push(new THREE.BoxGeometry(0.105, 0.085, 0.27).rotateY(yaw).translate(foot.x, 0.045, foot.z - 0.04));
+    figureFeet.push([foot.x, foot.z, yaw]);
+  }
+  const figure = new THREE.Mesh(mergeGeometries(parts, false),
+    new THREE.MeshStandardMaterial({ color: FIGURE, roughness: 0.88, metalness: 0, envMapIntensity: 0.45 }));
+  figure.name = 'figure';
+  figure.castShadow = true; figure.receiveShadow = true;
+  scene.add(figure);
+}
+
+// --- Contact shadows: soft dark decals under the heavy things (one draw call) -------
+{
+  const size = 128, cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  const cx = cv.getContext('2d');
+  const img = cx.createImageData(size, size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = (x + 0.5) / size * 2 - 1, v = (y + 0.5) / size * 2 - 1;
+      const dist = Math.hypot(Math.max(Math.abs(u) - 0.42, 0), Math.max(Math.abs(v) - 0.42, 0));   // rounded-box distance
+      const t = Math.min(Math.max(dist / 0.58, 0), 1);
+      const a = 1 - t * t * (3 - 2 * t);
+      img.data[(y * size + x) * 4 + 3] = Math.round(255 * a * a);
+    }
+  }
+  cx.putImageData(img, 0, 0);
+  const aoTexture = new THREE.CanvasTexture(cv);
+  aoTexture.colorSpace = THREE.NoColorSpace;
+  const decals = [];
+  const addDecal = (x, z, w, d, yaw, opacity) => {
+    const g = new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2).rotateY(yaw).translate(x, 0.004, z);
+    const rgba = new Float32Array(g.attributes.position.count * 4);
+    for (let i = 0; i < g.attributes.position.count; i++) rgba.set([0, 0, 0, opacity], i * 4);
+    g.setAttribute('color', new THREE.BufferAttribute(rgba, 4));
+    decals.push(g);
+  };
+  for (const [x, z, w, , d, yaw] of BLOCKS) addDecal(x, z, w * 1.55 + 0.4, d * 1.55 + 0.4, yaw, 0.62);
+  addDecal(0.9, WALL_FACE_Z - 0.2, 7.8, 1.7, 0, 0.55);
+  for (const [x, z, yaw] of figureFeet) addDecal(x, z - 0.03, 0.50, 0.62, yaw, 0.55);
+  const decalMesh = new THREE.Mesh(mergeGeometries(decals, false), new THREE.MeshBasicMaterial({
+    map: aoTexture, vertexColors: true, transparent: true, depthWrite: false, fog: false,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+  }));
+  decalMesh.name = 'contactShadows';
+  decalMesh.renderOrder = 1;
+  scene.add(decalMesh);
+}
+
+// --- Cameras --------------------------------------------------------------------------------
+// fov is the vertical field of view at 16:9; narrower windows keep the same horizontal field
+// of view (up to a 100 degree vertical cap), so phone portrait still frames the action.
+const hasCamera = (name) => Object.prototype.hasOwnProperty.call(CAMERAS, name);
+const CAMERAS = {
+  shoulder: { pos: [1.65, 1.82, 2.80],  target: [0.30, 1.15, -9.0],  fov: 44 },   // key 1: over the right shoulder
+  side:     { pos: [13.0, 1.45, -7.1],  target: [0.0, 1.30, -7.1],   fov: 40 },   // key 2: profile of the whole path
+  incoming: { pos: [1.26, 1.38, -5.4],  target: [0.16, 1.46, -0.55], fov: 46 },   // key 3: beside the path, looking back
+  muzzle:   { pos: [0.74, 1.50, -1.24], target: [0.20, 1.43, -1.12], fov: 36 },   // key 4: close-up on the barrel
+};
+let cameraName = 'shoulder';
+let cameraOverride = null;            // preflight only: {pos, target, fov} from the query string
+function applyCamera() {
+  const c = cameraOverride || CAMERAS[cameraName];
+  const aspect = camera.aspect;
+  const t = Math.tan(THREE.MathUtils.degToRad(c.fov) / 2) * (aspect < 16 / 9 ? (16 / 9) / aspect : 1);
+  camera.fov = Math.min(THREE.MathUtils.radToDeg(2 * Math.atan(t)), 100);
+  camera.position.fromArray(c.pos);
+  camera.lookAt(c.target[0], c.target[1], c.target[2]);
+  camera.updateProjectionMatrix();
+  camera.updateMatrixWorld(true);            // also refreshes matrixWorldInverse for any CPU-side projection
+}
+
+// --- Post-processing ---------------------------------------------------------------------------
+const FULLSCREEN_VERT = /* glsl */`
+  varying vec2 vUv;
+  void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
+`;
+
+// Depth linearisation, shared by the distortion composite below and exported to effects as ctx.sceneDepthGLSL (a
+// string to paste into a fragment shader). d = a raw depth sample in 0..1 (1.0 = cleared: the far plane),
+// nearFar = vec2(camera.near, camera.far) in metres. The result is metres in front of the camera ALONG ITS VIEW
+// AXIS, the same quantity as -(modelViewMatrix * vec4(position, 1.0)).z in a vertex shader. Perspective camera.
+const DEPTH_GLSL = /* glsl */`
+  float rangeViewDepth(float d, vec2 nearFar) {
+    float z = d * 2.0 - 1.0;
+    return 2.0 * nearFar.x * nearFar.y / (nearFar.y + nearFar.x - z * (nearFar.y - nearFar.x));
+  }
+`;
+
+// Renders the scene into its own 4x MSAA RGBA16F target; the composer's ping-pong buffers
+// stay single-sample (post passes do not need MSAA and 4x targets would cost every pass).
+// The target carries a DepthTexture: three r160 resolves the multisampled depth into it together with the
+// colour (blitFramebuffer, which keeps one sample per pixel), so the distortion pass can depth-test against
+// FULL-RESOLUTION scene depth and its composite can read it. Everything in `scene` that writes depth is in
+// there, effect debris included; additive effects (depthWrite false) are not.
+class ScenePass extends Pass {
+  constructor(sceneIn, cameraIn) {
+    super();
+    this.scene = sceneIn; this.camera = cameraIn;
+    this.needsSwap = false;
+    this.depthTexture = new THREE.DepthTexture(2, 2);            // 24-bit unsigned depth, nearest filtering
+    this.target = new THREE.WebGLRenderTarget(2, 2, {
+      type: THREE.HalfFloatType, format: THREE.RGBAFormat,
+      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+      samples: Math.min(4, renderer.capabilities.maxSamples),
+      depthTexture: this.depthTexture,
+    });
+  }
+  setSize(w, h) { this.target.setSize(w, h); }
+  render(rendererIn) {
+    rendererIn.setRenderTarget(this.target);
+    rendererIn.render(this.scene, this.camera);
+  }
+}
+
+// Distortion, all at FULL resolution: (1) the effects' distortion meshes are drawn additively into an RGBA16F
+// buffer whose depth attachment IS the scene pass's depth texture (read-only: distortion materials never write
+// depth), so a fragment only lands where the volume is in front of the opaque scene, per pixel, with no
+// half-res stair-steps and no extra occluder pass; (2) a composite samples the HDR scene colour at (uv + offset).
+// The composite adds the two screen-space guards a depth test alone cannot give:
+//   - silhouette guard: a pixel with markedly nearer geometry in its 4-neighbourhood (an edge of the rifle,
+//     the figure, a block) is not displaced, so anti-aliased edges and hairline parts keep their shape;
+//   - lookup visibility: the displaced lookup is rejected (blended back to the undisplaced pixel) when the
+//     nearest depth under its bilinear footprint is much nearer than the pixel being shaded, so a nearer object
+//     is never smeared onto the background behind the volume ("ghosting").
+// "Much nearer" is a depth RATIO: fully rejected below 0.55, fully accepted above 0.8, so a receding ground plane
+// (a few percent per pixel) is never rejected, a rifle in front of a wall (ratio ~0.3) always is.
+// Uniforms: tColor = HDR scene, tDistortion = signed UV offsets in .rg (UV units), tDepth = scene depth (0..1),
+//           uGain = global multiplier, uMaxOffset = safety clamp on |offset| (UV units),
+//           uNearFar = camera near / far (m), to linearise tDepth, uActive = 0 skips the work (nothing to distort).
+//           Emissive pixels (luminance > ~1) are exempt, see the shader.
+class DistortionPass extends Pass {
+  constructor(distortionSceneIn, cameraIn, scenePass) {
+    super();
+    this.distortionScene = distortionSceneIn; this.camera = cameraIn; this.scenePass = scenePass;
+    this.needsSwap = true;
+    this.dirty = true;
+    this.target = new THREE.WebGLRenderTarget(2, 2, {
+      type: THREE.HalfFloatType, format: THREE.RGBAFormat,
+      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+      depthBuffer: true, depthTexture: scenePass.depthTexture,   // shared with the scene target: same size, never cleared or written here
+    });
+    this.material = new THREE.ShaderMaterial({
+      uniforms: {
+        tColor: { value: null }, tDistortion: { value: null }, tDepth: { value: null },
+        uGain: { value: 1 }, uMaxOffset: { value: 0.12 }, uNearFar: { value: new THREE.Vector2(0.04, 1500) }, uActive: { value: 0 },
+      },
+      vertexShader: FULLSCREEN_VERT,
+      fragmentShader: /* glsl */`
+        uniform sampler2D tColor;
+        uniform sampler2D tDistortion;
+        uniform sampler2D tDepth;
+        uniform float uGain;
+        uniform float uMaxOffset;
+        uniform vec2  uNearFar;
+        uniform float uActive;
+        varying vec2 vUv;
+        const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+        // Emissive radiance (luminance above ~1.0, the bloom domain) is exempt: it is never displaced
+        // and never pulled onto neighbouring pixels, so a bright flash or tracer cannot ghost through
+        // its own distortion halo. The environment (kept under ~0.75) is what bends.
+        float emissive(vec3 c) { return smoothstep(0.8, 1.6, dot(c, LUMA)); }
+        ${DEPTH_GLSL}
+        float viewDepth(float d) { return rangeViewDepth(d, uNearFar); }
+        float depthAt(ivec2 p, ivec2 size) { return viewDepth(texelFetch(tDepth, clamp(p, ivec2(0), size - 1), 0).r); }
+        void main() {
+          vec3 c0 = texture2D(tColor, vUv).rgb;
+          vec2 d = vec2(0.0);
+          if (uActive > 0.5) d = texture2D(tDistortion, vUv).rg * uGain * (1.0 - emissive(c0));
+          float l = length(d);
+          if (l < 1e-5) { gl_FragColor = vec4(c0, 1.0); return; }          // most pixels: nothing to do
+          if (l > uMaxOffset) d *= uMaxOffset / l;
+
+          ivec2 size = textureSize(tDepth, 0);
+          ivec2 pc = ivec2(vUv * vec2(size));
+          float zHere = depthAt(pc, size);
+          // silhouette guard
+          float zEdge = min(min(depthAt(pc + ivec2(1, 0), size), depthAt(pc - ivec2(1, 0), size)),
+                            min(depthAt(pc + ivec2(0, 1), size), depthAt(pc - ivec2(0, 1), size)));
+          d *= smoothstep(0.55, 0.8, zEdge / zHere);
+          // lookup visibility: nearest depth under the 2x2 bilinear footprint of the displaced lookup
+          vec2 uv1 = clamp(vUv + d, 0.0, 1.0);
+          ivec2 q = ivec2(floor(uv1 * vec2(size) - 0.5));
+          float zLook = min(min(depthAt(q, size), depthAt(q + ivec2(1, 0), size)),
+                            min(depthAt(q + ivec2(0, 1), size), depthAt(q + ivec2(1, 1), size)));
+          float visible = smoothstep(0.55, 0.8, zLook / zHere);
+
+          vec3 cd = texture2D(tColor, uv1).rgb;
+          cd = mix(cd, c0, emissive(cd));
+          gl_FragColor = vec4(mix(c0, cd, visible), 1.0);
+        }`,
+      depthTest: false, depthWrite: false,
+    });
+    this.quad = new FullScreenQuad(this.material);
+    this._clearColor = new THREE.Color();
+  }
+  setSize(w, h) { this.target.setSize(w, h); this.dirty = true; }
+  static hasRenderable(o) {
+    if (!o.visible) return false;
+    if (o.isMesh || o.isPoints || o.isLine || o.isSprite) return true;
+    for (let i = 0; i < o.children.length; i++) if (DistortionPass.hasRenderable(o.children[i])) return true;
+    return false;
+  }
+  render(r, writeBuffer) {
+    const active = DistortionPass.hasRenderable(this.distortionScene);
+    if (active || this.dirty) {
+      const prevAuto = r.autoClear, prevAlpha = r.getClearAlpha();
+      r.getClearColor(this._clearColor);
+      r.setRenderTarget(this.target);
+      r.setClearColor(0x000000, 0);
+      r.clear(true, false, false);                            // colour only: the depth attachment belongs to the scene pass
+      if (active) {
+        r.autoClear = false;
+        r.render(this.distortionScene, this.camera);          // signed offsets, additive, depth-tested against the scene
+        r.autoClear = prevAuto;
+      }
+      r.setClearColor(this._clearColor, prevAlpha);
+      this.dirty = active;
+    }
+    const u = this.material.uniforms;
+    u.tColor.value = this.scenePass.target.texture;
+    u.tDistortion.value = this.target.texture;
+    u.tDepth.value = this.scenePass.depthTexture;
+    u.uNearFar.value.set(this.camera.near, this.camera.far);
+    u.uActive.value = active ? 1 : 0;
+    r.setRenderTarget(writeBuffer);
+    this.quad.render(r);
+  }
+}
+
+// Debug view: final image dimmed to a context layer, distortion offsets drawn as colour.
+// Uniforms: tFinal = tone-mapped sRGB frame, tDistortion = offsets, uGain = colour per 1.0 UV offset
+class DistortionDebugPass extends Pass {
+  constructor(distortionPass) {
+    super();
+    this.enabled = false;
+    this.needsSwap = false;
+    this.distortionPass = distortionPass;
+    this.material = new THREE.ShaderMaterial({
+      uniforms: { tFinal: { value: null }, tDistortion: { value: null }, uGain: { value: 100 } },
+      vertexShader: FULLSCREEN_VERT,
+      fragmentShader: /* glsl */`
+        uniform sampler2D tFinal;
+        uniform sampler2D tDistortion;
+        uniform float uGain;
+        varying vec2 vUv;
+        void main() {
+          vec3 base = texture2D(tFinal, vUv).rgb;
+          vec2 d = texture2D(tDistortion, vUv).rg * uGain;
+          vec3 col = vec3(0.115 + dot(base, vec3(0.299, 0.587, 0.114)) * 0.16);
+          col += vec3(max(d.x, 0.0), 0.0, 0.0);
+          col += vec3(0.0, max(-d.x, 0.0), max(-d.x, 0.0)) * 0.9;
+          col += vec3(0.0, max(d.y, 0.0), 0.0);
+          col += vec3(max(-d.y, 0.0), 0.0, max(-d.y, 0.0)) * 0.9;
+          gl_FragColor = vec4(col, 1.0);
+        }`,
+      depthTest: false, depthWrite: false,
+    });
+    this.quad = new FullScreenQuad(this.material);
+  }
+  render(r, writeBuffer, readBuffer) {
+    this.material.uniforms.tFinal.value = readBuffer.texture;
+    this.material.uniforms.tDistortion.value = this.distortionPass.target.texture;
+    r.setRenderTarget(this.renderToScreen ? null : writeBuffer);
+    this.quad.render(r);
+  }
+}
+
+renderer.setPixelRatio(pixelRatioFor(window.innerWidth, window.innerHeight));
+renderer.setSize(window.innerWidth, window.innerHeight, false);
+const composer = new EffectComposer(renderer);
+const scenePass = new ScenePass(scene, camera);
+const distortionPass = new DistortionPass(distortionScene, camera, scenePass);
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), BLOOM.strength, BLOOM.radius, BLOOM.threshold);
+const outputPass = new OutputPass();
+// TONE MAPPING: add the CustomToneMapping branch r160's OutputShader lacks. OutputPass.render() rebuilds its defines only
+// when the renderer's colour space or tone mapping changes, and knows only the built-in operators; so for E the cache
+// fields and defines are set here, once (neither renderer setting changes after start-up).
+if (TONE_MAP === 'e') {
+  const before = outputPass.material.fragmentShader;
+  outputPass.material.fragmentShader = before.replace('#elif defined( AGX_TONE_MAPPING )',
+    '#elif defined( CUSTOM_TONE_MAPPING )\n\t\t\t\tgl_FragColor.rgb = CustomToneMapping( gl_FragColor.rgb );\n\t\t\t#elif defined( AGX_TONE_MAPPING )');
+  if (outputPass.material.fragmentShader === before) throw new Error('tone map E: the OutputShader branch to extend was not found');
+  outputPass._outputColorSpace = renderer.outputColorSpace;
+  outputPass._toneMapping = renderer.toneMapping;
+  outputPass.material.defines = { CUSTOM_TONE_MAPPING: '' };
+  if (THREE.ColorManagement.getTransfer(renderer.outputColorSpace) === THREE.SRGBTransfer) outputPass.material.defines.SRGB_TRANSFER = '';
+  outputPass.material.needsUpdate = true;
+}
+const debugPass = new DistortionDebugPass(distortionPass);
+
+// UnrealBloomPass r160 tuning. (a) Its high-pass is a hard step on the whole colour, so a
+// pixel at luminance 1.01 blooms at full strength and animated values pop as they cross 1.0;
+// replace it with a soft knee on the EXCESS above the threshold (continuous; the knee starts at
+// threshold - knee = 0.7 and the environment stays below it, so it contributes nothing; see HDR PIPELINE
+// in the header). The knee is applied to every full-resolution texel BEFORE the 4x4 box downsample
+// (thresholding the average made a line w px wide start to bloom only at ~4/w times the threshold, so thin
+// tracers and sparks barely glowed). (b) Its additive blend multiplies by an alpha that already contains
+// `strength`, making strength quadratic; blend One/One instead.
+bloomPass.highPassUniforms.uKnee = { value: BLOOM.knee };
+bloomPass.materialHighPassFilter.fragmentShader = /* glsl */`
+  uniform sampler2D tDiffuse;
+  uniform float luminosityThreshold;   // linear luminance where bloom starts (scene-referred, 1.0 = diffuse white)
+  uniform float uKnee;                 // width of the soft shoulder below the threshold (same units)
+  varying vec2 vUv;
+  // Soft knee on the excess above the threshold: 0 below threshold - knee, quadratic through the knee, then
+  // l - threshold (slope 1, continuous). Scales the colour, so hue is kept.
+  vec3 prefilter(vec3 c) {
+    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    float soft = clamp(l - luminosityThreshold + uKnee, 0.0, 2.0 * uKnee);
+    soft = soft * soft / (4.0 * uKnee + 1e-5);
+    return c * (max(soft, l - luminosityThreshold) / max(l, 1e-5));
+  }
+  void main() {
+    // The target is half resolution: each of its texels is the mean of a 4x4 block of SOURCE texels centred on
+    // the point it covers (for even sizes block origin = 2 * texel - 1, so the blocks overlap by half and every
+    // source texel is read by exactly four of them with weight 1/16). All 16 texels are fetched and the knee is
+    // applied to EACH one before averaging: nothing is skipped (no bilinear tap straddling a thin line), so
+    // the sum over a line does not depend on where it falls on the pixel grid except through the knee itself,
+    // and a texel at radiance R contributes its own excess (R - threshold) however thin the feature is.
+    // The inside of a uniform patch gives the old result; what changes is the edge texels and any feature
+    // narrower than the block. The block origin is rounded from vUv so odd buffer sizes (the pixel-ratio
+    // cap produces them) stay centred.
+    ivec2 size = textureSize(tDiffuse, 0);
+    ivec2 o = ivec2(floor(vUv * vec2(size) + 0.5)) - 2;
+    vec3 sum = vec3(0.0);
+    for (int y = 0; y < 4; y++) {
+      for (int x = 0; x < 4; x++) {
+        sum += prefilter(texelFetch(tDiffuse, clamp(o + ivec2(x, y), ivec2(0), size - 1), 0).rgb);
+      }
+    }
+    gl_FragColor = vec4(sum * (1.0 / 16.0), 1.0);
+  }`;
+bloomPass.materialHighPassFilter.needsUpdate = true;
+bloomPass.blendMaterial.blending = THREE.CustomBlending;
+bloomPass.blendMaterial.blendEquation = THREE.AddEquation;
+bloomPass.blendMaterial.blendSrc = THREE.OneFactor;
+bloomPass.blendMaterial.blendDst = THREE.OneFactor;
+
+composer.addPass(scenePass);
+composer.addPass(distortionPass);
+composer.addPass(bloomPass);
+composer.addPass(outputPass);
+composer.addPass(debugPass);
+
+function addEffectPass(pass) {
+  composer.insertPass(pass, composer.passes.indexOf(bloomPass));
+  return () => composer.removePass(pass);
+}
+
+function resize() {
+  const w = Math.max(1, window.innerWidth), h = Math.max(1, window.innerHeight);
+  const pr = pixelRatioFor(w, h);
+  renderer.setPixelRatio(pr);
+  renderer.setSize(w, h, false);
+  if (composer._pixelRatio !== pr) composer.setPixelRatio(pr);        // (re)sizes every pass
+  composer.setSize(w, h);
+  camera.aspect = w / h;
+  applyCamera();
+}
+
+// --- Simulation clock -----------------------------------------------------------------------------------
+// The simulation advances in fixed 1/240 s substeps (sim.step, sim.time = step / 240); each substep runs the rifle
+// recoil and EFFECT.update(). sim.acc is the leftover time (0 <= acc < 1/240) that has not yet made a full substep,
+// so the instant being DRAWN is renderTime = sim.time + sim.acc, a continuous clock that EFFECT.render() receives.
+// Order inside one display frame: whole substeps (update, then an auto-fire shot if one is due), then shots queued by
+// key / click, then render(renderTime). A shot queued by the player therefore starts at the newest substep and its
+// first drawn frame is at age acc < 1/240, never a whole display frame old.
+const sim = {
+  step: 0, time: 0, acc: 0, scale: 1, paused: false,
+  auto: false, rpm: 600, nextAuto: 0,
+  shots: 0, lastShot: -1, pendingFire: 0, pendingStep: 0,
+  frame: 0,                                      // live display frames drawn so far = the index of the next one
+};
+const renderTimeNow = () => sim.time + sim.acc;
+// Display-frame number of the frame about to be drawn. Live: a real counter. Static modes have no display cadence,
+// so it is the number of nominal DISPLAY_HZ frames elapsed (floor(t * 60)).
+const frameNow = () => (STATIC ? Math.floor(renderTimeNow() * DISPLAY_HZ + 1e-6) : sim.frame);
+function fireShot() {
+  const n = sim.shots++;
+  sim.lastShot = n;
+  rifle.updateMatrixWorld(true);                 // the effect reads the muzzle's world pose
+  EFFECT.fire(n, mulberry32(n), frameNow());
+  recoil.v += RECOIL_KICK;                       // kick after the round has left
+}
+function stepSim() {
+  sim.step++;
+  sim.time = sim.step * SUBSTEP;                 // derived from the integer step: no float drift
+  stepRecoil(SUBSTEP);
+  rifle.updateMatrixWorld(true);
+  EFFECT.update(SUBSTEP, sim.time);
+  if (sim.auto && sim.time >= sim.nextAuto - 1e-9) { fireShot(); sim.nextAuto += 60 / sim.rpm; }
+}
+
+// --- Effect context ------------------------------------------------------------------------------------------
+const distortionMaterialParams = Object.freeze({
+  transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide,
+  blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
+  blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
+  blendEquationAlpha: THREE.AddEquation, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneFactor,
+});
+
+// --- Tuning panel (ctx.gui) ------------------------------------------------------------------------------------------
+// One lil-gui GUI, created the first time an effect reads ctx.gui: a page whose effect never touches it has no panel
+// (and lil-gui never injects its stylesheet). It docks top right UNDER the HUD (title block, stats, distortion legend)
+// and above the bottom dock, scrolls when taller than that space, starts collapsed under PANEL_COLLAPSE_BELOW px,
+// and is hidden with the HUD (H, &hud=0) and in ?preflight unless &panel=1 (see the CSS). layoutPanel() measures
+// the HUD and the dock and writes the two custom properties the CSS positions it with.
+const PANEL_COLLAPSE_BELOW = 700;               // px of window width
+let guiRoot = null;
+function layoutPanel() {
+  const rootStyle = document.documentElement.style;
+  const dock = document.querySelector('.dock');
+  rootStyle.setProperty('--dock-h', Math.ceil(dock ? dock.getBoundingClientRect().height : 0) + 'px');
+  let hudBottom = 44;                           // the stats block ends near 44 px; a hidden .hud measures 0
+  for (const el of document.querySelectorAll('.hud')) hudBottom = Math.max(hudBottom, el.getBoundingClientRect().bottom);
+  rootStyle.setProperty('--panel-top', Math.ceil(hudBottom + 8) + 'px');
+}
+function getGui() {
+  if (guiRoot) return guiRoot;
+  guiRoot = new GUI({ title: 'tuning', autoPlace: false });
+  guiRoot.domElement.classList.add('range-panel');
+  document.body.appendChild(guiRoot.domElement);
+  if (window.innerWidth < PANEL_COLLAPSE_BELOW) guiRoot.close();
+  // A mouse click on a panel title, button or checkbox hands the keyboard back to the shortcuts, like the page's own
+  // buttons do (text fields keep focus: the click was to type into them). Keyboard activation (detail 0) keeps focus.
+  guiRoot.domElement.addEventListener('click', (e) => {
+    const a = document.activeElement;
+    if (e.detail > 0 && a && a !== document.body && guiRoot.domElement.contains(a) && (!isEditable(a) || a.type === 'checkbox')) a.blur();
+  });
+  layoutPanel();
+  if (typeof ResizeObserver === 'function') {
+    const ro = new ResizeObserver(layoutPanel);
+    for (const el of document.querySelectorAll('.dock, .hud')) ro.observe(el);
+  }
+  window.addEventListener('resize', layoutPanel);
+  return guiRoot;
+}
+
+// ctx.redraw(): in the static modes (reduced motion, ?preflight) there is no loop, so a change made in the panel
+// would stay invisible; this re-runs render(renderTime) for the SAME instant and draws one frame. In the live loop it
+// does nothing (the next frame shows the change). Ignored before the first frame is drawn and while a redraw is running.
+let rangeReady = false, redrawing = false;
+function effectRedraw() {
+  if (!STATIC || !rangeReady || redrawing) return;
+  redrawing = true;
+  try { redrawNow(); refreshUi(); } finally { redrawing = false; }
+}
+
+const ctx = {
+  THREE, scene, distortionScene, camera, renderer,
+  muzzle, muzzleLight, impactTargets,
+  rng: mulberry32,
+  addPass: addEffectPass,
+  sceneDepth: scenePass.depthTexture,
+  sceneDepthGLSL: DEPTH_GLSL,
+  get gui() { return getGui(); },
+  redraw: effectRedraw,
+  distortionMaterialParams,
+  rifle,
+};
+
+/* ===========================================================================
+ * ===== EFFECT SLOT: BEGIN (replace everything down to the END marker) ======
+ * Placeholder: one thin HDR streak from the muzzle to the backdrop, 0.1 s of
+ * life, plus a faint distortion wake and a muzzle-light pulse, so every hook of
+ * the range (HDR + bloom, distortion, light, seeded rng, fixed-step clock,
+ * render-time hook, impactTargets) is exercised. Replace it with the real effect;
+ * keep the name EFFECT and the {name, init, fire, update, render?, dispose,
+ * state?} shape. Pattern to copy: update() retires finished shots on the 1/240 s
+ * substep; render(renderTime) places everything for the instant being drawn.
+ * ========================================================================= */
+const EFFECT = (() => {
+  const POOL = 6;               // simultaneous shots; 0.1 s of life at up to 1500 rpm needs <= 3
+  const LIFE = 0.100;           // s
+  const FADE_FROM = 0.070;      // s: the whole streak fades out between here and LIFE
+  const SPEED = 240;            // m/s head speed (stylised, not ballistic)
+  const TAIL_DELAY = 0.025;     // s after the head leaves before the tail departs the muzzle (a ~6 m streak at 240 m/s)
+  const LIGHT_PEAK = 45;        // candela
+  const LIGHT_TAU = 0.018;      // s
+  const LIGHT_AHEAD = 0.45;     // m in front of the muzzle tip: closer than ~0.3 m the flash hider itself blows out
+
+  // Streak (lives in `scene`, additive, HDR). Thin-line rule: the cross-section is a GAUSSIAN whose sigma
+  // never drops below ~0.7 px, and the quad spans +-3.2 sigma. A sharper profile (say pow(x, 3) inside a
+  // 2 px quad) is narrower than a pixel, so its brightness changes with its sub-pixel position and the
+  // line beads and crawls. When the minimum sigma widens a sub-pixel line, a gain (vGain) keeps the
+  // energy roughly constant.
+  // Uniforms: uTail/uHead = segment ends in world space (m); uWidth = physical FWHM (m);
+  //   uMinSigma = smallest Gaussian sigma in device px; uViewport = drawing buffer (px);
+  //   uPeak = HDR radiance multiplier at the head core (scene-referred, >1 blooms); uLife = fade envelope 0..1;
+  //   uCore / uEdge = linear colours of the hot core and the cool rim.
+  const streakVert = /* glsl */`
+    uniform vec3  uTail;
+    uniform vec3  uHead;
+    uniform float uWidth;
+    uniform float uMinSigma;
+    uniform vec2  uViewport;
+    varying vec2  vUv;
+    varying float vLen;
+    varying float vGain;
+    void main() {
+      vUv = uv;                                         // uv.x: 0 at the tail .. 1 at the head, uv.y: across
+      vec3 p = mix(uTail, uHead, uv.x);
+      vec3 axis = uHead - uTail;
+      float len = length(axis);
+      axis = len > 1e-5 ? axis / len : vec3(0.0, 0.0, -1.0);
+      vec3 side = cross(axis, cameraPosition - p);
+      float sl = length(side);
+      side = sl > 1e-6 ? side / sl : vec3(1.0, 0.0, 0.0);
+      float depth = (projectionMatrix * viewMatrix * vec4(p, 1.0)).w;
+      float pxWorld = depth * 2.0 / (uViewport.y * projectionMatrix[1][1]);   // metres per device pixel here
+      float behindV = (1.0 - uv.x) * len;                                      // metres behind the head
+      float fwhm = uWidth * (0.15 + 0.85 * uv.x) * (1.0 + 2.6 * exp(-behindV * behindV / 0.12));   // tail tapers toward a point, bulbous head
+      float sigmaWanted = fwhm / 2.355 / pxWorld;                              // px
+      float sigma = max(sigmaWanted, uMinSigma);
+      vGain = clamp(sigmaWanted / sigma, 0.2, 1.0);                            // widened sub-pixel line: keep the energy
+      vLen = len;
+      gl_Position = projectionMatrix * viewMatrix * vec4(p + side * ((uv.y - 0.5) * 6.4 * sigma * pxWorld), 1.0);
+    }`;
+  const streakFrag = /* glsl */`
+    uniform float uPeak;
+    uniform float uLife;
+    uniform vec3  uCore;
+    uniform vec3  uEdge;
+    varying vec2  vUv;
+    varying float vLen;
+    varying float vGain;
+    void main() {
+      float t = vUv.y * 2.0 - 1.0;                                // -1..1 across the quad = +-3.2 sigma
+      float g = max(exp(-0.5 * 10.24 * t * t) - 0.006, 0.0) / 0.994;
+      float behind = (1.0 - vUv.x) * vLen;                        // metres behind the head
+      float trail = 0.05 + 0.95 * exp(-behind / 0.6);             // hot head, a quick hand-over (0.6 m) to a dim 5% tail: never a uniform beam
+      float bulb = 1.0 + 2.0 * exp(-behind * behind / 0.10);      // the leading ~0.4 m runs hotter
+      float cap = 1.0 - smoothstep(0.94, 1.0, vUv.x);             // rounded head
+      float tailIn = smoothstep(0.0, 0.08, vUv.x);                // soft tail end
+      float e = g * uPeak * trail * bulb * cap * tailIn * uLife * vGain;
+      gl_FragColor = vec4(mix(uEdge, uCore, pow(g, 0.6)) * e, 1.0);
+    }`;
+  // Wake (lives in `distortionScene`): writes a signed UV offset pushing the image away from the path.
+  // Uniforms: uTail/uHead/uWidth as above; uStrength = peak offset in UV units; uLife = envelope 0..1.
+  const wakeVert = /* glsl */`
+    uniform vec3  uTail;
+    uniform vec3  uHead;
+    uniform float uWidth;
+    varying vec2  vUv;
+    varying vec2  vPerp;
+    varying float vLen;
+    void main() {
+      vUv = uv;
+      vec3 p = mix(uTail, uHead, uv.x);
+      vec3 axis = uHead - uTail;
+      float len = length(axis);
+      axis = len > 1e-5 ? axis / len : vec3(0.0, 0.0, -1.0);
+      vec3 side = cross(axis, cameraPosition - p);
+      float sl = length(side);
+      side = sl > 1e-6 ? side / sl : vec3(1.0, 0.0, 0.0);
+      vec4 c0 = projectionMatrix * viewMatrix * vec4(p, 1.0);
+      vec4 c1 = projectionMatrix * viewMatrix * vec4(p + side, 1.0);
+      vec2 dir = c1.xy / c1.w - c0.xy / c0.w;                    // screen direction of +side, NDC
+      float dl = length(dir);
+      vPerp = dl > 1e-6 ? dir / dl : vec2(1.0, 0.0);
+      vLen = len;
+      gl_Position = projectionMatrix * viewMatrix * vec4(p + side * (uv.y - 0.5) * uWidth, 1.0);
+    }`;
+  const wakeFrag = /* glsl */`
+    uniform float uStrength;
+    uniform float uLife;
+    varying vec2  vUv;
+    varying vec2  vPerp;
+    varying float vLen;
+    void main() {
+      float s = vUv.y * 2.0 - 1.0;                               // -1..1 across; the sign picks the side
+      float prof = s * exp(-3.0 * s * s) * 2.2;                  // zero on the axis, peaks near |s| = 0.4
+      float trail = exp(-((1.0 - vUv.x) * vLen) / 4.0);
+      vec2 off = vPerp * prof * uStrength * trail * uLife * 0.5; // NDC spans 2, UV spans 1
+      gl_FragColor = vec4(off, 0.0, 1.0);
+    }`;
+
+  let C = null;
+  const slots = [];
+  let now = 0, renderT = 0, lightT0 = -1, lightPeak = 0, lightRest = 0;
+  const _origin = new THREE.Vector3(), _dir = new THREE.Vector3(), _buf = new THREE.Vector2();
+  const _ray = new THREE.Raycaster();
+
+  return {
+    name: 'placeholder streak',
+    init(ctx) {
+      C = ctx;
+      lightRest = ctx.muzzleLight.position.z;
+      ctx.muzzleLight.position.z = LIGHT_AHEAD;
+      const geometry = new ctx.THREE.PlaneGeometry(1, 1, 24, 1);
+      for (let i = 0; i < POOL; i++) {
+        const shared = { uTail: { value: new ctx.THREE.Vector3() }, uHead: { value: new ctx.THREE.Vector3() }, uLife: { value: 0 } };
+        const streakMat = new ctx.THREE.ShaderMaterial({
+          uniforms: {
+            ...shared,
+            uWidth: { value: 0.012 }, uMinSigma: { value: 0.7 }, uViewport: { value: new ctx.THREE.Vector2(1280, 720) },
+            uPeak: { value: 15 },
+            uCore: { value: new ctx.THREE.Color(1.0, 0.93, 0.80) }, uEdge: { value: new ctx.THREE.Color(1.0, 0.45, 0.14) },
+          },
+          vertexShader: streakVert, fragmentShader: streakFrag,
+          transparent: true, depthWrite: false, blending: ctx.THREE.AdditiveBlending, fog: false, side: ctx.THREE.DoubleSide,
+        });
+        const wakeMat = new ctx.THREE.ShaderMaterial({
+          uniforms: { ...shared, uWidth: { value: 0.60 }, uStrength: { value: 0.012 } },
+          vertexShader: wakeVert, fragmentShader: wakeFrag,
+          ...ctx.distortionMaterialParams,
+        });
+        const streak = new ctx.THREE.Mesh(geometry, streakMat);
+        const wake = new ctx.THREE.Mesh(geometry, wakeMat);
+        streak.frustumCulled = wake.frustumCulled = false;     // geometry bounds mean nothing: the vertex shader places it
+        streak.visible = wake.visible = false;
+        streak.name = 'placeholderStreak' + i; wake.name = 'placeholderWake' + i;
+        ctx.scene.add(streak); ctx.distortionScene.add(wake);
+        slots.push({
+          streak, wake, shared, streakMat, wakeMat, active: false,
+          t0: 0, shot: -1, speed: SPEED, hit: 60,
+          origin: new ctx.THREE.Vector3(), dir: new ctx.THREE.Vector3(),
+        });
+      }
+    },
+    fire(n, rng) {
+      let s = slots.find((x) => !x.active);
+      if (!s) s = slots.reduce((a, b) => (a.t0 <= b.t0 ? a : b));     // pool exhausted: recycle the oldest
+      C.muzzle.getWorldPosition(_origin);
+      C.muzzle.getWorldDirection(_dir);                                // world image of local +Z: down the barrel
+      const aim = 0.0025;                                              // rad of seeded dispersion
+      _dir.x += (rng() - 0.5) * 2 * aim; _dir.y += (rng() - 0.5) * 2 * aim; _dir.normalize();
+      s.speed = SPEED * (0.94 + rng() * 0.12);
+      s.streakMat.uniforms.uWidth.value = 0.011 + rng() * 0.004;
+      s.streakMat.uniforms.uPeak.value = 13 + rng() * 5;
+      s.origin.copy(_origin); s.dir.copy(_dir);
+      _ray.set(_origin, _dir);
+      const hit = _ray.intersectObjects(C.impactTargets, false)[0];
+      s.hit = hit ? hit.distance : 60;
+      s.t0 = now; s.shot = n; s.active = true;
+      lightT0 = now; lightPeak = LIGHT_PEAK * (0.9 + rng() * 0.2);
+    },
+    // update() is the deterministic part: it only retires finished shots (once per 1/240 s substep).
+    update(simDt, simTime) {
+      now = simTime;
+      for (let i = 0; i < slots.length; i++) {
+        const s = slots[i];
+        if (s.active && simTime - s.t0 >= LIFE) { s.active = false; s.streak.visible = s.wake.visible = false; }
+      }
+    },
+    // render() is the presentation: once per drawn frame, with the exact instant being drawn. A 900 m/s round moves
+    // 3.75 m per substep, so the head and tail positions come from renderTime, not from the last substep.
+    render(renderTime) {
+      renderT = renderTime;
+      C.renderer.getDrawingBufferSize(_buf);                                  // also refreshes the viewport after a resize
+      for (let i = 0; i < slots.length; i++) {
+        const s = slots[i];
+        if (!s.active) continue;
+        const age = Math.max(renderTime - s.t0, 0);                           // fire() runs at the newest substep: age >= 0
+        if (age >= LIFE) { s.streak.visible = s.wake.visible = false; continue; }   // update() retires it on the next substep
+        const headD = Math.min(s.speed * age, s.hit);
+        const tailD = Math.min(Math.max(s.speed * (age - TAIL_DELAY), 0), s.hit);
+        s.shared.uHead.value.copy(s.dir).multiplyScalar(headD).add(s.origin);
+        s.shared.uTail.value.copy(s.dir).multiplyScalar(tailD).add(s.origin);
+        const fade = 1 - Math.min(Math.max((age - FADE_FROM) / (LIFE - FADE_FROM), 0), 1);
+        s.shared.uLife.value = fade * fade * (3 - 2 * fade);
+        s.streakMat.uniforms.uViewport.value.copy(_buf);
+        s.streak.visible = s.wake.visible = true;
+      }
+      const la = renderTime - lightT0;
+      C.muzzleLight.intensity = lightT0 >= 0 && la >= 0 && la < LIFE ? lightPeak * Math.exp(-la / LIGHT_TAU) : 0;
+    },
+    dispose() {
+      for (const s of slots) {
+        C.scene.remove(s.streak); C.distortionScene.remove(s.wake);
+        s.streakMat.dispose(); s.wakeMat.dispose();
+      }
+      if (slots.length) slots[0].streak.geometry.dispose();
+      slots.length = 0;
+      if (C) { C.muzzleLight.intensity = 0; C.muzzleLight.position.z = lightRest; }
+    },
+    state() {
+      const alive = slots.filter((s) => s.active);
+      return {
+        viewport: [_buf.x, _buf.y],                                   // drawing buffer the last render() used
+        alive: alive.length,
+        shots: alive.map((s) => ({ shot: s.shot, age: +(renderT - s.t0).toFixed(5), hitDistance: +s.hit.toFixed(3) })),
+        lightCandela: +C.muzzleLight.intensity.toFixed(3),
+      };
+    },
+  };
+})();
+/* ===== EFFECT SLOT: END ===================================================== */
+
+// --- Boot ------------------------------------------------------------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const ui = {
+  status: $('status'), fxName: $('fxName'), legend: $('legend'),
+  fire: $('btnFire'), auto: $('btnAuto'), rpm: $('rpm'), pause: $('btnPause'), step: $('btnStep'), step1: $('btnStep1'),
+  dist: $('btnDist'), look: $('btnLook'),
+  cams: [...document.querySelectorAll('[data-cam]')], speeds: [...document.querySelectorAll('[data-speed]')],
+  roFps: $('roFps'), roCalls: $('roCalls'), roTris: $('roTris'), roBuf: $('roBuf'),
+};
+const reducedLabel = REDUCED && !PREFLIGHT;
+
+if (PREFLIGHT && QP.get('panel') !== '1') document.body.classList.add('panel-off');   // test renders stay clean unless asked
+
+try {
+  resize();
+  EFFECT.init(ctx);
+  ui.fxName.textContent = EFFECT.name;
+} catch (err) {
+  fatal('The range failed to start: ' + (err && err.message ? err.message : err));
+  throw err;
+}
+
+// Preflight / reduced-motion: choose view and moment, then run the fixed-step clock to it.
+if (PREFLIGHT && hasCamera(QP.get('cam'))) cameraName = QP.get('cam');
+if (PREFLIGHT && (QP.has('campos') || QP.has('camtarget') || QP.has('fov'))) {
+  const triple = (key, def) => { const v = (QP.get(key) || '').split(',').map(Number); return v.length === 3 && v.every(Number.isFinite) ? v : def; };
+  const base = CAMERAS[cameraName];
+  cameraOverride = { pos: triple('campos', base.pos), target: triple('camtarget', base.target), fov: num('fov', base.fov) };
+}
+if (PREFLIGHT && QP.get('debug') === 'distortion') debugPass.enabled = true;
+if (PREFLIGHT && QP.get('hud') === '0') document.body.classList.add('hud-off');
+applyCamera();
+
+if (STATIC) {
+  const shotQP = QP.get('shot');
+  const shotParsed = parseInt(shotQP, 10);
+  const shot = shotQP === 'none' ? -1 : (Number.isFinite(shotParsed) ? shotParsed : 0);
+  const target = PREFLIGHT ? Math.max(num('t', STATIC_T), 0) : STATIC_T;
+  if (shot >= 0) { sim.shots = shot; fireShot(); }
+  const steps = Math.floor(target * 240 + 1e-6);          // whole substeps: update() runs for these ...
+  while (sim.step < steps) stepSim();
+  sim.acc = Math.max(target - sim.time, 0);               // ... and the sub-substep remainder reaches render(), so t is exact
+}
+
+// --- Frame ----------------------------------------------------------------------------------------------------------------
+let fpsEma = 60;
+// One drawn frame. EFFECT.render() runs right before the composer, so the effect can refresh anything that depends on
+// the instant (renderTime), the viewport or the camera. It can be called again with the same arguments (static redraw
+// after a resize or a camera change, the benchmark), so render() must be a pure function of its arguments and the
+// effect's own update() state.
+function renderFrame(renderTime, frame) {
+  renderer.info.reset();
+  camera.updateMatrixWorld();
+  if (EFFECT.render) EFFECT.render(renderTime, frame);
+  composer.render(0);
+}
+const redrawNow = () => renderFrame(renderTimeNow(), frameNow());         // same instant again: no clock movement
+
+const SCALE_LABEL = { 1: '1x', 0.25: '0.25x', 0.05: '0.05x' };
+const _bufSize = new THREE.Vector2();
+function setText(el, value) { if (el._text !== value) { el._text = value; el.textContent = value; } }
+// Called at ~10 Hz while running (and on demand in the static modes): the HUD is not worth a DOM write per frame.
+function refreshUi() {
+  const shot = sim.lastShot < 0 ? '-' : '#' + sim.lastShot;
+  let s = `t ${renderTimeNow().toFixed(4)} s / step ${sim.step} / shot ${shot} / cam ${cameraName} / ${lookName}`;
+  if (STATIC) s += reducedLabel ? ' / reduced motion: static frame' : ' / preflight';
+  else s += ` / ${SCALE_LABEL[sim.scale] || sim.scale + 'x'}${sim.paused ? ' / paused' : ''}${sim.auto ? ' / auto ' + sim.rpm + ' rpm' : ''}`;
+  setText(ui.status, s);
+  setText(ui.roFps, STATIC ? 'static' : fpsEma.toFixed(0));
+  setText(ui.roCalls, String(renderer.info.render.calls));
+  setText(ui.roTris, (renderer.info.render.triangles / 1000).toFixed(1) + 'k');
+  renderer.getDrawingBufferSize(_bufSize);
+  setText(ui.roBuf, _bufSize.x + 'x' + _bufSize.y + ' @' + renderer.getPixelRatio().toFixed(2));
+}
+
+function syncButtons() {
+  ui.cams.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.cam === cameraName)));
+  ui.speeds.forEach((b) => b.setAttribute('aria-pressed', String(parseFloat(b.dataset.speed) === sim.scale)));
+  ui.auto.setAttribute('aria-pressed', String(sim.auto));
+  ui.pause.setAttribute('aria-pressed', String(sim.paused));
+  ui.dist.setAttribute('aria-pressed', String(debugPass.enabled));
+  ui.look.setAttribute('aria-pressed', String(lookName === 'night'));
+  ui.step.disabled = ui.step1.disabled = STATIC || !sim.paused;
+  ui.legend.hidden = !debugPass.enabled;
+}
+
+// In the static modes a view change redraws the same frozen sim state (no loop, no motion).
+function redraw() { syncButtons(); if (STATIC) { redrawNow(); refreshUi(); } }
+
+function setCamera(name) { if (!hasCamera(name) || name === cameraName) return; cameraName = name; applyCamera(); redraw(); }
+function toggleDistortion() { debugPass.enabled = !debugPass.enabled; redraw(); }
+function setLook(name) { if (!hasLook(name) || name === lookName) return; applyLook(name); redraw(); }
+function requestFire() { if (!STATIC) sim.pendingFire++; }
+function setScale(v) { if (STATIC) return; sim.scale = v; syncButtons(); }
+function togglePause() { if (STATIC) return; sim.paused = !sim.paused; syncButtons(); }
+function requestStep(substeps) { if (!STATIC && sim.paused) sim.pendingStep = Math.min(sim.pendingStep + substeps, 240); }   // 1 s of key repeat at most
+function toggleAuto() {
+  if (STATIC) return;
+  sim.auto = !sim.auto;
+  if (sim.auto) sim.nextAuto = sim.time;            // first auto round leaves on the next substep
+  syncButtons();
+}
+function toggleHud() { document.body.classList.toggle('hud-off'); }
+
+ui.cams.forEach((b) => b.addEventListener('click', (e) => { setCamera(b.dataset.cam); if (e.detail > 0) b.blur(); }));
+ui.speeds.forEach((b) => b.addEventListener('click', (e) => { setScale(parseFloat(b.dataset.speed)); if (e.detail > 0) b.blur(); }));
+ui.fire.addEventListener('click', (e) => { requestFire(); if (e.detail > 0) ui.fire.blur(); });
+ui.auto.addEventListener('click', (e) => { toggleAuto(); if (e.detail > 0) ui.auto.blur(); });
+ui.pause.addEventListener('click', (e) => { togglePause(); if (e.detail > 0) ui.pause.blur(); });
+ui.step.addEventListener('click', (e) => { requestStep(STEP_FRAME); if (e.detail > 0) ui.step.blur(); });
+ui.step1.addEventListener('click', (e) => { requestStep(STEP_SUB); if (e.detail > 0) ui.step1.blur(); });
+ui.dist.addEventListener('click', (e) => { toggleDistortion(); if (e.detail > 0) ui.dist.blur(); });
+ui.look.addEventListener('click', (e) => { setLook(lookName === 'night' ? 'dusk' : 'night'); if (e.detail > 0) ui.look.blur(); });
+ui.rpm.addEventListener('input', () => {
+  const v = Math.min(Math.max(parseFloat(ui.rpm.value) || 600, 30), 1500);
+  sim.rpm = v;
+  sim.nextAuto = Math.min(sim.nextAuto, sim.time + 60 / v);
+});
+canvas.addEventListener('pointerdown', (e) => { if (e.button === 0 && e.isPrimary) requestFire(); });
+
+// Shortcuts belong to the page, not to whatever the user is typing into: key events aimed at an input, textarea,
+// select or contenteditable element (the rpm field, every tuning-panel field) are ignored, so entering a value never
+// fires, switches a camera or toggles anything. Space on a focused panel title or button is the panel's own (it
+// activates it) and does not fire a shot either.
+function isEditable(el) {
+  return !!el && el.nodeType === 1 && (el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
+}
+const ownsKey = (e) => isEditable(e.target) || (e.code === 'Space' && !!guiRoot && guiRoot.domElement.contains(e.target));
+window.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (ownsKey(e)) return;
+  if (e.repeat && e.code !== 'Period') { if (e.code === 'Space') e.preventDefault(); return; }   // holding a key must not re-toggle
+  switch (e.code) {
+    case 'Space': e.preventDefault(); requestFire(); break;
+    case 'Digit1': case 'Numpad1': setCamera('shoulder'); break;
+    case 'Digit2': case 'Numpad2': setCamera('side'); break;
+    case 'Digit3': case 'Numpad3': setCamera('incoming'); break;
+    case 'Digit4': case 'Numpad4': setCamera('muzzle'); break;
+    case 'KeyA': toggleAuto(); break;
+    case 'KeyQ': setScale(1); break;
+    case 'KeyW': setScale(0.25); break;
+    case 'KeyE': setScale(0.05); break;
+    case 'KeyP': togglePause(); break;
+    case 'Period': requestStep(e.shiftKey ? STEP_SUB : STEP_FRAME); break;
+    case 'KeyD': toggleDistortion(); break;
+    case 'KeyN': setLook(lookName === 'night' ? 'dusk' : 'night'); break;
+    case 'KeyH': toggleHud(); break;
+    default: break;
+  }
+});
+window.addEventListener('keyup', (e) => { if (e.code === 'Space' && !ownsKey(e)) e.preventDefault(); });   // no synthetic click on a focused button of the page
+
+window.addEventListener('resize', () => { resize(); if (STATIC) { redrawNow(); refreshUi(); } });
+
+// Read-only handle for tests. Getters only; nothing here can mutate the range.
+const _screen = new THREE.Vector3();
+function hdrStats(w = 480, h = 270) {
+  const target = new THREE.WebGLRenderTarget(w, h, { type: THREE.FloatType, format: THREE.RGBAFormat });
+  renderer.setRenderTarget(target);
+  renderer.clear();
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  const px = new Float32Array(w * h * 4);
+  renderer.readRenderTargetPixels(target, 0, 0, w, h, px);
+  target.dispose();
+  const lum = new Float32Array(w * h);
+  let max = 0, sum = 0, over1 = 0, over07 = 0;
+  for (let i = 0; i < w * h; i++) {
+    const l = 0.2126 * px[i * 4] + 0.7152 * px[i * 4 + 1] + 0.0722 * px[i * 4 + 2];
+    lum[i] = l; sum += l; if (l > max) max = l; if (l > 1) over1++; if (l > 0.7) over07++;
+  }
+  lum.sort();
+  const at = (f) => lum[Math.min(lum.length - 1, Math.floor(f * lum.length))];
+  return { max, mean: sum / lum.length, p50: at(0.5), p99: at(0.99), p999: at(0.999), over1: over1 / lum.length, over07: over07 / lum.length };
+}
+// Average GPU-bound cost of one full frame (shadow + scene + distortion + bloom + output) in ms, measured
+// by rendering the current state `frames` times and forcing the GPU to finish with a 1 px readback.
+// Advances no simulation time and changes no state.
+function benchmark(frames = 60) {
+  const gl = renderer.getContext();
+  const px = new Uint8Array(4);
+  redrawNow();
+  gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  const t0 = performance.now();
+  for (let i = 0; i < frames; i++) redrawNow();
+  gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  return (performance.now() - t0) / frames;
+}
+function screenOf(x, y, z) {                       // CSS px of a world point for the current camera
+  camera.updateMatrixWorld();
+  _screen.set(x, y, z).project(camera);
+  return [(_screen.x * 0.5 + 0.5) * window.innerWidth, (-_screen.y * 0.5 + 0.5) * window.innerHeight];
+}
+window.__range = Object.freeze({
+  toneMap: TONE_MAP,                              // 'e' (default) or 'aces' (?tm=aces), see TONE MAPPING
+  get simTime() { return sim.time; },            // time of the last whole substep (what update() last saw)
+  get renderTime() { return renderTimeNow(); },  // the instant being drawn: simTime + the sub-substep remainder
+  get frame() { return frameNow(); },
+  get step() { return sim.step; },
+  get cameraPreset() { return cameraName; },
+  get look() { return lookName; },
+  get lastShot() { return sim.lastShot; },
+  get preflight() { return PREFLIGHT; },
+  get reducedMotion() { return REDUCED; },
+  get effect() { return { name: EFFECT.name, state: EFFECT.state ? EFFECT.state() : null }; },
+  get drawCalls() { return renderer.info.render.calls; },
+  get triangles() { return renderer.info.render.triangles; },
+  get muzzleScreen() {                            // CSS px of the muzzle tip for the current camera
+    camera.updateMatrixWorld();
+    muzzle.getWorldPosition(_screen).project(camera);
+    return [(_screen.x * 0.5 + 0.5) * window.innerWidth, (-_screen.y * 0.5 + 0.5) * window.innerHeight];
+  },
+  screenOf,
+  hdrStats,
+  benchmark,
+});
+
+syncButtons();
+if (STATIC) {
+  for (const el of [ui.fire, ui.auto, ui.rpm, ui.pause, ui.step, ui.step1, ...ui.speeds]) el.disabled = true;
+  redrawNow();
+  refreshUi();
+  rangeReady = true;
+  fallbackEl.hidden = true;
+  if (PREFLIGHT) document.title = 'PREFLIGHT READY';
+} else {
+  rangeReady = true;
+  fallbackEl.hidden = true;
+  let last = performance.now(), lastHud = 0;
+  const frame = (nowMs) => {
+    requestAnimationFrame(frame);
+    const dt = Math.min(Math.max((nowMs - last) / 1000, 0), 0.05);   // clamp: a stalled tab must not fast-forward the sim, and the first frame's timestamp can precede `last` by the whole start-up stall (a negative dt froze the clock that long)
+    last = nowMs;
+    if (dt > 0) fpsEma += (1 / dt - fpsEma) * 0.05;
+    // 1. advance the clock: whole substeps, or the single steps asked for while paused
+    if (!sim.paused) {
+      sim.acc += dt * sim.scale;
+      while (sim.acc >= SUBSTEP) { stepSim(); sim.acc -= SUBSTEP; }
+    } else {
+      for (let i = 0; i < sim.pendingStep; i++) stepSim();
+    }
+    sim.pendingStep = 0;
+    // 2. shots queued by key / click start NOW (the newest substep), so their first drawn frame has age < 1/240 s
+    while (sim.pendingFire > 0) { sim.pendingFire--; fireShot(); }
+    // 3. draw the instant sim.time + sim.acc
+    renderFrame(renderTimeNow(), sim.frame++);
+    if (nowMs - lastHud >= 100) { lastHud = nowMs; refreshUi(); }
+  };
+  requestAnimationFrame(frame);
+}
+</script>
+</body>
+</html>

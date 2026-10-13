@@ -20,6 +20,14 @@ A playable Sekiro-style boss duel — **Micheal vs Arelius** — porting the com
 - **Two-phase boss AI** — weighted attacks with pity counters, escalating deflects vs spam, giant-sword throw → teleport mixup
 - **Zero assets** — procedural vector swordsmen, keyframed FK poses, WebAudio oscillator SFX
 
+### [`vfx-studies/`](vfx-studies/) &nbsp; · &nbsp; [▶ live](https://mbschenked.github.io/FunArtTests/vfx-studies/u4-range-combined.html)
+
+Real-time Three.js studies of two effects from *Uncharted 4*, matched against captured gameplay frames:
+
+- **Bullet tracer** — a contrasty streak with a quick hand-off, a mist trail behind the head, and a warm light that travels with each round
+- **Muzzle flash** — soft glowing opening flames, a white column that tears into hot pieces, a cream-peach rim; some shots open full size, the rest with a small puff
+- **One adjustable build per effect** — every element is a control, with presets and Copy settings, on a shared range with six cameras, day / dusk / night and slow motion down to 0.05x
+
 ## Conventions
 
 - Each study lives in its own folder, self-contained, no shared dependencies.
