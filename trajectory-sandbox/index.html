@@ -1,0 +1,1328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DfA Trajectory Sandbox</title>
+<!--
+  PROTOTYPE, throwaway. Wayfinder ticket 04 "Build the Sandbox"
+  (.plan/dfa-trajectory/tickets/04-build-the-sandbox.md).
+
+  Question it answers: which representation and which knobs make a Death From Above
+  Flight feel right?
+
+  Run: open this file in a browser. No build step, no persistence.
+  Units: cm and s. Launch is the origin, z is up.
+  Anything tagged [ASSUMED] was decided by an agent, not by Max. Change it freely.
+-->
+<style>
+:root{
+  --bg:#0e1116;--panel:#151a21;--panel2:#1c222b;--line:#2a323d;--grid:#181e26;--grid2:#222a35;
+  --text:#d7dee8;--dim:#8a95a5;--accent:#5cc8ff;--pt:#ffd166;--sel:#ff6b9a;--vel:#7ee787;
+  --grav:#c792ea;--warn:#ff5c5c;--ring:#f7a26c;--g1:#9be3a5;--g2:#f2a7ff;--pin:#e8e8e8;--assumed:#ffcf70;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.35 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+body{display:grid;grid-template-rows:auto auto 1fr;height:100vh;overflow:hidden}
+.bar{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;padding:6px 10px;background:var(--panel);border-bottom:1px solid var(--line)}
+.grp{display:flex;align-items:center;gap:6px}
+.lbl{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{background:transparent;color:var(--dim);border:0;padding:4px 9px;font:inherit;cursor:pointer}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.on{background:var(--panel2);color:var(--text);box-shadow:inset 0 -2px 0 var(--accent)}
+.seg button:disabled{opacity:.35;cursor:default}
+select,input[type=number],button.b{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:5px;padding:3px 6px;font:inherit}
+input[type=number]{width:72px}
+input[type=range]{accent-color:var(--accent)}
+button.b{cursor:pointer}
+button.b:hover{border-color:var(--accent)}
+label.chk{display:inline-flex;gap:4px;align-items:center;color:var(--dim);cursor:pointer;user-select:none}
+.title{font-weight:600;letter-spacing:.02em}
+.badge{font-size:10px;padding:2px 6px;border-radius:4px;background:#3a2a10;color:var(--assumed);letter-spacing:.06em}
+.as{font-size:10px;color:var(--assumed);opacity:.8}
+.ro{color:var(--text);font-variant-numeric:tabular-nums}
+main{display:grid;grid-template-columns:1fr 390px;min-height:0}
+#left{display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}
+#views{display:grid;grid-template-rows:minmax(0,1fr);grid-template-columns:46px minmax(0,1fr);flex:none;height:60vh;min-height:0;background:var(--line)}
+#hWrap{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0 10px;min-height:0;background:var(--panel);border-right:1px solid var(--line)}
+#hWrap .lbl{font-size:10px}
+#hVal{font-size:10.5px;font-variant-numeric:tabular-nums}
+#Hr{writing-mode:vertical-lr;direction:rtl;flex:1;min-height:0;width:22px;margin:6px 0 0;accent-color:var(--accent);cursor:ns-resize}
+.view{position:relative;background:var(--bg);min-height:0;overflow:hidden}
+.view canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+.view.hidden{display:none}
+.vt{position:absolute;left:10px;top:6px;color:var(--dim);font-size:11px;pointer-events:none}
+.vt b{color:var(--text);font-weight:600}
+.legend{position:absolute;right:10px;top:6px;font-size:11px;color:var(--dim);pointer-events:none;text-align:right;line-height:1.5}
+.legend i{display:inline-block;width:18px;height:0;border-top:2px solid;vertical-align:middle;margin-right:4px}
+.legend i.d{border-top-style:dashed}
+aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;padding:8px 12px 20px;display:flex;flex-direction:column;gap:14px}
+aside h3{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);display:flex;align-items:center;gap:8px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-variant-numeric:tabular-nums}
+.kv .k{color:var(--dim)}
+.kv input{width:90px}
+.warn{color:var(--warn)}
+.dim{color:var(--dim)}
+.small{font-size:11px}
+#eq{font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
+#eq .row{padding:5px 6px;border-radius:5px;border:1px solid transparent;cursor:default}
+#eq .row:hover{border-color:var(--line);background:var(--panel2)}
+#eq .rng{color:var(--dim)}
+#eq .ax{color:var(--accent)}
+#secs .sr{display:grid;grid-template-columns:minmax(0,1fr) 112px 38px 70px;gap:6px;align-items:center;padding:2px 4px;border-radius:5px;font-variant-numeric:tabular-nums}
+#secs .sr:not(.hd):hover{background:var(--panel2)}
+#secs .sr.hd{color:var(--dim);font-size:11px}
+#secs .sr span:nth-child(n+3){text-align:right}
+#secs input{width:88px}
+#assumed li{margin:2px 0}
+#assumed{margin:0;padding-left:16px;color:var(--dim);font-size:11.5px}
+footer.bar{border-top:1px solid var(--line)}
+#scrub{flex:1;min-width:200px}
+#toast{position:fixed;left:50%;bottom:56px;transform:translateX(-50%);background:#1c2530;border:1px solid #2f4a63;color:var(--text);max-width:90vw;padding:6px 12px;border-radius:6px;opacity:0;transition:opacity .2s;pointer-events:none}
+#toast.on{opacity:1}
+@media (max-width:900px){
+  html,body{overflow-x:hidden}
+  body{height:auto;min-height:100vh;overflow-y:auto}
+  .grp{flex-wrap:wrap}
+  select{max-width:100%}
+  main{grid-template-columns:minmax(0,1fr)}
+  #views{height:82vh}
+  aside{border-left:0;border-top:1px solid var(--line);overflow:visible}
+  #left{overflow:visible}
+  #scrub{min-width:120px}
+}
+</style>
+</head>
+<body>
+
+<header class="bar" id="top">
+  <span class="title">DfA Trajectory Sandbox</span><span class="badge">PROTOTYPE</span>
+  <div class="grp"><span class="lbl">Time</span>
+    <div class="seg" id="timeSeg"><button data-v="fixed">Fixed time</button><button data-v="retime">Re-time</button></div>
+    <select id="retimeRule" title="Re-time rule [ASSUMED default: chord-length]">
+      <option value="chord">chord-length</option><option value="centripetal">centripetal (√chord)</option><option value="uniform">uniform</option>
+    </select>
+  </div>
+  <div class="grp"><span class="lbl">Curve</span>
+    <select id="rep">
+      <option value="hermite:bessel">Hermite · Catmull-Rom (time knots)</option>
+      <option value="hermite:cardinal">Hermite · cardinal</option>
+      <option value="hermite:c2">Hermite · clamped C²</option>
+      <option value="monotone">Monotone cubic (Steffen)</option>
+    </select>
+    <label class="chk" id="tensionWrap" title="Cardinal tension c: 0 = Catmull-Rom (uniform form), 1 = flat tangents">c <input type="number" id="tension" step="0.1" min="-1" max="1" value="0" style="width:56px"></label>
+  </div>
+  <div class="grp"><span class="lbl">New point</span>
+    <select id="insertMode" title="When you click the curve to add a Control point: re-smooth the curve through it, or keep the curve's exact shape (locks the tangents at the new point and its neighbours)">
+      <option value="reshape">re-smooth curve</option><option value="keep">keep shape</option>
+    </select>
+  </div>
+  <div class="grp"><span class="lbl">Compare</span>
+    <label class="chk"><input type="checkbox" id="ghosts" checked> ghosts</label>
+    <label class="chk"><input type="checkbox" id="gravity" checked> gravity arc</label>
+    <button class="b" id="pin" title="Keep a ghost of the current Trajectory">Pin</button>
+    <button class="b" id="clearPins">Clear pins</button>
+  </div>
+  <div class="grp"><span class="lbl">Blend</span>
+    <div class="seg" id="editSeg"><button data-v="nl">Near low</button><button data-v="nh">Near high</button><button data-v="fl">Far low</button><button data-v="fh">Far high</button><button data-v="mixed">Mixed</button></div>
+    <button class="b" id="copyAll" title="Copy the Trajectory shown to all four references">Shown → all</button>
+  </div>
+  <div class="grp"><span class="lbl">Shape</span>
+    <select id="shape"></select>
+    <button class="b" id="undo" title="Undo (Cmd/Ctrl+Z)">Undo</button><button class="b" id="redo" title="Redo (Shift+Cmd/Ctrl+Z)">Redo</button>
+  </div>
+  <div class="grp"><span class="lbl">Unreal</span>
+    <select id="exportMode" title="As shown: time in s, X forward cm, Z height cm above Launch, for this Span only. Stretch-ready: time 0-1, X forward 0-1, Z Lift cm; stretch this one mix to any Span. All Spans: four stretch-ready files (Near/Far × Low/High) on the same keys; mixing them by distance and drop gives every jump.">
+      <option value="all">all Spans: 4 references (0–1)</option><option value="world">as shown (s, cm)</option><option value="norm">stretch-ready (0–1)</option>
+    </select>
+    <input type="number" id="keyRate" min="10" max="2000" step="10" title="Keys per second of Flight in the exported curve. More keys = smoother in UE, bigger file."> <span class="dim">keys/s</span>
+    <select id="keySpacing" title="Even distance: keys sit at equal distances along the curve, each stamped with its true time, so read by time the speed is still the authored one. Even time: one key every 1/rate s.">
+      <option value="dist">even distance</option><option value="time">even time</option>
+    </select>
+    <button class="b" id="exportBtn" title="Save a .csv that imports into Unreal as a Curve Vector">Export CurveVector .csv</button>
+    <span class="dim small" id="keyInfo"></span>
+  </div>
+</header>
+
+<section class="bar" id="spanBar">
+  <div class="grp"><span class="lbl">Span</span>
+    forward <input type="range" id="Dr" min="200" max="3000" step="10" style="width:160px"> <input type="number" id="D" min="50" step="10"> cm
+  </div>
+  <div class="grp">drop <input type="number" id="drop" step="10"> cm <span class="dim small" id="ledge"></span></div>
+  <div class="grp" title="Flight duration at the Span shown. In Mixed it is split among the four reference durations by distance and drop.">T <input type="number" id="Tnow" step="0.01" min="0.05" style="width:70px"> s</div>
+  <div class="grp" id="presets"><span class="lbl">Presets</span></div>
+  <div class="grp"><span class="lbl">References</span>
+    near <input type="number" id="nearD" step="10" style="width:64px"> far <input type="number" id="farD" step="10" style="width:64px"> cm ·
+    drop low <input type="number" id="lowH" step="10" style="width:64px"> high <input type="number" id="highH" step="10" style="width:64px"> cm
+    <span class="as">[ASSUMED]</span>
+  </div>
+  <div class="grp"><span class="lbl">Duration</span>
+    near low <input type="number" id="T_nl" step="0.05" style="width:58px"> near high <input type="number" id="T_nh" step="0.05" style="width:58px">
+    far low <input type="number" id="T_fl" step="0.05" style="width:58px"> far high <input type="number" id="T_fh" step="0.05" style="width:58px"> s
+  </div>
+  <div class="grp"><span class="lbl">Ref</span>
+    target offset <input type="number" id="offset" step="10" style="width:58px"> cm,
+    dots <input type="number" id="dps" step="5" min="5" style="width:52px">/s
+  </div>
+</section>
+
+<main>
+  <div id="left">
+  <div id="views">
+    <div id="hWrap" title="Drop: how far Launch sits above Arrival. Up = a higher Launch."><span class="lbl">drop</span><span class="ro" id="hVal"></span>
+      <input type="range" id="Hr" min="-300" max="1500" step="10" aria-label="Drop: Launch height above Arrival"></div>
+    <div class="view" id="sideWrap"><canvas id="side"></canvas>
+      <div class="vt" id="sideTitle"></div>
+      <div class="legend" id="sideLegend"></div>
+    </div>
+  </div>
+  <footer class="bar" id="playbar">
+    <button class="b" id="playBtn" style="width:64px">Play</button>
+    <input type="range" id="scrub" min="0" max="1000" value="0">
+    <span class="ro" id="tRead" style="width:120px"></span>
+    <div class="seg" id="speedSeg"><button data-v="1">1×</button><button data-v="0.5">0.5×</button><button data-v="0.25">0.25×</button></div>
+    <label class="chk"><input type="checkbox" id="loop" checked> loop</label>
+    <span class="dim small">Space play/pause · Delete removes point · Esc deselects</span>
+  </footer>
+  </div>
+  <aside>
+    <section><h3>Selected point</h3><div id="pointBody" class="dim">Click a Control point. Click the curve to add one; Delete removes it; Option-drag slides its time.</div></section>
+    <section><h3>Sections</h3><div id="secNote" class="dim small"></div><div id="secs"></div></section>
+    <section><h3>Numbers</h3><div id="stats" class="kv"></div></section>
+    <section><h3>Equation <select id="eqForm" class="small" title="Any distance &amp; height: one equation with the forward distance and both heights as inputs. This jump: plain numbers for the Span shown, z from Launch."><option value="any">any distance &amp; height</option><option value="jump">this jump (numbers)</option></select> <button class="b small" id="copyEq">Copy</button></h3><div id="eqNote" class="dim small"></div><div id="eq"></div></section>
+    <section><h3>Assumed, confirm or change</h3><ul id="assumed">
+      <li>Height blend: Low and High reference drops are 2 m and 8 m, weight linear in drop and clamped. All four references start as copies, so nothing changes until a High one is edited.</li>
+      <li>Duration: each reference has its own T (Near 0.4 s, Far 1.2 s; High starts equal to Low). A Span's T mixes them by distance and drop.</li>
+      <li>Span presets: 2 m (drop 2 m), 5 m ledge (drop 3.5 m = 5 m − the 1.5 m target offset), 15 m (drop 5 m), 30 m (drop 8 m).</li>
+      <li>Re-time rule is chord-length, measured in world cm at the Span being edited.</li>
+      <li>New point defaults to "re-smooth curve". "Keep shape" locks the new point's tangent and its neighbours'; dragging a locked point unlocks it.</li>
+      <li>Monotone applies to both forward and Lift, so the arc can't rise above its highest Control point.</li>
+      <li>Velocity arrows show where the attacker would be 0.1 s later at that velocity.</li>
+      <li>The ledge edge is at Launch; the capsule is 180 cm tall, 34 cm radius, centred on P(t).</li>
+      <li>The four references share their Control point times: a time edit anywhere moves all four by the same amount. That keeps the one-Equation form exact.</li>
+      <li>A shape edit in Mixed is split across the four references by their weights (least change): it all lands on one reference at its own distance and drop. T in the Span bar splits the same way.</li>
+      <li>Blend pairs Control points by index; a new point lands at the same fraction of the segment in both Trajectories.</li>
+      <li>"All Spans" saves four stretch-ready Curve Vectors (Near/Far × Low/High) on the same keys. UE samples all four at s = t/T, mixes them by (1−w)(1−h), (1−w)h, w(1−h), wh, then stretches to the Span.</li>
+      <li>Even-distance keys are spaced along the curve at the Span shown; a stretch-ready file used at another Span is only roughly even there. The keys/s rate becomes the average.</li>
+      <li>Export keys per second: 120 to start. Stretch-ready files space their keys for the longer reference duration, so every Span gets at least that rate. "dots/s" only changes the Time dots on screen.</li>
+      <li>The vertical slider left of the graph sets the drop (Launch height above Arrival), from −3 m to 15 m. Up = a higher Launch.</li>
+      <li>Picking a Shape also sets its Span: Neutral arc → 5 m ledge (the start-up Span), each Probe → 10 m forward, 2 m drop (the research probe's Span).</li>
+      <li>Typing a section's duration moves its end point and the next section absorbs the change, so T stays. The last section moves its start point instead.</li>
+      <li>Option-drag slides a point's time without moving it: dragging the width of the Span changes its time by the whole duration. Time edits keep a locked tangent.</li>
+      <li>A Control point can't pass its neighbours in time (1 % gap); Shift locks a drag to one axis (on an arrow, it keeps the direction).</li>
+    </ul></section>
+  </aside>
+</main>
+
+<div id="toast"></div>
+
+<!-- ======================================================================
+     Math: pure functions, no DOM. Stored Trajectory = Control points (s, f, L)
+     with s = time / T, f = forward / D, L = Lift in cm, plus end slopes v0, v1
+     as (f', L') per unit s. f(s) and L(s) are interpolated as two 1-D curves
+     on shared knots, then mapped to world:
+       x = D·f(s),  z = −drop·f(s) + L(s),  t = s·T
+     ====================================================================== -->
+<script id="math">
+const M = (() => {
+  const secants = (s, y) => y.slice(0, -1).map((v, i) => (y[i + 1] - v) / (s[i + 1] - s[i]));
+
+  // Catmull-Rom with time knots (Barry–Goldman) = Bessel tangent at interior knots.
+  function besselTangents(s, y, m0, m1) {
+    const n = y.length, d = secants(s, y), m = new Array(n);
+    m[0] = m0; m[n - 1] = m1;
+    for (let i = 1; i < n - 1; i++) {
+      const h0 = s[i] - s[i - 1], h1 = s[i + 1] - s[i];
+      m[i] = (h1 * d[i - 1] + h0 * d[i]) / (h0 + h1);
+    }
+    return m;
+  }
+
+  function cardinalTangents(s, y, m0, m1, c) {
+    const n = y.length, m = new Array(n);
+    m[0] = m0; m[n - 1] = m1;
+    for (let i = 1; i < n - 1; i++) m[i] = (1 - c) * (y[i + 1] - y[i - 1]) / (s[i + 1] - s[i - 1]);
+    return m;
+  }
+
+  // C² spline with prescribed end slopes. fixed[i] (number) pins an interior tangent.
+  function clampedC2Tangents(s, y, m0, m1, fixed) {
+    const n = y.length, m = new Array(n).fill(0);
+    m[0] = m0; m[n - 1] = m1;
+    if (n === 2) return m;
+    const h = s.slice(0, -1).map((v, i) => s[i + 1] - v), d = secants(s, y);
+    const N = n - 2, sub = [], dia = [], sup = [], rhs = [];
+    for (let k = 0; k < N; k++) {
+      const i = k + 1;
+      if (fixed && fixed[i] != null) { sub[k] = 0; dia[k] = 1; sup[k] = 0; rhs[k] = fixed[i]; continue; }
+      sub[k] = h[i]; dia[k] = 2 * (h[i - 1] + h[i]); sup[k] = h[i - 1];
+      rhs[k] = 3 * (h[i] * d[i - 1] + h[i - 1] * d[i]);
+      if (i === 1) { rhs[k] -= h[i] * m0; sub[k] = 0; }
+      if (i === n - 2) { rhs[k] -= h[i - 1] * m1; sup[k] = 0; }
+    }
+    for (let k = 1; k < N; k++) {
+      const w = sub[k] / dia[k - 1];
+      dia[k] -= w * sup[k - 1];
+      rhs[k] -= w * rhs[k - 1];
+    }
+    const x = new Array(N);
+    x[N - 1] = rhs[N - 1] / dia[N - 1];
+    for (let k = N - 2; k >= 0; k--) x[k] = (rhs[k] - sup[k] * x[k + 1]) / dia[k];
+    for (let k = 0; k < N; k++) m[k + 1] = x[k];
+    return m;
+  }
+
+  // Steffen (1990) interior slopes; end slopes from the arrows, clamped so each
+  // end segment stays inside the Fritsch–Carlson box (sign of δ, |m| ≤ 3|δ|).
+  function steffenTangents(s, y, m0, m1) {
+    const n = y.length, d = secants(s, y), m = new Array(n);
+    for (let i = 1; i < n - 1; i++) {
+      const h0 = s[i] - s[i - 1], h1 = s[i + 1] - s[i];
+      const p = (h1 * d[i - 1] + h0 * d[i]) / (h0 + h1);
+      m[i] = (Math.sign(d[i - 1]) + Math.sign(d[i])) * Math.min(Math.abs(d[i - 1]), Math.abs(d[i]), 0.5 * Math.abs(p));
+    }
+    const clampEnd = (mm, dd) => (dd === 0 || Math.sign(mm) !== Math.sign(dd)) ? 0 : Math.sign(dd) * Math.min(Math.abs(mm), 3 * Math.abs(dd));
+    m[0] = clampEnd(m0, d[0]);
+    m[n - 1] = clampEnd(m1, d[n - 2]);
+    return m;
+  }
+
+  // Cubic Hermite segments in σ = s − s_i: y = c0 + c1σ + c2σ² + c3σ³.
+  function hermiteSegs(s, y, m) {
+    const segs = [];
+    for (let i = 0; i < y.length - 1; i++) {
+      const h = s[i + 1] - s[i], dl = (y[i + 1] - y[i]) / h;
+      segs.push({ s0: s[i], s1: s[i + 1], c: [y[i], m[i], (3 * dl - 2 * m[i] - m[i + 1]) / h, (m[i] + m[i + 1] - 2 * dl) / (h * h)] });
+    }
+    return segs;
+  }
+  function segIndex(segs, s) {
+    let lo = 0, hi = segs.length - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (segs[mid].s0 <= s) lo = mid; else hi = mid - 1; }
+    return lo;
+  }
+  function segVal(segs, s) { const g = segs[segIndex(segs, s)], q = s - g.s0, c = g.c; return c[0] + q * (c[1] + q * (c[2] + q * c[3])); }
+  function segDer(segs, s) { const g = segs[segIndex(segs, s)], q = s - g.s0, c = g.c; return c[1] + q * (2 * c[2] + 3 * c[3] * q); }
+
+  // Gaussian elimination with partial pivoting.
+  function solve(A, b) {
+    const n = b.length;
+    A = A.map(r => r.slice()); b = b.slice();
+    for (let c = 0; c < n; c++) {
+      let p = c;
+      for (let r = c + 1; r < n; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+      [A[c], A[p]] = [A[p], A[c]]; [b[c], b[p]] = [b[p], b[c]];
+      for (let r = c + 1; r < n; r++) {
+        const w = A[r][c] / A[c][c];
+        for (let k = c; k < n; k++) A[r][k] -= w * A[c][k];
+        b[r] -= w * b[c];
+      }
+    }
+    const x = new Array(n);
+    for (let r = n - 1; r >= 0; r--) {
+      let v = b[r];
+      for (let k = r + 1; k < n; k++) v -= A[r][k] * x[k];
+      x[r] = v / A[r][r];
+    }
+    return x;
+  }
+
+  // One polynomial through N points with both end slopes: degree N+1,
+  // solved in u = 2s − 1 for conditioning. Coefficients a_k of u^k.
+  function polyFit(s, y, m0, m1) {
+    const n = y.length, N = n + 2, A = [], b = [];
+    for (let i = 0; i < n; i++) {
+      const u = 2 * s[i] - 1, row = [];
+      for (let k = 0; k < N; k++) row.push(u ** k);
+      A.push(row); b.push(y[i]);
+    }
+    for (const [u, mm] of [[-1, m0], [1, m1]]) {
+      const row = [0];
+      for (let k = 1; k < N; k++) row.push(2 * k * u ** (k - 1));
+      A.push(row); b.push(mm);
+    }
+    return solve(A, b);
+  }
+  function polyVal(a, s) { const u = 2 * s - 1; let v = 0; for (let k = a.length - 1; k >= 0; k--) v = v * u + a[k]; return v; }
+  function polyDer(a, s) { const u = 2 * s - 1; let v = 0; for (let k = a.length - 1; k >= 1; k--) v = v * u + k * a[k]; return 2 * v; }
+  // Coefficients of t^j for y(t) = Σ a_k (2t/T − 1)^k.
+  function polyToT(a, T) {
+    const al = 2 / T, out = new Array(a.length).fill(0);
+    for (let k = 0; k < a.length; k++) {
+      let binom = 1;
+      for (let j = 0; j <= k; j++) {
+        out[j] += a[k] * binom * al ** j * (-1) ** (k - j);
+        binom = binom * (k - j) / (j + 1);
+      }
+    }
+    return out;
+  }
+
+  // rep: 'hermite' | 'monotone' | 'poly'; opts.rule: 'bessel' | 'cardinal' | 'c2'.
+  function build(traj, rep, opts = {}) {
+    const P = traj.pts, s = P.map(p => p.s), f = P.map(p => p.f), L = P.map(p => p.L), n = P.length;
+    const { v0, v1 } = traj;
+    if (rep === 'poly') {
+      const af = polyFit(s, f, v0.f, v1.f), aL = polyFit(s, L, v0.L, v1.L);
+      return { kind: 'poly', s, af, aL, f: x => polyVal(af, x), L: x => polyVal(aL, x), df: x => polyDer(af, x), dL: x => polyDer(aL, x),
+               ends: { v0: { ...v0 }, v1: { ...v1 } } };
+    }
+    let mf, mL;
+    if (rep === 'monotone') {
+      mf = steffenTangents(s, f, v0.f, v1.f);
+      mL = steffenTangents(s, L, v0.L, v1.L);
+    } else {
+      const lf = P.map(p => p.lock ? p.lock.f : null), lL = P.map(p => p.lock ? p.lock.L : null);
+      if (opts.rule === 'c2') {
+        mf = clampedC2Tangents(s, f, v0.f, v1.f, lf);
+        mL = clampedC2Tangents(s, L, v0.L, v1.L, lL);
+      } else {
+        const rule = opts.rule === 'cardinal' ? (S_, Y, a, b) => cardinalTangents(S_, Y, a, b, opts.tension || 0) : besselTangents;
+        mf = rule(s, f, v0.f, v1.f);
+        mL = rule(s, L, v0.L, v1.L);
+        for (let i = 1; i < n - 1; i++) { if (lf[i] != null) mf[i] = lf[i]; if (lL[i] != null) mL[i] = lL[i]; }
+      }
+    }
+    const sf = hermiteSegs(s, f, mf), sL = hermiteSegs(s, L, mL);
+    return { kind: 'hermite', s, mf, mL, sf, sL, f: x => segVal(sf, x), L: x => segVal(sL, x), df: x => segDer(sf, x), dL: x => segDer(sL, x),
+             ends: { v0: { f: mf[0], L: mL[0] }, v1: { f: mf[n - 1], L: mL[n - 1] } } };
+  }
+
+  // The Stretch: stored curve → world at a Span {D, drop, T}.
+  function world(curve, span) {
+    const { D, drop, T } = span;
+    return {
+      pos: t => { const s = t / T, f = curve.f(s); return { x: D * f, z: -drop * f + curve.L(s) }; },
+      vel: t => { const s = t / T, df = curve.df(s); return { x: D * df / T, z: (-drop * df + curve.dL(s)) / T }; },
+    };
+  }
+  const ptWorld = (p, span) => ({ x: span.D * p.f, z: -span.drop * p.f + p.L });
+  const slopeToVel = (v, span) => ({ x: span.D * v.f / span.T, z: (-span.drop * v.f + v.L) / span.T });
+  const velToSlope = (v, span) => { const f = v.x * span.T / span.D; return { f, L: v.z * span.T + span.drop * f }; };
+
+  // Re-derive every interior time so average speed stays even.
+  function retime(traj, span, rule) {
+    const P = traj.pts, n = P.length, w = [0];
+    for (let i = 1; i < n; i++) {
+      const a = ptWorld(P[i - 1], span), b = ptWorld(P[i], span), d = Math.hypot(b.x - a.x, b.z - a.z);
+      w.push(w[i - 1] + (rule === 'uniform' ? 1 : rule === 'centripetal' ? Math.sqrt(d) : d));
+    }
+    const tot = w[n - 1];
+    for (let i = 1; i < n - 1; i++) P[i].s = tot > 0 ? w[i] / tot : i / (n - 1);
+    return traj;
+  }
+
+  // Blend by index: the near and far Trajectories always have the same point count.
+  function blendTraj(near, far, w) {
+    const lerp = (a, b) => a + (b - a) * w;
+    return {
+      pts: near.pts.map((p, i) => {
+        const q = far.pts[i], o = { s: lerp(p.s, q.s), f: lerp(p.f, q.f), L: lerp(p.L, q.L) };
+        if (p.lock && q.lock) o.lock = { f: lerp(p.lock.f, q.lock.f), L: lerp(p.lock.L, q.lock.L) };
+        return o;
+      }),
+      v0: { f: lerp(near.v0.f, far.v0.f), L: lerp(near.v0.L, far.v0.L) },
+      v1: { f: lerp(near.v1.f, far.v1.f), L: lerp(near.v1.L, far.v1.L) },
+    };
+  }
+
+  // Weighted mix of several Trajectories (weights sum to 1), paired by index. A locked tangent
+  // survives only if every reference with weight > 0 has one there.
+  function blendN(trajs, wts) {
+    const sum = get => trajs.reduce((a, t, k) => a + wts[k] * get(t), 0);
+    return {
+      pts: trajs[0].pts.map((p, i) => {
+        const o = { s: sum(t => t.pts[i].s), f: sum(t => t.pts[i].f), L: sum(t => t.pts[i].L) };
+        if (trajs.every((t, k) => wts[k] <= 0 || t.pts[i].lock)) o.lock = { f: sum(t => t.pts[i].lock ? t.pts[i].lock.f : 0), L: sum(t => t.pts[i].lock ? t.pts[i].lock.L : 0) };
+        return o;
+      }),
+      v0: { f: sum(t => t.v0.f), L: sum(t => t.v0.L) },
+      v1: { f: sum(t => t.v1.f), L: sum(t => t.v1.L) },
+    };
+  }
+
+  return { secants, besselTangents, cardinalTangents, clampedC2Tangents, steffenTangents, hermiteSegs, segVal, segDer,
+           solve, polyFit, polyVal, polyDer, polyToT, build, world, ptWorld, slopeToVel, velToSlope, retime, blendTraj, blendN };
+})();
+if (typeof module !== 'undefined') module.exports = M;
+</script>
+
+<script>
+// ======================================================================
+// App
+// ======================================================================
+const $ = q => document.querySelector(q);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const clone = o => JSON.parse(JSON.stringify(o));
+const DPR = () => window.devicePixelRatio || 1;
+const GAP = 0.01;          // min time gap between Control points, as a fraction of T [ASSUMED]
+const G = 980;             // cm/s²
+const CAP_H = 180, CAP_R = 34;
+const ARROW_K = 0.1;       // s: arrow tip = point + velocity · ARROW_K [ASSUMED]
+const RING = 400;          // TakeDownAnimStartDist
+
+const neutralTraj = () => ({
+  pts: [{ s: 0, f: 0, L: 0 }, { s: 1 / 3, f: 1 / 3, L: 133.3 }, { s: 2 / 3, f: 2 / 3, L: 133.3 }, { s: 1, f: 1, L: 0 }],
+  v0: { f: 1, L: 600 }, v1: { f: 1, L: -600 },
+});
+// Probe cases from 01-representation-probe.py: 1 s, 10 m forward, 2 m drop.
+function fromProbe(ts, xs, zs) {
+  const f = xs.map(x => x / 10), L = zs.map((z, i) => z * 100 + 200 * f[i]), n = ts.length;
+  const sl = (a, b) => ({ f: (f[b] - f[a]) / (ts[b] - ts[a]), L: (L[b] - L[a]) / (ts[b] - ts[a]) });
+  return { pts: ts.map((s, i) => ({ s, f: f[i], L: L[i] })), v0: sl(0, 1), v1: sl(n - 2, n - 1), span: { D: 1000, drop: 200 } };
+}
+const SHAPES = {
+  // Every Shape carries its Span, so picking one always lands on the same jump. Neutral arc = the start-up Span.
+  'Neutral arc': () => ({ ...neutralTraj(), span: { ...PRESETS['5 m ledge'] } }),
+  'Probe B · uneven hump': () => fromProbe([0, .15, .5, .8, 1], [0, 1.5, 5, 8.5, 10], [0, 2, 2.2, .5, -2]),
+  'Probe C · clustered ends': () => fromProbe([0, .05, .1, .5, .9, .95, 1], [0, .6, 1.2, 5, 8.8, 9.4, 10], [0, .8, 1.5, 2.4, 1.5, .2, -2]),
+  'Probe D · forward hang': () => fromProbe([0, .25, .5, .75, 1], [0, 3, 3.2, 3.4, 10], [0, 1.8, 2.3, 1.6, -2]),
+  'Probe F · sharp edit': () => fromProbe([0, 1 / 7, 2 / 7, 3 / 7, 4 / 7, 5 / 7, 6 / 7, 1], [0, 1.2, 2.6, 4.2, 5.8, 7.4, 8.8, 10], [0, .1, .2, 2.4, 2.4, .2, .1, -2]),
+};
+const PRESETS = { '2 m': { D: 200, drop: 200 }, '5 m ledge': { D: 500, drop: 350 }, '15 m': { D: 1500, drop: 500 }, '30 m': { D: 3000, drop: 800 } };
+const REP_NAMES = { 'hermite:bessel': 'Hermite · Catmull-Rom', 'hermite:cardinal': 'Hermite · cardinal', 'hermite:c2': 'Hermite · clamped C²', monotone: 'Monotone', poly: 'Polynomial' };
+
+const S = {
+  timeMode: 'fixed', retimeRule: 'chord',
+  rep: 'hermite:bessel', tension: 0, insertMode: 'reshape',
+  ghosts: true, gravity: true, pins: [],
+  blend: true, editMode: 'mixed',   // Blend is always on; Near / Far / Mixed pick what's shown (Max, 2026-10-10)
+  span: { ...PRESETS['5 m ledge'] }, ref: { nearD: 300, farD: 2500, lowH: 200, highH: 800, T: { nl: 0.4, nh: 0.4, fl: 1.2, fh: 1.2 } },
+  offset: 150, dps: 30, keyRate: 120, keySpacing: 'dist',   // export: average keys per second [ASSUMED 120]; spacing along the curve (Max)
+  C: { nl: neutralTraj(), nh: null, fl: null, fh: null },   // the four references: Near/Far × Low/High drop
+  eqForm: 'any',   // Equation panel: 'any' = forward distance and heights as variables (Max), 'jump' = numbers
+  sel: null, hover: null, hoverSeg: null,
+  play: { t: 0, playing: false, speed: 1, loop: true },
+  undo: [], redo: [],
+};
+
+const repKey = r => r.split(':')[0];
+const repOpts = r => ({ rule: r.split(':')[1] || 'bessel', tension: S.tension });
+const refW = D => { const { nearD, farD } = S.ref; return farD === nearD ? 0 : clamp((D - nearD) / (farD - nearD), 0, 1); };
+const CORNERS = ['nl', 'nh', 'fl', 'fh'], CNAME = { nl: 'Near low', nh: 'Near high', fl: 'Far low', fh: 'Far high' };
+const refH = drop => { const { lowH, highH } = S.ref; return highH === lowH ? 0 : clamp((drop - lowH) / (highH - lowH), 0, 1); };
+// The four references' weights for a Span: bilinear in the distance weight w and the height weight h.
+const cornerWts = (D, drop) => { const w = refW(D), h = refH(drop); return { nl: (1 - w) * (1 - h), nh: (1 - w) * h, fl: w * (1 - h), fh: w * h }; };
+const durationAt = (D, drop = S.span.drop) => { const a = cornerWts(D, drop); return CORNERS.reduce((t, k) => t + a[k] * S.ref.T[k], 0); };
+const cornerSpan = k => ({ D: k[0] === 'n' ? S.ref.nearD : S.ref.farD, drop: k[1] === 'l' ? S.ref.lowH : S.ref.highH, T: S.ref.T[k] });
+const refTrajs = () => CORNERS.map(k => S.C[k]);
+const blendAt = (D, drop) => { const a = cornerWts(D, drop); return M.blendN(refTrajs(), CORNERS.map(k => a[k])); };
+
+// ---------------------------------------------------------------- derived view model
+let V = null;
+function sampleCurve(curve, span, n = 360) {
+  const W = M.world(curve, span), out = [];
+  for (let k = 0; k <= n; k++) {
+    const t = span.T * k / n, p = W.pos(t), v = W.vel(t);
+    out.push({ t, x: p.x, z: p.z, vx: v.x, vz: v.z, L: curve.L(k / n) });
+  }
+  return out;
+}
+// The four references share Control point times, so the one-Equation form stays exact: after an
+// edit in one reference, copy its times (and any unlocked tangents) to the others.
+function shareTimes(src) {
+  for (const dst of refTrajs()) {
+    if (dst === src || dst.pts.length !== src.pts.length) continue;
+    src.pts.forEach((p, i) => { dst.pts[i].s = p.s; if (!p.lock) delete dst.pts[i].lock; });
+  }
+}
+function recompute() {
+  commitMixed();
+  const mode = S.editMode;
+  if (mode !== 'mixed') shareTimes(S.C[mode]);
+  let traj, span, editable;
+  if (mode !== 'mixed') { traj = editable = S.C[mode]; span = cornerSpan(mode); }
+  else { traj = blendAt(S.span.D, S.span.drop); editable = traj; span = { D: S.span.D, drop: S.span.drop, T: durationAt(S.span.D) }; }
+
+  const curve = M.build(traj, repKey(S.rep), repOpts(S.rep));
+  const W = M.world(curve, span);
+  const samples = sampleCurve(curve, span);
+  const ghostReps = ['hermite', 'monotone'].filter(r => r !== repKey(S.rep));
+  const ghosts = ghostReps.map((r, gi) => {
+    const key = r === 'hermite' ? (S.rep.startsWith('hermite') ? S.rep : 'hermite:bessel') : r;
+    return { key, color: gi === 0 ? 'g1' : 'g2', samples: sampleCurve(M.build(traj, r, repOpts(key)), span, 240) };
+  });
+  // Gravity-only arc, same Launch, Arrival and T.
+  const vz0 = (-span.drop + 0.5 * G * span.T * span.T) / span.T, grav = [];
+  for (let k = 0; k <= 120; k++) { const t = span.T * k / 120; grav.push({ t, x: span.D * t / span.T, z: vz0 * t - 0.5 * G * t * t }); }
+
+  const arrival = { x: span.D, z: -span.drop };
+  const victim = { x: span.D, z: arrival.z - S.offset };
+  let cross = null;
+  for (const p of samples) if (Math.hypot(p.x - victim.x, p.z - victim.z) <= RING) { cross = p; break; }
+
+  let apex = samples[0], peak = samples[0], minVx = samples[0], maxL = samples[0];
+  for (const p of samples) {
+    if (p.z > apex.z) apex = p;
+    if (Math.hypot(p.vx, p.vz) > Math.hypot(peak.vx, peak.vz)) peak = p;
+    if (p.vx < minVx.vx) minVx = p;
+    if (p.L > maxL.L) maxL = p;
+  }
+  V = { mode, traj, span, editable, mixW: refW(S.span.D), mixH: refH(S.span.drop), mixWts: cornerWts(S.span.D, S.span.drop), mixBase: mode === 'mixed' ? clone(traj) : null, curve, W, samples, ghosts, grav, arrival, victim, cross, apex, peak, minVx, maxL,
+        floorZ: victim.z - CAP_H / 2, ledgeZ: -CAP_H / 2,
+        rawEnds: { v0: M.slopeToVel(traj.v0, span), v1: M.slopeToVel(traj.v1, span) },
+        effEnds: { v0: M.slopeToVel(curve.ends.v0, span), v1: M.slopeToVel(curve.ends.v1, span) } };
+  S.play.t = Math.min(S.play.t, span.T);
+}
+
+// ---------------------------------------------------------------- edits
+function fixOrder(traj) {
+  const P = traj.pts, n = P.length;
+  for (let i = 1; i < n - 1; i++) P[i].s = Math.max(P[i].s, P[i - 1].s + GAP);
+  for (let i = n - 2; i > 0; i--) P[i].s = Math.min(P[i].s, P[i + 1].s - GAP);
+}
+// Carry any edit made to the Mixed Trajectory back into the four references. Least change: reference
+// k moves by a_k / Σa² of the edit (a = its weight), so the mix moves by exactly the edit and a
+// reference with no weight here doesn't move. Times move every reference by the full amount (shared).
+function commitMixed() {
+  if (!V || V.mode !== 'mixed' || !V.mixBase) return;
+  const a = V.traj, b = V.mixBase, n = a.pts.length, C = refTrajs();
+  if (n !== b.pts.length || C.some(t => t.pts.length !== n)) return;
+  const wt = CORNERS.map(k => V.mixWts[k]), k2 = wt.reduce((acc, x) => acc + x * x, 0), share = wt.map(x => x / k2);
+  let changed = false;
+  const move = (get, key, d) => { if (d === 0) return; C.forEach((t, j) => { get(t)[key] += (key === 's' ? 1 : share[j]) * d; }); changed = true; };
+  for (let i = 0; i < n; i++) {
+    for (const key of ['s', 'f', 'L']) move(t => t.pts[i], key, a.pts[i][key] - b.pts[i][key]);
+    if (b.pts[i].lock && !a.pts[i].lock) C.forEach(t => { delete t.pts[i].lock; });
+  }
+  for (const e of ['v0', 'v1']) for (const key of ['f', 'L']) move(t => t[e], key, a[e][key] - b[e][key]);
+  if (changed) C.forEach(fixOrder);
+  V.mixBase = clone(a);
+}
+function snapshot() { return clone(S.C); }
+function pushUndo() { S.undo.push(snapshot()); if (S.undo.length > 200) S.undo.shift(); S.redo = []; }
+function restore(st) { S.C = st; if (S.sel != null && S.sel >= S.C.nl.pts.length) S.sel = null; }
+function undo() { if (!S.undo.length) return; S.redo.push(snapshot()); restore(S.undo.pop()); update(); }
+function redo() { if (!S.redo.length) return; S.undo.push(snapshot()); restore(S.redo.pop()); update(); }
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('on'), 1800); }
+const maybeRetime = () => { if (S.timeMode === 'retime' && V.editable) M.retime(V.editable, V.span, S.retimeRule); };
+
+function insertAt(sStar) {
+  const tr = V.editable, P = tr.pts;
+  let i = 0; while (i < P.length - 2 && P[i + 1].s <= sStar) i++;
+  if (sStar - P[i].s < GAP || P[i + 1].s - sStar < GAP) { toast('Too close to an existing Control point'); return; }
+  const alpha = (sStar - P[i].s) / (P[i + 1].s - P[i].s);
+  pushUndo();
+  const others = refTrajs().filter(x => x !== tr);
+  for (const t of [tr, ...others]) {
+    const Q = t.pts, s = t === tr ? sStar : Q[i].s + alpha * (Q[i + 1].s - Q[i].s);
+    const c = M.build(t, repKey(S.rep), repOpts(S.rep));
+    const np = { s, f: c.f(s), L: c.L(s) };
+    if (S.insertMode === 'keep' && c.kind === 'hermite') {
+      np.lock = { f: c.df(s), L: c.dL(s) };
+      for (const j of [i, i + 1]) if (j > 0 && j < Q.length - 1 && !Q[j].lock) Q[j].lock = { f: c.mf[j], L: c.mL[j] };
+    }
+    Q.splice(i + 1, 0, np);
+  }
+  S.sel = i + 1;
+  recompute(); maybeRetime();
+  update();
+}
+// A section runs from Control point k to k + 1. Setting its duration moves its end point, so
+// the next section absorbs the change and T stays; the last section moves its start point.
+function setSection(k, dur) {
+  const P = V.editable.pts, n = P.length, ds = dur / V.span.T;
+  if (n < 3) return;
+  pushUndo();
+  let want, got;
+  if (k < n - 2) { want = P[k].s + ds; got = P[k + 1].s = clamp(want, P[k].s + GAP, P[k + 2].s - GAP); }
+  else { want = P[k + 1].s - ds; got = P[k].s = clamp(want, P[k - 1].s + GAP, P[k + 1].s - GAP); }
+  if (Math.abs(got - want) > 1e-9) toast('Limited by the neighbouring section');
+  update();
+}
+function deleteSel() {
+  const tr = V.editable, i = S.sel;
+  if (!tr || i == null || i === 0 || i === tr.pts.length - 1) return;
+  pushUndo();
+  for (const t of refTrajs()) t.pts.splice(i, 1);
+  S.sel = null;
+  recompute(); maybeRetime();
+  update();
+}
+
+// ---------------------------------------------------------------- canvas plumbing
+function fitCanvas(c) {
+  const r = c.getBoundingClientRect(), d = DPR();
+  c.width = Math.max(1, Math.round(r.width * d)); c.height = Math.max(1, Math.round(r.height * d));
+  const ctx = c.getContext('2d'); ctx.setTransform(d, 0, 0, d, 0, 0);
+  return { ctx, W: r.width, H: r.height };
+}
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue('--' + name).trim(); }
+const COL = {};
+function poly(ctx, pts, color, width = 1.5, dash = null, alpha = 1) {
+  if (pts.length < 2) return;
+  ctx.save(); ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = width; ctx.setLineDash(dash || []);
+  ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k][0], pts[k][1]); ctx.stroke(); ctx.restore();
+}
+function dot(ctx, x, y, r, fill, stroke, lw = 1.5) {
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+}
+function niceStep(range, target) {
+  const raw = range / target, p = 10 ** Math.floor(Math.log10(raw)), m = raw / p;
+  return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p;
+}
+const local = (e, c) => { const r = c.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+const segOfS = s => { if (V.curve.kind !== 'hermite') return 0; const P = V.traj.pts; let i = 0; while (i < P.length - 2 && P[i + 1].s <= s) i++; return i; };
+
+// ---------------------------------------------------------------- side view
+const side = { id: 'side', c: $('#side'), x: null, dims: null };
+// What the Side view has to show: the Span's geometry plus the curve, points and arrows.
+function sideBounds() {
+  let xmin = -250, xmax = V.span.D + 80, zmin = V.floorZ - 30, zmax = 60;
+  const acc = (x, z) => { xmin = Math.min(xmin, x); xmax = Math.max(xmax, x); zmin = Math.min(zmin, z); zmax = Math.max(zmax, z); };
+  for (const p of V.samples) acc(p.x, p.z);
+  for (const p of V.traj.pts) { const w = M.ptWorld(p, V.span); acc(w.x, w.z); }
+  if (S.gravity) for (const p of V.grav) acc(p.x, p.z);
+  acc(V.victim.x - RING, V.victim.z); acc(V.victim.x + RING, V.victim.z + RING);
+  for (const [P, v] of [[{ x: 0, z: 0 }, V.rawEnds.v0], [V.arrival, V.rawEnds.v1]]) acc(P.x + v.x * ARROW_K, P.z + v.z * ARROW_K);
+  acc(0, CAP_H / 2 + 10);
+  return { xmin, xmax, zmin, zmax };
+}
+// Size the graph to fit the jump, so it doesn't leave empty space under it.
+// Only re-fits when the Span or the window changes, not while you drag.
+let sliding = false;   // a Span slider is being dragged: hold the graph height until it's released
+function fitViews() {
+  if (sliding) return;
+  const W = $('#sideWrap').clientWidth, narrow = matchMedia('(max-width:900px)').matches;
+  const key = `${V.span.D}|${V.span.drop}|${V.mode}|${S.offset}|${W}|${innerHeight}|${narrow}`;
+  if (!W || fitViews.key === key) return;
+  fitViews.key = key;
+  const b = sideBounds(), pad = 36, want = (W - 2 * pad) / (b.xmax - b.xmin) * (b.zmax - b.zmin) + 2 * pad + 16;
+  // Capped so the play bar under the graph stays on screen without scrolling.
+  const bar = $('#playbar').offsetHeight, top = $('#views').getBoundingClientRect().top + scrollY;
+  const maxH = narrow ? innerHeight - top - bar - 8 : $('#left').clientHeight - bar;
+  $('#views').style.height = Math.round(clamp(want, 260, Math.max(260, maxH))) + 'px';
+}
+function sideXform() {
+  if (drag && drag.view === 'side' && side.x) return side.x;
+  const { W, H } = side.dims, { xmin, xmax, zmin, zmax } = sideBounds();
+  const pad = 36, sc = Math.min((W - 2 * pad) / (xmax - xmin), (H - 2 * pad) / (zmax - zmin));
+  // Keep the framing while the content still fits and hasn't shrunk much, so the view doesn't jump after a drag.
+  const key = `${V.span.D}|${V.span.drop}|${V.mode}|${S.offset}|${W}|${H}`;
+  if (side.x && side.key === key && sc < side.x.sc * 1.5) {
+    const [a, b] = side.x.P(xmin, zmax), [c, d] = side.x.P(xmax, zmin);
+    if (a >= 4 && b >= 4 && c <= W - 4 && d <= H - 4) return side.x;
+  }
+  side.key = key;
+  const ox = pad + ((W - 2 * pad) - sc * (xmax - xmin)) / 2 - sc * xmin;
+  const oy = H - pad - ((H - 2 * pad) - sc * (zmax - zmin)) / 2 + sc * zmin;
+  side.x = { sc, ox, oy, W, H, P: (x, z) => [ox + sc * x, oy - sc * z], Wd: (px, py) => ({ x: (px - ox) / sc, z: (oy - py) / sc }) };
+  return side.x;
+}
+function arrowHead(ctx, a, b, color, width, dash) {
+  poly(ctx, [a, b], color, width, dash);
+  const ang = Math.atan2(b[1] - a[1], b[0] - a[0]), L = 9;
+  ctx.save(); ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(b[0], b[1]);
+  ctx.lineTo(b[0] - L * Math.cos(ang - 0.4), b[1] - L * Math.sin(ang - 0.4));
+  ctx.lineTo(b[0] - L * Math.cos(ang + 0.4), b[1] - L * Math.sin(ang + 0.4)); ctx.closePath(); ctx.fill(); ctx.restore();
+}
+function capsule(ctx, X, c, stroke, fill) {
+  const [px, py] = X.P(c.x, c.z), w = CAP_R * X.sc, h = CAP_H * X.sc;
+  ctx.save(); ctx.beginPath(); ctx.roundRect(px - w, py - h / 2, 2 * w, h, w);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  ctx.strokeStyle = stroke; ctx.lineWidth = 1.5; ctx.stroke(); ctx.restore();
+}
+function renderSide() {
+  if (!side.dims) return;
+  const ctx = side.ctx, X = sideXform(), { W, H } = X;
+  ctx.clearRect(0, 0, W, H);
+  // 1 m grid, heavier every 5 m
+  const wTL = X.Wd(0, 0), wBR = X.Wd(W, H);
+  for (let x = Math.floor(wTL.x / 100) * 100; x <= wBR.x; x += 100) { const [px] = X.P(x, 0); poly(ctx, [[px, 0], [px, H]], x % 500 === 0 ? COL.grid2 : COL.grid, 1); }
+  for (let z = Math.floor(wBR.z / 100) * 100; z <= wTL.z; z += 100) { const [, py] = X.P(0, z); poly(ctx, [[0, py], [W, py]], z % 500 === 0 ? COL.grid2 : COL.grid, 1); }
+  ctx.fillStyle = COL.dim; ctx.font = '10px ui-sans-serif,system-ui';
+  for (let x = Math.ceil(wTL.x / 500) * 500; x <= wBR.x; x += 500) { const [px] = X.P(x, 0); ctx.fillText((x / 100) + ' m', px + 3, H - 4); }
+  // Height above Launch, every 1 m when there's room, else every 5 m.
+  const zStep = X.sc * 100 >= 18 ? 100 : 500;
+  for (let z = Math.ceil(wBR.z / zStep) * zStep; z <= wTL.z; z += zStep) { const [, py] = X.P(0, z); if (py > 20 && py < H - 26) ctx.fillText((z / 100) + ' m', 4, py + 11); }
+  // ledge, floor
+  const ledgeX0 = Math.min(-250, wTL.x);
+  poly(ctx, [X.P(ledgeX0, V.ledgeZ), X.P(0, V.ledgeZ), X.P(0, V.floorZ)], '#56606e', 2);
+  poly(ctx, [X.P(0, V.floorZ), X.P(wBR.x, V.floorZ)], '#56606e', 2);
+  // Start-montage ring and victim
+  const [vx, vy] = X.P(V.victim.x, V.victim.z);
+  ctx.save(); ctx.setLineDash([5, 5]); ctx.strokeStyle = COL.ring; ctx.globalAlpha = 0.55; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.arc(vx, vy, RING * X.sc, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+  capsule(ctx, X, V.victim, COL.ring, 'rgba(247,162,108,.12)');
+  ctx.fillStyle = COL.ring; ctx.fillText('victim', vx + CAP_R * X.sc + 4, vy + 4);
+  ctx.fillText('Start-montage ring 4 m', vx + RING * X.sc * 0.72 + 4, vy - RING * X.sc * 0.72);
+  // Baseline
+  poly(ctx, [X.P(0, 0), X.P(V.arrival.x, V.arrival.z)], COL.dim, 1, [3, 4], 0.7);
+  // gravity, pins, ghosts
+  if (S.gravity) poly(ctx, V.grav.map(p => X.P(p.x, p.z)), COL.grav, 1.3, [6, 5], 0.8);
+  for (const pin of S.pins) poly(ctx, pin.samples.map(p => X.P(p.x, p.z)), COL.pin, 1.2, null, 0.28);
+  if (S.ghosts) for (const g of V.ghosts) poly(ctx, g.samples.map(p => X.P(p.x, p.z)), COL[g.color], 1.3, [4, 3], 0.55);
+  // active curve; segment hover; backwards in red
+  const pts = V.samples.map(p => X.P(p.x, p.z));
+  poly(ctx, pts, COL.accent, 2.4);
+  if (S.hoverSeg != null) {
+    const P = V.traj.pts, a = V.curve.kind === 'hermite' ? P[S.hoverSeg].s : 0, b = V.curve.kind === 'hermite' ? P[S.hoverSeg + 1].s : 1;
+    poly(ctx, V.samples.filter(p => p.t >= a * V.span.T - 1e-9 && p.t <= b * V.span.T + 1e-9).map(p => X.P(p.x, p.z)), '#ffffff', 4, null, 0.6);
+  }
+  for (let k = 1; k < V.samples.length; k++) if (V.samples[k].vx < 0 || V.samples[k - 1].vx < 0) poly(ctx, [pts[k - 1], pts[k]], COL.warn, 3.5);
+  // Time dots
+  const dt = 1 / S.dps;
+  for (let t = 0; t <= V.span.T + 1e-9; t += dt) { const p = V.W.pos(Math.min(t, V.span.T)); const [px, py] = X.P(p.x, p.z); dot(ctx, px, py, 2.2, '#e9f6ff'); }
+  // ring crossing
+  if (V.cross) { const [px, py] = X.P(V.cross.x, V.cross.z); dot(ctx, px, py, 6, null, COL.ring, 2); }
+  // capsule at playhead
+  const cp = V.W.pos(S.play.t);
+  capsule(ctx, X, cp, '#ffffff', 'rgba(92,200,255,.16)');
+  // velocity arrows (raw = what you drag; effective = what the curve uses)
+  for (const end of [0, 1]) {
+    const P = end ? V.arrival : { x: 0, z: 0 }, raw = end ? V.rawEnds.v1 : V.rawEnds.v0, eff = end ? V.effEnds.v1 : V.effEnds.v0;
+    const a = X.P(P.x, P.z), tipR = X.P(P.x + raw.x * ARROW_K, P.z + raw.z * ARROW_K), tipE = X.P(P.x + eff.x * ARROW_K, P.z + eff.z * ARROW_K);
+    const differs = Math.hypot(tipR[0] - tipE[0], tipR[1] - tipE[1]) > 1;
+    if (differs) arrowHead(ctx, a, tipR, COL.vel, 1.2, [3, 3]);
+    arrowHead(ctx, a, tipE, COL.vel, 2.2);
+    const hot = S.hover === (end ? V.traj.pts.length - 1 : 0) || S.sel === (end ? V.traj.pts.length - 1 : 0);
+    dot(ctx, tipR[0], tipR[1], hot ? 6 : 5, V.editable ? COL.vel : null, COL.vel, 1.5);
+  }
+  // Control points
+  V.traj.pts.forEach((p, i) => {
+    const w = M.ptWorld(p, V.span), [px, py] = X.P(w.x, w.z), end = i === 0 || i === V.traj.pts.length - 1;
+    const hot = S.sel === i ? COL.sel : S.hover === i ? '#ffffff' : null;
+    if (end) { ctx.save(); ctx.translate(px, py); ctx.rotate(Math.PI / 4); ctx.fillStyle = COL.pt; ctx.fillRect(-5, -5, 10, 10); if (hot) { ctx.strokeStyle = hot; ctx.lineWidth = 2; ctx.strokeRect(-7, -7, 14, 14); } ctx.restore(); }
+    else {
+      dot(ctx, px, py, S.sel === i ? 7 : 6, COL.pt, hot || '#000', hot ? 2.5 : 1);
+      if (p.lock && repKey(S.rep) === 'hermite') { ctx.strokeStyle = COL.pt; ctx.lineWidth = 1; ctx.strokeRect(px - 10, py - 10, 20, 20); }
+    }
+    if (drag && drag.time && drag.h.i === i) {
+      const P = V.traj.pts, T = V.span.T;
+      ctx.fillStyle = COL.sel; ctx.font = '11px ui-sans-serif,system-ui';
+      ctx.fillText(`${(p.s * T).toFixed(3)} s  (← ${((p.s - P[i - 1].s) * T).toFixed(3)} · ${((P[i + 1].s - p.s) * T).toFixed(3)} →)`, px + 12, py - 12);
+    }
+  });
+  ctx.fillStyle = COL.text; ctx.font = '11px ui-sans-serif,system-ui';
+  { const [px, py] = X.P(0, 0); ctx.fillText('Launch', px - 46, py - 10); }
+  { const [px, py] = X.P(V.arrival.x, V.arrival.z); ctx.fillText('Arrival', px + 10, py - 10); }
+}
+
+function renderCanvases() { renderSide(); updateScrub(); }
+
+// ---------------------------------------------------------------- interaction
+let drag = null, pending = null;
+const lastIdx = () => V.traj.pts.length - 1;
+const VIEWS = {
+  side: {
+    obj: side,
+    hit(px, py) {
+      const X = side.x; if (!X) return null;
+      let best = null, bd = 10;
+      for (const end of [0, 1]) {
+        const P = end ? V.arrival : { x: 0, z: 0 }, raw = end ? V.rawEnds.v1 : V.rawEnds.v0, [tx, ty] = X.P(P.x + raw.x * ARROW_K, P.z + raw.z * ARROW_K), d = Math.hypot(px - tx, py - ty);
+        if (d < bd) { bd = d; best = { type: 'arrow', end }; }
+      }
+      V.traj.pts.forEach((p, i) => { const w = M.ptWorld(p, V.span), [qx, qy] = X.P(w.x, w.z), d = Math.hypot(px - qx, py - qy); if (d < bd) { bd = d; best = { type: 'pt', i }; } });
+      return best;
+    },
+    nearCurve(px, py) {
+      const X = side.x; if (!X) return null;
+      let best = null, bd = 7;
+      V.samples.forEach(p => { const [qx, qy] = X.P(p.x, p.z), d = Math.hypot(px - qx, py - qy); if (d < bd) { bd = d; best = p.t / V.span.T; } });
+      return best;
+    },
+    start(h) {
+      if (h.type === 'arrow') { const v = h.end ? V.rawEnds.v1 : V.rawEnds.v0; return { v: { ...v } }; }
+      return M.ptWorld(V.editable.pts[h.i], V.span);
+    },
+    apply(d, px, py) {
+      const X = side.x, w = X.Wd(px, py), tr = V.editable, span = V.span;
+      if (d.h.type === 'arrow') {
+        const P = d.h.end ? V.arrival : { x: 0, z: 0 };
+        let v = { x: (w.x - P.x) / ARROW_K, z: (w.z - P.z) / ARROW_K };
+        if (d.axis) { const u = d.start.v, n = Math.hypot(u.x, u.z) || 1, k = Math.max(0, (v.x * u.x + v.z * u.z) / n); v = { x: u.x / n * k, z: u.z / n * k }; }
+        tr[d.h.end ? 'v1' : 'v0'] = M.velToSlope(v, span);
+        return;
+      }
+      if (d.axis === 'h') w.z = d.start.z; else if (d.axis === 'v') w.x = d.start.x;
+      const p = tr.pts[d.h.i];
+      p.f = w.x / span.D; p.L = w.z + span.drop * p.f; delete p.lock;
+      maybeRetime();
+    },
+  },
+};
+function wire(id) {
+  const view = VIEWS[id], c = view.obj.c;
+  c.addEventListener('pointerdown', e => {
+    const [px, py] = local(e, c), h = view.hit(px, py);
+    c.setPointerCapture(e.pointerId);
+    if (h) {
+      S.sel = h.type === 'pt' ? h.i : (h.end ? lastIdx() : 0);
+      const pinned = h.type === 'pt' && (h.i === 0 || h.i === lastIdx());
+      if (V.editable && !pinned && h.type === 'pt' && e.altKey) {
+        if (S.timeMode === 'retime') toast('Re-time sets point times. Switch Time to Fixed time to slide them.');
+        else drag = { view: id, h, sx: px, sy: py, time: true, pushed: false, s0: V.editable.pts[h.i].s };
+      } else if (V.editable && !pinned) drag = { view: id, h, sx: px, sy: py, axis: null, pushed: false, start: view.start(h) };
+      refresh(); return;
+    }
+    pending = { view: id, s: view.nearCurve(px, py), sx: px, sy: py };
+  });
+  c.addEventListener('pointermove', e => {
+    const [px, py] = local(e, c);
+    if (drag && drag.view === id) {
+      const moved = Math.hypot(px - drag.sx, py - drag.sy);
+      if (!drag.pushed) { if (moved < 2) return; pushUndo(); drag.pushed = true; }
+      if (drag.time) {
+        // Option-drag: the point stays put and only its time moves. Dragging the width of the Span = the whole duration.
+        const X = side.x, spanPx = Math.max(240, Math.abs(X.P(V.span.D, 0)[0] - X.P(0, 0)[0])), P = V.editable.pts, i = drag.h.i;
+        P[i].s = clamp(drag.s0 + (px - drag.sx) / spanPx, P[i - 1].s + GAP, P[i + 1].s - GAP);
+        recompute(); refresh(); return;
+      }
+      if (e.shiftKey) { if (!drag.axis && moved > 4) drag.axis = Math.abs(px - drag.sx) >= Math.abs(py - drag.sy) ? 'h' : 'v'; } else drag.axis = null;
+      view.apply(drag, px, py); recompute(); refresh(); return;
+    }
+    if (pending) return;
+    const h = view.hit(px, py), hv = h ? (h.type === 'pt' ? h.i : (h.end ? lastIdx() : 0)) : null;
+    c.style.cursor = h ? (V.editable && !(h.type === 'pt' && (h.i === 0 || h.i === lastIdx())) ? (e.altKey && h.type === 'pt' ? 'ew-resize' : 'grab') : 'pointer') : (V.editable && view.nearCurve(px, py) != null ? 'copy' : 'default');
+    if (hv !== S.hover) { S.hover = hv; renderCanvases(); }
+  });
+  const end = e => {
+    const [px, py] = local(e, c);
+    if (drag && drag.view === id) { drag = null; update(); return; }
+    if (pending && pending.view === id) {
+      const p = pending; pending = null;
+      if (Math.hypot(px - p.sx, py - p.sy) < 4) { if (p.s != null && V.editable) insertAt(p.s); else { S.sel = null; refresh(); } }
+    }
+  };
+  c.addEventListener('pointerup', end);
+  c.addEventListener('pointercancel', end);
+  c.addEventListener('pointerleave', () => { if (!drag && S.hover != null) { S.hover = null; renderCanvases(); } });
+}
+wire('side');
+
+// ---------------------------------------------------------------- panels
+const m = v => (v / 100).toFixed(2);
+const deg = v => (Math.atan2(v.z, v.x) * 180 / Math.PI).toFixed(1) + '°';
+const spd = v => (Math.hypot(v.x, v.z) / 100).toFixed(2) + ' m/s';
+function fnum(v) {
+  if (!isFinite(v)) return String(v);
+  const a = Math.abs(v);
+  if (a < 1e-6) return '0';
+  if (a !== 0 && (a >= 1e5 || a < 1e-2)) return v.toExponential(3).replace('e+', 'e');
+  return v.toFixed(a >= 100 ? 1 : 2);
+}
+const SUP = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+const sup = j => String(j).split('').map(d => SUP[+d]).join('');
+// Significant-digit formatter for fractions of D, where 2 decimals would cost cm at long Spans.
+const sig = d => v => { const a = Math.abs(v); if (a < 1e-9) return '0'; return a >= 1e5 || a < 1e-4 ? v.toExponential(d - 1).replace('e+', 'e') : String(+v.toPrecision(d)); };
+function polyStr(c, vn, ascii, fmt = fnum) {
+  let out = '';
+  c.forEach((v, j) => {
+    if (j > 0 && Math.abs(v) < 1e-9) return;
+    const term = fmt(Math.abs(v)) + (j === 0 ? '' : ascii ? `*${vn}${j > 1 ? '^' + j : ''}` : `${vn}${j > 1 ? sup(j) : ''}`);
+    out += out === '' ? (v < 0 ? (ascii ? '-' : '−') : '') + term : (v < 0 ? (ascii ? ' - ' : ' − ') : ' + ') + term;
+  });
+  return out || '0';
+}
+function equationRows() {
+  const { curve, span } = V, { D, drop, T } = span;
+  if (curve.kind === 'hermite') {
+    return curve.sf.map((g, k) => {
+      const h = curve.sL[k], xc = g.c.map((c, j) => D * c / T ** j), zc = g.c.map((c, j) => (-drop * c + h.c[j]) / T ** j);
+      // F: fraction of the forward distance covered; Lift: cm above the Baseline. Neither depends on the heights.
+      return { seg: k, t0: g.s0 * T, t1: g.s1 * T, xc, zc, fc: g.c.map((c, j) => c / T ** j), lc: h.c.map((c, j) => c / T ** j) };
+    });
+  }
+  const tf = M.polyToT(curve.af, T), tL = M.polyToT(curve.aL, T);
+  return [{ seg: null, t0: 0, t1: T, xc: tf.map(c => D * c), zc: tf.map((c, j) => -drop * c + tL[j]), fc: tf, lc: tL }];
+}
+// One Equation for every Span. The four references share knot times, so with a linear tangent rule
+// each cubic coefficient of the blended curve is a + b·w + c·h + d·w·h (w: distance, h: drop).
+function generalRows() {
+  const rk = repKey(S.rep), ro = repOpts(S.rep), c = CORNERS.map(k => M.build(S.C[k], rk, ro));
+  if (c.some(x => x.kind !== 'hermite')) return null;
+  const [nl, nh, fl, fh] = c;
+  const bil = seg => seg(nl).c.map((_, j) => { const v = x => seg(x).c[j]; return [v(nl), v(fl) - v(nl), v(nh) - v(nl), v(fh) - v(fl) - v(nh) + v(nl)]; });
+  return nl.sf.map((g, k) => ({ seg: k, s0: g.s0, s1: g.s1, F: bil(x => x.sf[k]), Lift: bil(x => x.sL[k]) }));
+}
+const bilVal = (q, w, h) => q[0] + q[1] * w + q[2] * h + q[3] * w * h;
+const durTerms = () => { const T = S.ref.T; return [T.nl, T.fl - T.nl, T.nh - T.nl, T.fh - T.fl - T.nh + T.nl]; };
+function generalPos(G, t, D, ZL, ZA) {
+  const drop = ZL - ZA, w = refW(D), h = refH(drop), T = bilVal(durTerms(), w, h), s = clamp(t / T, 0, 1);
+  const r = G.find(q => s <= q.s1) || G[G.length - 1], sg = s - r.s0;
+  const pv = P => P.reduce((acc, q, j) => acc + bilVal(q, w, h) * sg ** j, 0), F = pv(r.F);
+  return { x: D * F, z: ZL + (ZA - ZL) * F + pv(r.Lift) };
+}
+// Largest gap, in cm, between the Equation and the Sandbox's own blend over a grid of distances and drops.
+function generalCheck(G) {
+  const { nearD, farD, lowH, highH } = S.ref, rk = repKey(S.rep), ro = repOpts(S.rep);
+  let worst = 0;
+  for (let q = 0; q <= 4; q++) for (let r = 0; r <= 2; r++) {
+    const D = nearD + (farD - nearD) * q / 4, drop = lowH + (highH - lowH) * r / 2, T = durationAt(D, drop), W = M.world(M.build(blendAt(D, drop), rk, ro), { D, drop, T });
+    for (let k = 0; k <= 40; k++) { const t = T * k / 40, a = W.pos(t), b = generalPos(G, t, D, 0, -drop); worst = Math.max(worst, Math.hypot(a.x - b.x, a.z - b.z)); }
+  }
+  return worst;
+}
+function coefWH([a, b, c, d], ascii, fmt) {
+  const minus = ascii ? '-' : '−', parts = [[a, ''], [b, ascii ? '*w' : 'w'], [c, ascii ? '*h' : 'h'], [d, ascii ? '*w*h' : 'wh']].filter(([v], i) => i === 0 || Math.abs(v) > 1e-9);
+  return parts.map(([v, sfx], i) => (i === 0 ? (v < 0 ? minus : '') : (v < 0 ? ` ${minus} ` : ' + ')) + fmt(Math.abs(v)) + sfx).join('');
+}
+function polyStrWH(P, vn, ascii, fmt) {
+  const minus = ascii ? '-' : '−', terms = [];
+  P.forEach((q, j) => {
+    const mixed = q.slice(1).some(v => Math.abs(v) > 1e-9);
+    if (j > 0 && !mixed && Math.abs(q[0]) < 1e-9) return;
+    const pow = j === 0 ? '' : ascii ? `*${vn}${j > 1 ? '^' + j : ''}` : `${vn}${j > 1 ? sup(j) : ''}`;
+    terms.push(mixed ? { neg: false, s: `(${coefWH(q, ascii, fmt)})${pow}` } : { neg: q[0] < 0, s: fmt(Math.abs(q[0])) + pow });
+  });
+  if (!terms.length) return '0';
+  return terms.map((t, i) => i === 0 ? (t.neg ? minus : '') + t.s : (t.neg ? ` ${minus} ` : ' + ') + t.s).join('');
+}
+function renderEquation() {
+  const rows = equationRows(), herm = V.curve.kind === 'hermite', vn = herm ? 'τ' : 't', { D, T } = V.span;
+  const G = S.eqForm === 'any' && herm ? generalRows() : null;
+  if (G) {
+    const { nearD, farD, lowH, highH } = S.ref, err = generalCheck(G), drop = V.span.drop, w = refW(D), h = refH(drop);
+    const timesDiffer = refTrajs().some(t => t.pts.some((p, i) => Math.abs(p.s - S.C.nl.pts[i].s) > 1e-9));
+    $('#eqNote').innerHTML = `<div class="ro">w = clamp((D − ${nearD}) / ${farD - nearD}, 0, 1)<br>h = clamp((Z<sub>L</sub> − Z<sub>A</sub> − ${lowH}) / ${highH - lowH}, 0, 1)<br>T = ${coefWH(durTerms(), false, sig(4))}<br>s = t / T, σ = s − s₀<br>x = D · F(σ)<br>z = Z<sub>L</sub> + (Z<sub>A</sub> − Z<sub>L</sub>) · F(σ) + Lift(σ)</div>
+      D: forward distance; Z<sub>L</sub>, Z<sub>A</sub>: Launch and Arrival heights (cm, any). w: 0 = Near, 1 = Far; h: 0 = Low drop, 1 = High drop. F is the fraction of D covered; Lift is cm above the Baseline. Now: D = ${D.toFixed(0)} cm, drop = ${drop.toFixed(0)} cm, w = ${w.toFixed(3)}, h = ${h.toFixed(3)}, T = ${T.toFixed(3)} s.
+      <div class="${err < 0.01 ? 'dim' : 'warn'}">${err < 0.01 ? 'Matches the Sandbox exactly at every distance and drop (checked at 15).' : `Off from the Sandbox by up to ${err.toFixed(2)} cm: ${timesDiffer ? 'the references\' point times differ' : repKey(S.rep) === 'monotone' ? 'Monotone tangents don\'t mix linearly here' : 'the references differ in a locked tangent'}.`}</div>`;
+    $('#eq').innerHTML = G.map(r => `<div class="row" data-seg="${r.seg}">
+      <div class="rng">s ∈ [${r.s0.toFixed(3)}, ${r.s1.toFixed(3)}]</div>
+      <div><span class="ax">F</span>(σ) = ${polyStrWH(r.F, 'σ', false, sig(5))}</div>
+      <div><span class="ax">Lift</span>(σ) = ${polyStrWH(r.Lift, 'σ', false, fnum)}</div></div>`).join('');
+    return;
+  }
+  $('#eqNote').textContent = herm
+    ? `${rows.length} cubic segments. τ = t − t₀ in s; x, z in cm; Launch = origin.`
+    : `One expression of degree ${V.curve.af.length - 1} in t (s); x, z in cm; Launch = origin.`;
+  $('#eq').innerHTML = rows.map(r => `<div class="row" data-seg="${r.seg == null ? 'all' : r.seg}">
+    <div class="rng">t ∈ [${r.t0.toFixed(3)}, ${r.t1.toFixed(3)}] s</div>
+    <div><span class="ax">x</span>(${vn}) = ${polyStr(r.xc, vn)}</div>
+    <div><span class="ax">z</span>(${vn}) = ${polyStr(r.zc, vn)}</div></div>`).join('');
+}
+function equationText() {
+  const rows = equationRows(), herm = V.curve.kind === 'hermite', vn = herm ? 'tau' : 't';
+  const G = S.eqForm === 'any' && herm ? generalRows() : null;
+  if (G) {
+    const { nearD, farD, lowH, highH } = S.ref, n8 = sig(8);
+    const head = [`# DfA Trajectory, ${REP_NAMES[S.rep]}. One equation for any forward distance and any heights.`,
+      `# Inputs: t = s since Launch; D = forward distance Launch->Arrival (cm); Z_L, Z_A = Launch and Arrival heights (cm).`,
+      `# w = clamp((D - ${nearD}) / (${farD} - ${nearD}), 0, 1)`,
+      `# h = clamp((Z_L - Z_A - ${lowH}) / (${highH} - ${lowH}), 0, 1)`,
+      `# T = ${coefWH(durTerms(), true, n8)}`,
+      `# s = clamp(t / T, 0, 1); use the section with s0 <= s <= s1; sigma = s - s0`,
+      `# x = D*F(sigma)  (cm along the Launch->Arrival direction)`,
+      `# z = Z_L + (Z_A - Z_L)*F(sigma) + Lift(sigma)  (cm, z up)`];
+    return [...head, ...G.map(r => `s in [${n8(r.s0)}, ${n8(r.s1)}]\n  F(sigma) = ${polyStrWH(r.F, 'sigma', true, n8)}\n  Lift(sigma) = ${polyStrWH(r.Lift, 'sigma', true, n8)}`)].join('\n');
+  }
+  const head = `# DfA Trajectory, ${REP_NAMES[S.rep]}. Span: forward ${V.span.D} cm, drop ${V.span.drop} cm, T ${V.span.T.toFixed(3)} s. Units cm, s; Launch = origin, z up.`;
+  return [head, ...rows.map(r => `t in [${r.t0.toFixed(4)}, ${r.t1.toFixed(4)}]${herm ? `, tau = t - ${r.t0.toFixed(4)}` : ''}\n  x(${vn}) = ${polyStr(r.xc, vn, true)}\n  z(${vn}) = ${polyStr(r.zc, vn, true)}`)].join('\n');
+}
+function renderStats() {
+  const { span, apex, peak, minVx, maxL, cross, effEnds, rawEnds } = V, rows = [];
+  const add = (k, v, cls = '') => rows.push(`<div class="k">${k}</div><div class="${cls}">${v}</div>`);
+  add('T', span.T.toFixed(3) + ' s' + (V.mode !== 'mixed' ? ` (${CNAME[V.mode]} reference)` : ''));
+  add('Span', `${m(span.D)} m forward, ${m(span.drop)} m drop`);
+  add('Blend weights', `${(refW(S.span.D) * 100).toFixed(0)} % Far, ${(refH(S.span.drop) * 100).toFixed(0)} % High at ${m(S.span.D)} m, drop ${m(S.span.drop)} m`);
+  add('Apex', `${m(apex.z)} m above Launch at ${apex.t.toFixed(3)} s`);
+  add('Max Lift', `${m(maxL.L)} m at ${maxL.t.toFixed(3)} s`);
+  add('Peak speed', `${spd({ x: peak.vx, z: peak.vz })} at ${peak.t.toFixed(3)} s`);
+  add('Launch', `${spd(effEnds.v0)} at ${deg(effEnds.v0)}`);
+  add('Arrival', `${spd(effEnds.v1)} at ${deg(effEnds.v1)}`);
+  const clampedNote = e => Math.hypot(rawEnds[e].x - effEnds[e].x, rawEnds[e].z - effEnds[e].z) > 1;
+  if (clampedNote('v0') || clampedNote('v1')) add('', 'Monotone clamped an end arrow (dashed = what you dragged)', 'warn small');
+  add('Min forward speed', minVx.vx < -1e-6 ? `${(minVx.vx / 100).toFixed(2)} m/s, runs backwards at ${minVx.t.toFixed(3)} s` : `${(minVx.vx / 100).toFixed(2)} m/s`, minVx.vx < -1e-6 ? 'warn' : '');
+  add('Ring crossing', cross ? (cross.t === 0 ? 'inside the ring at Launch' : `${cross.t.toFixed(3)} s (${((span.T - cross.t)).toFixed(3)} s before Arrival)`) : 'never');
+  add('Control points', V.traj.pts.length + (repKey(S.rep) === 'poly' ? `, degree ${V.traj.pts.length + 1}` : ''));
+  $('#stats').innerHTML = rows.join('');
+}
+function renderPoint() {
+  const box = $('#pointBody');
+  if (box.contains(document.activeElement)) return;
+  const i = S.sel, P = V.traj.pts;
+  if (i == null || i >= P.length) { box.innerHTML = '<span class="dim">Click a Control point. Click the curve to add one; Delete removes it; Option-drag slides its time.</span>'; return; }
+  const p = P[i], w = M.ptWorld(p, V.span), ro = V.editable ? '' : 'disabled', endName = i === 0 ? 'Launch' : i === P.length - 1 ? 'Arrival' : null;
+  if (endName) {
+    const raw = i === 0 ? V.rawEnds.v0 : V.rawEnds.v1, eff = i === 0 ? V.effEnds.v0 : V.effEnds.v1;
+    box.innerHTML = `<div class="kv"><div class="k">Point</div><div><b>${endName}</b> (pinned)</div>
+      <div class="k">vx</div><div><input type="number" step="10" data-k="vx" value="${raw.x.toFixed(1)}" ${ro}> cm/s</div>
+      <div class="k">vz</div><div><input type="number" step="10" data-k="vz" value="${raw.z.toFixed(1)}" ${ro}> cm/s</div>
+      <div class="k">Speed</div><div>${spd(eff)} at ${deg(eff)}</div></div>`;
+  } else {
+    box.innerHTML = `<div class="kv"><div class="k">Point</div><div><b>Control point ${i}</b>${p.lock && repKey(S.rep) === 'hermite' ? ' · tangent locked <button class="b small" id="unlock">unlock</button>' : ''}</div>
+      <div class="k">Time</div><div><input type="number" step="0.005" data-k="t" value="${(p.s * V.span.T).toFixed(4)}" ${ro}> s ${S.timeMode === 'retime' ? '<span class="dim small">(re-time sets it)</span>' : ''}</div>
+      <div class="k">Forward</div><div><input type="number" step="1" data-k="x" value="${w.x.toFixed(1)}" ${ro}> cm</div>
+      <div class="k">Height</div><div><input type="number" step="1" data-k="z" value="${w.z.toFixed(1)}" ${ro}> cm</div>
+      <div class="k">Lift</div><div><input type="number" step="1" data-k="L" value="${p.L.toFixed(1)}" ${ro}> cm</div>
+      <div class="k">Stored</div><div class="dim small">s ${p.s.toFixed(4)}, f ${p.f.toFixed(4)}, L ${p.L.toFixed(1)} cm</div></div>`;
+    const u = $('#unlock'); if (u) u.onclick = () => { pushUndo(); delete V.editable.pts[i].lock; update(); };
+  }
+  box.querySelectorAll('input').forEach(inp => inp.addEventListener('change', () => {
+    const tr = V.editable; if (!tr) return;
+    const v = parseFloat(inp.value); if (!isFinite(v)) return;
+    pushUndo();
+    const span = V.span, k = inp.dataset.k;
+    if (k === 'vx' || k === 'vz') {
+      const key = i === 0 ? 'v0' : 'v1', cur = M.slopeToVel(tr[key], span);
+      cur[k === 'vx' ? 'x' : 'z'] = v; tr[key] = M.velToSlope(cur, span);
+    } else {
+      const q = tr.pts[i], z = -span.drop * q.f + q.L;
+      if (k === 't') q.s = clamp(v / span.T, tr.pts[i - 1].s + GAP, tr.pts[i + 1].s - GAP);
+      if (k === 'x') { q.f = v / span.D; q.L = z + span.drop * q.f; }
+      if (k === 'z') q.L = v + span.drop * q.f;
+      if (k === 'L') q.L = v;
+      delete q.lock; maybeRetime();
+    }
+    inp.blur(); update();
+  }));
+}
+function renderSections() {
+  const box = $('#secs');
+  if (box.contains(document.activeElement)) return;
+  const P = V.traj.pts, n = P.length, T = V.span.T, retime = S.timeMode === 'retime';
+  const name = i => i === 0 ? 'Launch' : i === n - 1 ? 'Arrival' : String(i);
+  const ro = !V.editable || retime || n < 3 ? 'disabled' : '';
+  $('#secNote').textContent = n < 3 ? 'One section, the whole T. Click the curve to split it.'
+    : retime ? 'Re-time sets these. Switch Time to Fixed time to type them.'
+    : 'Type a duration: its end point moves and the next section absorbs it, so T stays. Option-drag a point to slide its time.';
+  const rows = ['<div class="sr hd"><span>Section</span><span>Duration</span><span>Share</span><span>Avg speed</span></div>'];
+  for (let k = 0; k < n - 1; k++) {
+    const t0 = P[k].s * T, t1 = P[k + 1].s * T, N = 40;
+    let len = 0, a = V.W.pos(t0);
+    for (let j = 1; j <= N; j++) { const b = V.W.pos(t0 + (t1 - t0) * j / N); len += Math.hypot(b.x - a.x, b.z - a.z); a = b; }
+    rows.push(`<div class="sr" data-seg="${k}"><span>${name(k)} → ${name(k + 1)}</span>
+      <span><input type="number" step="0.005" min="0" data-seg="${k}" value="${(t1 - t0).toFixed(4)}" ${ro}> s</span>
+      <span class="dim">${((t1 - t0) / T * 100).toFixed(0)} %</span><span class="dim">${(len / (t1 - t0) / 100).toFixed(2)} m/s</span></div>`);
+  }
+  box.innerHTML = rows.join('');
+  box.querySelectorAll('input').forEach(inp => inp.addEventListener('change', () => {
+    const v = parseFloat(inp.value); if (!V.editable || !isFinite(v)) return;
+    inp.blur(); setSection(+inp.dataset.seg, v);
+  }));
+}
+function renderSideTitle() {
+  const name = REP_NAMES[S.rep], mode = V.mode;
+  const where = mode === 'mixed' ? ` · <b>Mixed</b> at ${m(V.span.D)} m, drop ${m(V.span.drop)} m (${(V.mixW * 100).toFixed(0)} % Far, ${(V.mixH * 100).toFixed(0)} % High)` : ` · editing <b>${CNAME[mode]}</b> at ${m(V.span.D)} m, drop ${m(V.span.drop)} m`;
+  $('#sideTitle').innerHTML = `<b>Side view</b> · ${name}${where} · T ${V.span.T.toFixed(3)} s · dots every ${(1000 / S.dps).toFixed(0)} ms`;
+  const ghostNames = V.ghosts.map(g => `<div><i class="d" style="border-color:${COL[g.color]}"></i>${REP_NAMES[g.key]}</div>`).join('');
+  $('#sideLegend').innerHTML = `<div><i style="border-color:${COL.accent}"></i>${name}</div>${S.ghosts ? ghostNames : ''}${S.gravity ? `<div><i class="d" style="border-color:${COL.grav}"></i>gravity only, same T</div>` : ''}${S.pins.length ? `<div><i style="border-color:#888"></i>${S.pins.length} pinned</div>` : ''}`;
+}
+function renderControls() {
+  const on = (seg, v) => document.querySelectorAll(`#${seg} button`).forEach(b => b.classList.toggle('on', b.dataset.v === String(v)));
+  on('timeSeg', S.timeMode); on('editSeg', S.editMode); on('speedSeg', S.play.speed);
+  $('#rep').value = S.rep;
+  document.querySelectorAll('#editSeg button').forEach(b => b.disabled = !S.blend);
+  $('#retimeRule').disabled = S.timeMode !== 'retime';
+  $('#tensionWrap').style.display = S.rep === 'hermite:cardinal' ? '' : 'none';
+  $('#insertMode').disabled = repKey(S.rep) !== 'hermite';
+  for (const k of ['D', 'drop']) if (document.activeElement !== $('#' + k)) $('#' + k).value = S.span[k];
+  $('#Dr').value = S.span.D; $('#Hr').value = S.span.drop; $('#hVal').textContent = (S.span.drop / 100).toFixed(1) + ' m';
+  for (const k of ['nearD', 'farD', 'lowH', 'highH']) if (document.activeElement !== $('#' + k)) $('#' + k).value = S.ref[k];
+  for (const k of CORNERS) if (document.activeElement !== $('#T_' + k)) $('#T_' + k).value = S.ref.T[k];
+  $('#offset').value = S.offset; $('#dps').value = S.dps;
+  if (document.activeElement !== $('#keyRate')) $('#keyRate').value = S.keyRate; $('#keySpacing').value = S.keySpacing;
+  if (document.activeElement !== $('#Tnow')) $('#Tnow').value = V.span.T.toFixed(3);
+  $('#ledge').textContent = `ledge ≈ ${m(S.span.drop + S.offset)} m above the victim's floor`;
+  $('#undo').disabled = !S.undo.length; $('#redo').disabled = !S.redo.length;
+}
+function refresh() { fitViews(); renderControls(); renderSideTitle(); renderStats(); renderEquation(); renderPoint(); renderSections(); renderKeyInfo(); renderCanvases(); }
+function update() { recompute(); refresh(); }
+
+// ---------------------------------------------------------------- resize
+const ro = new ResizeObserver(() => {
+  const r = fitCanvas(side.c); side.ctx = r.ctx; side.dims = { W: r.W, H: r.H }; side.x = null;
+  if (V) { fitViews(); renderCanvases(); }
+});
+ro.observe($('#sideWrap'));
+addEventListener('resize', () => { if (V) fitViews(); });
+
+// ---------------------------------------------------------------- playback
+let lastFrame = performance.now();
+function updateScrub() {
+  $('#scrub').value = Math.round(S.play.t / V.span.T * 1000);
+  $('#tRead').textContent = `${S.play.t.toFixed(3)} / ${V.span.T.toFixed(3)} s`;
+  $('#playBtn').textContent = S.play.playing ? 'Pause' : 'Play';
+}
+function frame(now) {
+  const dt = Math.min(0.05, (now - lastFrame) / 1000); lastFrame = now;
+  if (S.play.playing && V) {
+    S.play.t += dt * S.play.speed;
+    if (S.play.t >= V.span.T) { if (S.play.loop) S.play.t %= V.span.T; else { S.play.t = V.span.T; S.play.playing = false; } }
+    renderCanvases();
+  }
+  requestAnimationFrame(frame);
+}
+function togglePlay() { if (!S.play.playing && S.play.t >= V.span.T - 1e-6) S.play.t = 0; S.play.playing = !S.play.playing; updateScrub(); }
+
+// ---------------------------------------------------------------- controls wiring
+function segWire(id, fn) { document.querySelectorAll(`#${id} button`).forEach(b => b.addEventListener('click', () => fn(b.dataset.v))); }
+segWire('timeSeg', v => { S.timeMode = v; if (v === 'retime' && V.editable) { pushUndo(); maybeRetime(); } update(); });
+segWire('editSeg', v => { S.editMode = v; S.sel = null; update(); });
+segWire('speedSeg', v => { S.play.speed = +v; refresh(); });
+$('#retimeRule').onchange = e => { S.retimeRule = e.target.value; pushUndo(); maybeRetime(); update(); };
+$('#rep').onchange = e => { S.rep = e.target.value; update(); };
+$('#tension').oninput = e => { S.tension = parseFloat(e.target.value) || 0; update(); };
+$('#insertMode').onchange = e => { S.insertMode = e.target.value; };
+$('#ghosts').onchange = e => { S.ghosts = e.target.checked; update(); };
+$('#gravity').onchange = e => { S.gravity = e.target.checked; update(); };
+$('#pin').onclick = () => { S.pins.push({ T: V.span.T, samples: V.samples.map(p => ({ t: p.t, x: p.x, z: p.z })) }); update(); };
+$('#clearPins').onclick = () => { S.pins = []; update(); };
+$('#copyAll').onclick = () => { pushUndo(); const src = clone(V.traj); for (const k of CORNERS) S.C[k] = clone(src); update(); };
+const shapeSel = $('#shape');
+shapeSel.innerHTML = Object.keys(SHAPES).map(k => `<option>${k}</option>`).join('');
+shapeSel.onchange = () => {
+  pushUndo();
+  const t = SHAPES[shapeSel.value]();
+  if (t.span) { S.span = { ...t.span }; delete t.span; }
+  S.C = Object.fromEntries(CORNERS.map(k => [k, clone(t)])); S.sel = null;
+  update();
+};
+$('#undo').onclick = undo; $('#redo').onclick = redo;
+
+// ---------------------------------------------------------------- export for Unreal
+// A Curve Vector .csv: one key per row, "time,x,y,z", no header row (a header becomes a bogus key).
+// UE axes: X forward, Y sideways (0 until Sideways curvature), Z up, in cm. The importer makes
+// linear keys, so the curve is sampled densely: S.keyRate keys per second of Flight.
+// Stretch-ready keys are spaced for the longest Flight (the larger reference duration), so
+// every Span gets at least that many keys per second.
+// Key times as fractions of T (0..1). Even distance puts the keys at equal arc length along
+// the curve at the Span shown, each keeping its true time, so a time-read curve keeps the
+// authored speed.
+function keyFractions(n) {
+  if (S.keySpacing === 'time') return Array.from({ length: n + 1 }, (_, k) => k / n);
+  const T = V.span.T, m = Math.max(2000, n * 16), u = [0], len = [0];
+  let a = V.W.pos(0);
+  for (let j = 1; j <= m; j++) { const b = V.W.pos(T * j / m); u.push(j / m); len.push(len[j - 1] + Math.hypot(b.x - a.x, b.z - a.z)); a = b; }
+  const total = len[m], out = [0];
+  for (let k = 1, j = 1; k < n; k++) {
+    const want = total * k / n;
+    while (len[j] < want) j++;
+    out.push(u[j - 1] + (u[j] - u[j - 1]) * (want - len[j - 1]) / ((len[j] - len[j - 1]) || 1));
+  }
+  out.push(1);
+  return out;
+}
+function exportRows(mode) {
+  const { curve, span } = V, rows = [];
+  if (mode === 'world') {
+    const n = Math.max(2, Math.ceil(span.T * S.keyRate));
+    for (const s of keyFractions(n)) { const t = span.T * s, p = V.W.pos(t); rows.push([t, p.x, 0, p.z]); }
+  } else {
+    const n = Math.max(2, Math.ceil(Math.max(span.T, ...CORNERS.map(k => S.ref.T[k])) * S.keyRate));
+    for (const s of keyFractions(n)) rows.push([s, curve.f(s), 0, curve.L(s)]);
+  }
+  return rows;
+}
+// Worst gap, in cm at the Span shown, between straight lines through the keys and the true curve.
+function exportErr(mode, rows) {
+  let worst = 0;
+  for (let k = 0; k < rows.length - 1; k++) {
+    const a = rows[k], b = rows[k + 1], tm = (a[0] + b[0]) / 2, lx = (a[1] + b[1]) / 2, lz = (a[3] + b[3]) / 2;
+    if (mode === 'world') { const p = V.W.pos(tm); worst = Math.max(worst, Math.hypot(lx - p.x, lz - p.z)); }
+    else { const df = lx - V.curve.f(tm), dL = lz - V.curve.L(tm); worst = Math.max(worst, Math.hypot(V.span.D * df, -V.span.drop * df + dL)); }
+  }
+  return worst;
+}
+// Every jump from four files: the references, stretch-ready, on the same keys. In UE, sample all
+// four at s = t/T, mix by the weights (1−w)(1−h), (1−w)h, w(1−h), wh, then stretch. Exact at the
+// keys (shared point times, linear tangents); between keys it's the usual straight-line gap.
+function allSpanRows() {
+  const rk = repKey(S.rep), ro = repOpts(S.rep), c = CORNERS.map(k => M.build(S.C[k], rk, ro));
+  const n = Math.max(2, Math.ceil(Math.max(V.span.T, ...CORNERS.map(k => S.ref.T[k])) * S.keyRate)), fr = keyFractions(n);
+  return c.map(cv => fr.map(s => [s, cv.f(s), 0, cv.L(s)]));
+}
+// Worst gap, in cm, between that UE recipe and the Sandbox's own blend, over 3 distances × 3 drops.
+function allSpanErr(R) {
+  const { nearD, farD, lowH, highH } = S.ref, rk = repKey(S.rep), ro = repOpts(S.rep);
+  let worst = 0;
+  for (let q = 0; q <= 2; q++) for (let r = 0; r <= 2; r++) {
+    const D = nearD + (farD - nearD) * q / 2, drop = lowH + (highH - lowH) * r / 2, a = cornerWts(D, drop), T = durationAt(D, drop);
+    const W = M.world(M.build(blendAt(D, drop), rk, ro), { D, drop, T });
+    for (let k = 0; k < R[0].length - 1; k++) {
+      const mid = i => CORNERS.reduce((acc, c, j) => acc + a[c] * (R[j][k][i] + R[j][k + 1][i]) / 2, 0);
+      const F = mid(1), p = W.pos(mid(0) * T);
+      worst = Math.max(worst, Math.hypot(D * F - p.x, -drop * F + mid(3) - p.z));
+    }
+  }
+  return worst;
+}
+function exportName(mode) {
+  const ms = Math.round(V.span.T * 1000), which = V.mode === 'mixed' ? 'Mixed' : CNAME[V.mode].replace(' ', '');
+  return (mode === 'world'
+    ? `DfA_Traj_${which}_${Math.round(V.span.D)}cm_drop${Math.round(V.span.drop)}_${ms}ms.csv`
+    : `DfA_Traj_${which}${V.mode === 'mixed' ? Math.round(V.span.D) + 'cm_drop' + Math.round(V.span.drop) : ''}_StretchReady.csv`).replace('.csv', S.keySpacing === 'dist' ? '_evenDist.csv' : '_evenTime.csv');
+}
+function renderKeyInfo() {
+  const mode = $('#exportMode').value, pair = mode === 'all' ? allSpanRows() : null, rows = pair ? pair[0] : exportRows(mode), T = V.span.T, n = rows.length - 1;
+  // Spacing at the Span shown: distance between keys for even distance, time between keys for even time.
+  const ts = rows.map(r => mode === 'world' ? r[0] : r[0] * T);
+  let len = 0;
+  for (let k = 1; k <= n; k++) { const a = V.W.pos(ts[k - 1]), b = V.W.pos(ts[k]); len += Math.hypot(b.x - a.x, b.z - a.z); }
+  const apart = S.keySpacing === 'dist' ? `${(len / n).toFixed(1)} cm apart` : `${(T / n * 1000).toFixed(1)} ms apart`;
+  $('#keyInfo').textContent = pair ? `4 files × ${rows.length} keys, ${apart} here, within ${allSpanErr(pair).toFixed(2)} cm at every distance and drop`
+    : `${rows.length} keys, ${apart}, within ${exportErr(mode, rows).toFixed(2)} cm`;
+}
+$('#keyRate').onchange = e => { const v = Math.round(parseFloat(e.target.value)); if (v >= 10 && v <= 2000) S.keyRate = v; refresh(); };
+$('#exportMode').onchange = () => renderKeyInfo();
+$('#keySpacing').onchange = e => { S.keySpacing = e.target.value; renderKeyInfo(); };
+const exportCSV = rows => rows.map(r => r.map(v => v.toFixed(6)).join(',')).join('\n') + '\n';
+function saveCSV(rows, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([exportCSV(rows)], { type: 'text/csv' })); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+$('#exportBtn').onclick = () => {
+  const mode = $('#exportMode').value;
+  if (mode === 'all') {
+    const R = allSpanRows(), sp = S.keySpacing === 'dist' ? 'evenDist' : 'evenTime';
+    CORNERS.forEach((k, j) => setTimeout(() => saveCSV(R[j], `DfA_Traj_${CNAME[k].replace(' ', '')}_AllSpans_${sp}.csv`), j * 400));
+    toast(`4 references saved: ${R[0].length} keys each, within ${allSpanErr(R).toFixed(2)} cm at every distance and drop`);
+    return;
+  }
+  const rows = exportRows(mode), name = exportName(mode);
+  saveCSV(rows, name);
+  toast(`${name}: ${rows.length} keys, within ${exportErr(mode, rows).toFixed(2)} cm of the curve`);
+};
+$('#presets').insertAdjacentHTML('beforeend', Object.keys(PRESETS).map(k => `<button class="b" data-p="${k}">${k}</button>`).join(''));
+const showMixed = () => { if (S.editMode !== 'mixed') { S.editMode = 'mixed'; S.sel = null; toast('Showing Mixed at this Span'); } };
+document.querySelectorAll('#presets button').forEach(b => b.onclick = () => { S.span = { ...PRESETS[b.dataset.p] }; showMixed(); update(); });
+$('#Dr').oninput = e => { sliding = true; S.span.D = +e.target.value; showMixed(); update(); };
+$('#Hr').oninput = e => { sliding = true; S.span.drop = +e.target.value; showMixed(); update(); };
+for (const id of ['#Dr', '#Hr']) $(id).onchange = () => { sliding = false; update(); };
+$('#D').onchange = e => { S.span.D = Math.max(50, +e.target.value || S.span.D); showMixed(); update(); };
+$('#drop').onchange = e => { const v = parseFloat(e.target.value); if (isFinite(v)) S.span.drop = v; showMixed(); update(); };
+for (const k of ['nearD', 'farD', 'lowH', 'highH']) $('#' + k).onchange = e => { const v = parseFloat(e.target.value); if (isFinite(v) && (v > 0 || k === 'lowH' || k === 'highH')) S.ref[k] = v; update(); };
+for (const k of CORNERS) $('#T_' + k).onchange = e => { const v = parseFloat(e.target.value); if (v >= 0.05) S.ref.T[k] = v; update(); };
+$('#Tnow').onchange = e => {
+  const T = parseFloat(e.target.value); if (!(T >= 0.05)) { refresh(); return; }
+  if (V.mode !== 'mixed') S.ref.T[V.mode] = T;
+  else { const a = V.mixWts, k2 = CORNERS.reduce((acc, k) => acc + a[k] ** 2, 0), d = T - durationAt(S.span.D); for (const k of CORNERS) S.ref.T[k] = Math.max(0.05, S.ref.T[k] + a[k] / k2 * d); }
+  update();
+};
+$('#offset').onchange = e => { const v = parseFloat(e.target.value); if (isFinite(v)) S.offset = v; update(); };
+$('#dps').onchange = e => { S.dps = clamp(parseFloat(e.target.value) || 30, 5, 240); update(); };
+$('#playBtn').onclick = togglePlay;
+$('#scrub').oninput = e => { S.play.t = e.target.value / 1000 * V.span.T; S.play.playing = false; renderCanvases(); };
+$('#loop').onchange = e => { S.play.loop = e.target.checked; };
+$('#eqForm').onchange = e => { S.eqForm = e.target.value; renderEquation(); };
+$('#copyEq').onclick = async () => {
+  const txt = equationText();
+  try { await navigator.clipboard.writeText(txt); toast('Equation copied'); }
+  catch { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); toast('Equation copied'); }
+};
+$('#eq').addEventListener('mouseover', e => { const r = e.target.closest('.row'); const k = r ? (r.dataset.seg === 'all' ? null : +r.dataset.seg) : null; if (k !== S.hoverSeg) { S.hoverSeg = k; renderCanvases(); } });
+$('#eq').addEventListener('mouseleave', () => { S.hoverSeg = null; renderCanvases(); });
+$('#secs').addEventListener('mouseover', e => { const r = e.target.closest('.sr[data-seg]'); const k = r ? +r.dataset.seg : null; if (k !== S.hoverSeg) { S.hoverSeg = k; renderCanvases(); } });
+$('#secs').addEventListener('mouseleave', () => { S.hoverSeg = null; renderCanvases(); });
+window.addEventListener('keydown', e => {
+  const typing = e.target instanceof Element && e.target.closest('input,select,textarea,[contenteditable]');
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !typing) { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if (typing) return;
+  if (e.key === ' ') { e.preventDefault(); togglePlay(); }
+  else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSel(); }
+  else if (e.key === 'Escape') { S.sel = null; refresh(); }
+});
+
+// ---------------------------------------------------------------- boot
+for (const k of ['grid', 'grid2', 'text', 'dim', 'accent', 'pt', 'sel', 'vel', 'grav', 'warn', 'ring', 'g1', 'g2', 'pin']) COL[k] = css(k);
+for (const k of ['nh', 'fl', 'fh']) S.C[k] = clone(S.C.nl);
+update();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
