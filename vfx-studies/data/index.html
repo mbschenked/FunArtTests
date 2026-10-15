@@ -1,0 +1,697 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How the VFX were matched</title>
+<meta name="description" content="The Uncharted 4 reference frames, measurements and side-by-side comparisons behind Max Schenk's real-time muzzle flash and bullet tracer.">
+<meta property="og:type" content="article">
+<meta property="og:title" content="How the VFX were matched">
+<meta property="og:description" content="The Uncharted 4 reference frames, measurements and side-by-side comparisons behind a real-time muzzle flash and bullet tracer.">
+<meta property="og:url" content="https://mbschenked.github.io/FunArtTests/vfx-studies/data/">
+<meta property="og:image" content="https://mbschenked.github.io/FunArtTests/vfx-studies/data/img/og-card.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Uncharted 4's AK muzzle flash at four moments above the real-time rebuild at the same moments">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2322272d'/%3E%3Cpath d='M5 22 C11 4 20 4 27 24' fill='none' stroke='%23ffb04a' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#1f2328; --plot:#252a30; --grid:#2e343b; --axis:#3b434c;
+  --text:#e6e9ec; --dim:#a0a9b3; --rule:#343b43;
+  --flame:#ff9a40; --tracer:#ffd84a; --mist:#d8c27a;
+  --gutter:1.5rem;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--bg); color:var(--text);
+  font:400 1rem/1.6 Archivo, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-stretch:100%;
+}
+a{color:inherit; text-underline-offset:.18em; text-decoration-thickness:1px}
+a:hover{text-decoration-color:var(--hue, var(--flame))}
+a:focus-visible{outline:2px solid var(--hue, var(--flame)); outline-offset:3px; border-radius:2px}
+code{font:500 .84em/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing:-.01em}
+
+/* layout: a 46rem reading column; figures and tables break out to 72rem */
+main, footer{
+  display:grid;
+  grid-template-columns:1fr min(46rem, calc(100% - 2 * var(--gutter))) 1fr;
+}
+main > *, footer > *{grid-column:2; min-width:0}
+main{padding-top:4.5rem}
+.wide{grid-column:1 / -1; width:min(72rem, calc(100% - 2 * var(--gutter))); justify-self:center}
+.mid{grid-column:1 / -1; width:min(60rem, calc(100% - 2 * var(--gutter))); justify-self:center}
+
+header{display:contents}
+header > *{grid-column:2}
+.hero{margin:1.75rem 0 0}
+.hero figcaption{max-width:46rem}
+h1{
+  margin:0 0 1.25rem; font-size:clamp(3rem, 11vw, 5.25rem); line-height:.92;
+  font-weight:800; font-stretch:62%; letter-spacing:-.01em;
+}
+.lead{margin:0 0 1rem; max-width:38rem; font-size:1.125rem; color:var(--dim)}
+.lead a{color:var(--text)}
+.credit{margin:1.5rem 0 0; padding-top:1rem; border-top:1px solid var(--rule); color:var(--dim); font-size:.875rem; max-width:40rem}
+.toc{margin:1.25rem 0 0; color:var(--dim); font-size:.9375rem}
+.toc a{color:var(--text); margin-right:.9rem; white-space:nowrap}
+
+h2{
+  margin:5rem 0 .75rem; font-size:clamp(1.875rem, 6vw, 2.5rem); line-height:1;
+  font-weight:800; font-stretch:68%; letter-spacing:-.005em;
+}
+h3{margin:3rem 0 .5rem; font-size:1.5rem; line-height:1.15; font-weight:700; font-stretch:78%}
+h4{margin:0 0 .25rem; font-size:1.0625rem; font-weight:650; font-stretch:90%}
+p{margin:0 0 1rem}
+.note{color:var(--dim)}
+.flame{--hue:var(--flame)} .tracer{--hue:var(--tracer)}
+.hue{color:var(--hue)}
+
+/* figures */
+figure{margin:2rem 0 2.5rem}
+.media{display:block; border-radius:6px; overflow:hidden; background:var(--plot); border:1px solid var(--grid)}
+.media img, .media video{display:block; width:100%; height:auto}
+a.media:focus-visible{outline:2px solid var(--hue, var(--flame)); outline-offset:3px}
+figcaption{margin-top:.8rem; font-size:.9375rem; color:var(--dim); max-width:46rem}
+figcaption p{margin:0 0 .45rem}
+.cap-t{color:var(--text); font-weight:650; font-stretch:90%}
+.cap-src{white-space:nowrap}
+.why{margin-top:.6rem; padding-left:.8rem; border-left:2px solid var(--hue, var(--flame)); color:var(--text)}
+.pair{display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); gap:0 2rem; align-items:start}
+.pair figure{margin-top:1.25rem}
+.gun-pair{display:grid; grid-template-columns:1fr 1fr; gap:.75rem 1rem}
+.gun-l{margin:0 0 .4rem; font-weight:650; font-stretch:90%; font-size:.9375rem}
+.gun-l.ours{color:var(--flame)}
+figure.gun{margin-top:1.75rem}
+.take{margin:.25rem 0 0; max-width:46rem}
+h3 + .take{margin-top:.25rem}
+.take + figure{margin-top:1rem}
+.trio-fig{display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); gap:0 1.75rem; align-items:start}
+.trio-fig figure{margin-top:1.25rem}
+.trio-fig .media{aspect-ratio:1.4; }
+.trio-fig .media img{height:100%; object-fit:cover}
+.quad{display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 26rem), 1fr)); gap:1.25rem 1.75rem; margin:1.5rem 0 1rem; align-items:start}
+.quad .media{border-radius:5px}
+.quad-note p{margin:0; color:var(--dim)}
+.trio{display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); gap:1rem; margin:1.5rem 0 .75rem}
+.trio .media{border-radius:5px}
+.trio + p{font-size:.9375rem; color:var(--dim); max-width:46rem}
+video{cursor:pointer}
+
+/* colour swatches */
+.sw{display:inline-block; width:.95em; height:.95em; border-radius:2px; background:var(--c); vertical-align:-.12em; margin-right:.3em; box-shadow:inset 0 0 0 1px rgb(255 255 255 / .14)}
+.hex{white-space:nowrap; margin-right:.55em}
+.arrow{color:var(--dim); margin:0 .35em 0 0}
+
+.xsec{display:flex; margin:.75rem 0 .5rem; border-radius:4px; overflow:hidden; max-width:34rem}
+.xsec span{flex:1; height:2.25rem; background:var(--c)}
+.xsec-k{display:flex; max-width:34rem; color:var(--dim); font-size:.75rem}
+.xsec-k code{flex:1; text-align:center}
+
+/* layer tables */
+.layers{width:100%; border-collapse:collapse; font-size:.9375rem; margin:1rem 0 1.5rem}
+.layers caption{text-align:left; color:var(--dim); font-size:.875rem; padding-bottom:.5rem}
+.layers th{text-align:left; font-weight:600; color:var(--dim); font-size:.8125rem; padding:.5rem 1rem .5rem 0; border-bottom:1px solid var(--axis)}
+.layers td{vertical-align:top; padding:.8rem 1rem .8rem 0; border-bottom:1px solid var(--rule); overflow-wrap:anywhere}
+.layers td:first-child{width:24%}
+.layers td:nth-child(2){width:28%}
+.layers .look{display:block; color:var(--dim); font-size:.875rem; margin-top:.15rem}
+.layers .off{color:var(--dim)}
+.layers .tag{display:inline-block; margin-top:.35rem; font-size:.8125rem; color:var(--dim); border:1px solid var(--axis); border-radius:3px; padding:0 .35rem}
+.layers .sw-line{display:block; margin-bottom:.2rem}
+
+/* frame-by-frame table */
+.frames{width:100%; border-collapse:collapse; font-size:.9375rem; margin:1rem 0 .5rem}
+.frames th{text-align:left; font-weight:600; color:var(--dim); font-size:.8125rem; padding:.45rem .75rem .45rem 0; border-bottom:1px solid var(--axis)}
+.frames td{padding:.6rem .75rem .6rem 0; border-bottom:1px solid var(--rule); vertical-align:middle}
+.frames td:first-child{font-variant-numeric:tabular-nums; white-space:nowrap}
+.bar{display:flex; align-items:center; gap:.5rem; min-width:8rem}
+.bar i{display:block; height:.6rem; width:calc(var(--v) * 1%); max-width:7rem; min-width:2px; background:var(--flame); border-radius:0 3px 3px 0}
+.bar i.zero{background:var(--axis)}
+.bar b{font-weight:500; font-variant-numeric:tabular-nums}
+
+/* charts drawn in the page */
+.chart{display:block; width:100%; height:auto; background:var(--plot); border:1px solid var(--grid); border-radius:6px}
+.c-grid{stroke:var(--grid); stroke-width:1}
+.c-axis{stroke:var(--axis); stroke-width:1}
+.c-txt{fill:var(--dim); font:400 14px Archivo, system-ui, sans-serif}
+.c-lab{fill:var(--text); font:600 15px Archivo, system-ui, sans-serif}
+.c-fit{fill:none; stroke:var(--mist); stroke-width:2; stroke-dasharray:5 4; opacity:.75}
+.c-pt{fill:var(--mist); stroke:var(--plot); stroke-width:2}
+.c-rng{fill:var(--mist); opacity:.55}
+.c-band{fill:var(--mist); opacity:.07}
+
+/* score bars */
+.scores{list-style:none; margin:1.25rem 0 .75rem; padding:0; max-width:40rem}
+.scores li{display:grid; grid-template-columns:9.5rem 1fr 3.5rem; gap:.75rem; align-items:center; padding:.35rem 0}
+.scores .s-l{color:var(--dim); font-size:.9375rem}
+.scores .s-l b{color:var(--text); font-weight:600}
+.scores .s-b{height:.6rem; width:calc(var(--v) / 5.35 * 100%); background:var(--flame); border-radius:0 3px 3px 0}
+.scores .s-b.alt{background:transparent; border:1.5px solid var(--flame)}
+.scores .s-v{font-variant-numeric:tabular-nums; text-align:right}
+.scores .gap{height:.6rem}
+
+ul.plain{margin:.5rem 0 1rem; padding-left:1.1rem}
+ul.plain li{margin:.4rem 0}
+ul.plain li::marker{color:var(--axis)}
+blockquote{margin:1rem 0; padding-left:.9rem; border-left:2px solid var(--axis); color:var(--text); font-style:italic}
+
+footer{padding:4rem 0 3rem; margin-top:4rem; border-top:1px solid var(--rule); color:var(--dim); font-size:.9375rem}
+footer p{margin:.35rem 0; max-width:40rem}
+footer a{color:var(--text)}
+
+@media (max-width:640px){
+  :root{--gutter:1rem}
+  main{padding-top:3rem}
+  h2{margin-top:3.75rem}
+  .layers thead{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0)}
+  .layers, .layers tbody, .layers tr, .layers td{display:block; width:auto !important}
+  .layers tr{padding:.85rem 0; border-bottom:1px solid var(--rule)}
+  .layers td{border:0; padding:.2rem 0}
+  .layers td[data-label]::before{content:attr(data-label); display:block; color:var(--dim); font-size:.75rem; margin-top:.35rem}
+  .scores li{grid-template-columns:7.5rem 1fr 3rem; gap:.5rem}
+  .gun-pair{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion: reduce){.motion-hint{display:none}}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>How the VFX were matched</h1>
+    <p class="lead">The muzzle flash and bullet tracer on the <a href="../u4-range-combined.html">live range</a> were rebuilt from Uncharted 4 gameplay footage one measurement at a time: colours sampled from 4K frames, sizes counted in pixels, timing counted in frames. The results come first, game beside ours; after them come the graphs, the reference frames and the numbers taken from them.</p>
+    <p class="lead">Part of <a href="../../tools/">Game feel tools</a> by Max Schenk.</p>
+    <figure class="wide hero flame">
+      <a class="media" href="img/compare-muzzle-close.webp"><img style="aspect-ratio:1600/848" src="img/compare-muzzle-close.webp" width="1600" height="848" alt="Four close crops of one AK shot, the game's flash above and ours below: soft glowing opening flames at +1 and +2, and a tall white column with torn pieces at +4 and +5." fetchpriority="high"></a>
+      <figcaption><p>Uncharted 4's AK flash above, the rebuild below, at four moments of one shot: soft, glowing opening flames at +1 and +2, then a white column in a faint glow, tearing on its right, at +4 and +5. The rebuild is muzzle flash pass 4, the version on the live range.</p></figcaption>
+    </figure>
+    <p class="credit">Footage: Uncharted 4: A Thief's End (Naughty Dog / Sony Interactive Entertainment), from YouTube captures linked below. Frames are shown for reference and comparison.</p>
+    <p class="toc">On this page: <a href="#guns">Gun by gun</a> <a href="#compare">Game against ours</a> <a href="#graphs">How the visuals were recreated</a> <a href="#frames">Reference frames</a> <a href="#timing">Timing</a> <a href="#layers">Measuring each layer</a> <a href="#process">How it got better</a></p>
+  </header>
+
+  <!-- ============================================================ guns -->
+  <h2 id="guns">Gun by gun: Uncharted 4 against ours</h2>
+  <p>The muzzle flash ships as one base and two presets made from it, each matched to a different gun in the game. Each pair shows the game's most characteristic frame for that gun beside our live build at the same moment of the flash, cropped to the same window around the muzzle. Ours is rendered from the range's test mode, with a placeholder rifle and shooter on a test range, so judge the flash, not the gun or the scene.</p>
+
+  <figure class="wide gun flame">
+    <div class="gun-pair">
+      <div>
+        <p class="gun-l">Uncharted 4: AK-47</p>
+        <a class="media" href="img/gun-ak-game.webp"><img style="aspect-ratio:1050/750" src="img/gun-ak-game.webp" width="1050" height="750" loading="lazy" alt="The game's AK-47 firing in a daylight forest: two white-gold flame lobes either side of the muzzle under a warm haze, with a yellow tracer leaving between them."></a>
+      </div>
+      <div>
+        <p class="gun-l ours">Ours: U4 AK (base) preset</p>
+        <a class="media" href="img/gun-ak-ours.webp"><img style="aspect-ratio:1050/750" src="img/gun-ak-ours.webp" width="1050" height="750" loading="lazy" alt="Our placeholder rifle firing on the test range in day light: a wide white-gold flame cloud either side of the muzzle."></a>
+      </div>
+    </div>
+    <figcaption>
+      <p><span class="cap-t">Moment 01, frame +2, about 16.5 ms into the shot.</span> Ours: the range's hero camera, set up to put the muzzle where this frame has it, in day lighting. <span class="cap-src"><a href="https://www.youtube.com/watch?v=qqi_N6M8bgY&amp;t=171s">qqi 171.04–171.52 s</a></span></p>
+      <p class="why">Close: two broad flame masses either side of the muzzle, a white core and a gold edge. Different: ours merges the two lobes into one wider cloud where the game keeps a dip at the sight post, and the game's warm haze above the gun is off by default in ours. The tracer is a separate effect and isn't drawn here, and the backdrop and rifle are placeholders.</p>
+    </figcaption>
+  </figure>
+
+  <figure class="wide gun flame">
+    <div class="gun-pair">
+      <div>
+        <p class="gun-l">Uncharted 4: rifle with a red-dot sight</p>
+        <a class="media" href="img/gun-jet-game.webp"><img style="aspect-ratio:1050/675" src="img/gun-jet-game.webp" width="1050" height="675" loading="lazy" alt="The game's rifle with a red-dot sight firing on a dark pier: a long white flame jet shoots straight out to the right, with a brownish ring at its tip."></a>
+      </div>
+      <div>
+        <p class="gun-l ours">Ours: Rifle jet (02) preset</p>
+        <a class="media" href="img/gun-jet-ours.webp"><img style="aspect-ratio:1050/675" src="img/gun-jet-ours.webp" width="1050" height="675" loading="lazy" alt="Our placeholder rifle at night, seen from the side: a long, broad white flame fan shoots out to the right."></a>
+      </div>
+    </div>
+    <figcaption>
+      <p><span class="cap-t">Moment 02, frame +0, about 3.3 ms into the shot.</span> Ours: night lighting and a custom test-mode camera turned to roughly the game's angle, with the rifle pointing right; the range's fixed cameras look along the barrel and hide the jet. <span class="cap-src"><a href="https://www.youtube.com/watch?v=qqi_N6M8bgY&amp;t=84s">qqi 84.95–85.39 s</a></span></p>
+      <p class="why">Close: a long forward jet straight off the muzzle in the very first frame, white at the root. Different: ours is wider and fills in as one broad fan, where the game's is a narrower tongue; the game's downward lobe and the orange-brown smoky ring at the jet's tip barely show in ours.</p>
+    </figcaption>
+  </figure>
+
+  <figure class="wide gun flame">
+    <div class="gun-pair">
+      <div>
+        <p class="gun-l">Uncharted 4: green rifle with an optic</p>
+        <a class="media" href="img/gun-x-game.webp"><img style="aspect-ratio:1125/900" src="img/gun-x-game.webp" width="1125" height="900" loading="lazy" alt="The game's green rifle firing at night in the jungle, seen close: a yellow-white flash with lobes reaching up-right, down-right and forward, flooding the scene with yellow light."></a>
+      </div>
+      <div>
+        <p class="gun-l ours">Ours: X flash (03) preset</p>
+        <a class="media" href="img/gun-x-ours.webp"><img style="aspect-ratio:1125/900" src="img/gun-x-ours.webp" width="1125" height="900" loading="lazy" alt="Our placeholder rifle at night, seen close from behind: a tall white flash with ragged lobes straight up and down, and a yellow wash over the range."></a>
+      </div>
+    </div>
+    <figcaption>
+      <p><span class="cap-t">Moment 03, frame +1, about 9.9 ms into the shot.</span> Ours: night lighting and a custom test-mode camera placed close behind the gun, like the game's. <span class="cap-src"><a href="https://www.youtube.com/watch?v=qqi_N6M8bgY&amp;t=186s">qqi 186.25–186.70 s</a></span></p>
+      <p class="why">Close: the yellow flood over the whole scene, and a burst of lobes at the same moment. Different: from this angle our four lobes read as a tall bow-tie, straight up and down, where the game's lean forward along the barrel into an X, and ours is taller. This is the weakest of the three matches.</p>
+    </figcaption>
+  </figure>
+
+  <!-- ============================================================ compare -->
+  <h2 id="compare">Game against ours</h2>
+  <p>The live range runs muzzle flash pass 4 and tracer stage 2, and the comparisons here show those versions. Ours is a placeholder shooter and rifle on a test range, so judge the effect, not the scene. Moments are numbered as in The reference frames, below.</p>
+
+  <h3 class="tracer">Tracer, stage 2</h3>
+  <p>Stage 2 added the light that travels with each round; Max approved its look on 12 Oct. The rows run one slow-motion frame apart.</p>
+  <figure class="wide tracer">
+    <a class="media" href="img/compare-tracer-stage2.webp"><img style="aspect-ratio:1926/1158" src="img/compare-tracer-stage2.webp" width="1926" height="1158" loading="lazy" alt="Four rows. Left: the game's jungle frames as a round passes the lens. Right: our night range from a matching camera, with a detached young streak, a white head with a lemon body, the head passing the lens, and then only the mist."></a>
+    <figcaption>
+      <p><span class="cap-t">Moment 02 against ours, frames +6 to +9.</span> The labels inside each frame come from the comparison board: a young streak detached from the muzzle; a white head, lemon body and orange tail tip; the head past the lens with the tail and young mist still in view; then the leftover frame. The board's ms labels use the older 0.55 conversion, 9.2 ms a tile; at 0.40 a tile is about 6.7 ms.</p>
+    </figcaption>
+  </figure>
+
+  <figure class="tracer" style="max-width:40rem">
+    <div class="media"><video muted loop playsinline autoplay preload="metadata" width="800" height="750" poster="media/tracer-stage2-vs-game-poster.webp" aria-label="Slowed 53 times: above, the game's round passes over rock cover and lights it orange; below, our round passes a stone block on the night range and lights its top and the ground." tabindex="0"><source src="media/tracer-stage2-vs-game.mp4" type="video/mp4"></video></div>
+    <figcaption>
+      <p><span class="cap-t">Passing cover, slowed 53×.</span> Above, the game's light check: the rock top lights orange for about one frame as the round passes. Below, ours: one warm light rides at the head and catches the block and the ground. <span class="motion-hint">Click or tap to pause.</span></p>
+    </figcaption>
+  </figure>
+  <p class="note">Open for Max: the timing A/B at <i>f</i> = 0.40, and the light's reach, where the default is 2.0 m.</p>
+
+  <h3 class="flame">Muzzle flash, pass 4</h3>
+  <p>Pass 4 brought soft, glowing opening flames, a per-shot rhythm at normal speed (some shots open at full size and shrink, called burst-first; the rest open with a small puff and peak later), a column that tears into hot white pieces and a cream-peach rim. The close-ups at the top of the page are this version.</p>
+
+  <figure class="wide flame">
+    <a class="media" href="img/compare-muzzle-sequence.webp"><img style="aspect-ratio:1924/1070" src="img/compare-muzzle-sequence.webp" width="1924" height="1070" loading="lazy" alt="A grid of ten moments of one AK shot, +0 to +9, with the game's frame above ours at each moment: puff, two lobes, tall column, break-up, then a violet glow."></a>
+    <figcaption>
+      <p><span class="cap-t">A whole AK shot, game above, pass 4 below.</span> One tile is a tenth of the 66 ms flash: the puff at +0, the lobes at +1 and +2, the column at +3 to +5, the break-up at +6 and the violet afterglow to +9. Both cut to nothing at +10.</p>
+    </figcaption>
+  </figure>
+
+  <figure class="flame" style="max-width:40rem">
+    <div class="media"><video muted loop playsinline autoplay preload="metadata" width="906" height="946" poster="media/muzzle-pass4-vs-game-poster.webp" aria-label="Four panels slowed 24 times: the game's AK, our pass 3, and two pass-4 shots, one opening with a puff and one at full size." tabindex="0"><source src="media/muzzle-pass4-vs-game.mp4" type="video/mp4"></video></div>
+    <figcaption>
+      <p><span class="cap-t">Close view, slowed 24×.</span> The game's AK, pass 3 for reference, and two pass-4 shots: one opens with the puff, one at full size. <span class="motion-hint">Click or tap to pause.</span></p>
+    </figcaption>
+  </figure>
+
+  <p class="note">The graph of this pass's rhythm at normal speed is in <a href="#g-rhythm">How the visuals were recreated</a>, below.</p>
+
+  <figure class="mid flame">
+    <a class="media" href="img/chart-pass4-size.webp"><img style="aspect-ratio:919/470" src="img/chart-pass4-size.webp" width="919" height="470" loading="lazy" alt="Chart of clipped white area over the first 66 ms: pass 4's burst-first shot starts near 80 thousand pixels and holds, while the game's burst-first tiles drop from about 36 to 12 thousand."></a>
+    <figcaption><p><span class="cap-t">Size over time.</span> The burst-first shot shown opens at about 2.2× the game's size and holds for about 12 ms: the next thing to tune.</p></figcaption>
+  </figure>
+
+  <h4 class="flame">What still differs</h4>
+  <p>An independent critic re-measured pass 4 and called it ready with small fixes. What it, Max and a later data pass found:</p>
+  <ul class="plain">
+    <li>The burst-first opening is too big, too white and holds still: 0.9–2.2× the game's one burst-first frame, still at 76% of its area at 16 ms where the game keeps 33% after 6.7 ms, and it washes out the rifle.</li>
+    <li>The column at +4 and +5 is bigger and whiter than the game's: 86% and 84% of it clipped white, against 68% and 62%.</li>
+    <li>Fading opening flames turn into faceted, see-through sheets at 16–22 ms.</li>
+    <li>The parts fade together. Max: “having overlapping parts fade in and out is key”; on the AK, the tall first flame grows much longer than ours.</li>
+    <li>A data pass set 146 targets from the AK frames, and pass 4 meets 43. The game's tall flame is longer from base to tip (281, 327 and 370 px at +3 to +5, against 241, 299 and 329), and 11–16% of its flash is in the orange family at every frame from +0 to +5, where ours is 0–4%.</li>
+  </ul>
+  <p class="note">Later passes (5, 5b and 5c), which give each part of the flame its own timing, are built or in progress and not on the live range yet.</p>
+
+  <!-- ============================================================ graphs -->
+  <h2 id="graphs">How the visuals were recreated</h2>
+  <p>Five graphs did most of the work. Each compares one measurement of the game with the same measurement of ours. Pass 3 and pass 4 are successive builds of the muzzle flash; pass 4 is the one on the live range.</p>
+
+  <h3 class="flame" id="g-speed">The game's real speed</h3>
+  <p class="take flame">The 4K capture runs in slow motion at a speed no source documents. Lining up the same pistol flash at both speeds shows the game runs at 0.40× there, so one slow-motion frame is about 6.7 ms and a rifle flash lasts about 66 ms, which is what ours uses.</p>
+  <figure class="flame">
+    <a class="media" href="img/chart-fproof.webp"><img style="aspect-ratio:660/380" src="img/chart-fproof.webp" width="660" height="380" loading="lazy" alt="Chart of clipped white area against game time. The slow-motion pistol re-timed at f 0.40 steps down through the real-speed pistol's four frame values; re-timed at 0.55 it runs to about 92 ms, past the real flash."></a>
+    <figcaption>
+      <p><span class="cap-t">The same pistol flash at both speeds.</span> At 0.40 the slow-motion flash, re-timed, steps through the four real-speed frames; at 0.55 it would last 92 ms and fade too slowly. The frames themselves are under Timing, below.</p>
+    </figcaption>
+  </figure>
+
+  <h3 class="tracer" id="g-mist">How long a bullet's mist lasts</h3>
+  <p class="take tracer">The pale mist a round leaves is strongest a couple of frames after it passes, then fades steadily and is gone in about 0.7 s, so ours fades on the same curve instead of hanging in the air.</p>
+  <figure class="tracer">
+    <svg class="chart" viewBox="0 0 640 286" role="img" aria-labelledby="mist-t mist-d">
+      <title id="mist-t">Mist strength by age</title>
+      <desc id="mist-d">Brightness the mist adds over the background, in 8-bit levels, for one round at normal speed: 17 at 17 ms, 53 at 33 ms, 47 at 67 ms, 31 at 133 ms, 22 at 200 ms, 16 to 17 from 267 to 333 ms, 8 to 12 from 400 to 500 ms and 3 to 6 from 600 to 684 ms. An exponential fit halves about every 178 ms.</desc>
+      <rect class="c-band" x="48" y="20" width="163.4" height="210"/>
+      <path class="c-grid" d="M48 160H620M48 90H620M48 20H620M129.7 20V230M211.4 20V230M293.1 20V230M374.9 20V230M456.6 20V230M538.3 20V230M620 20V230"/>
+      <path class="c-axis" d="M48 230H620M48 20V230"/>
+      <g class="c-txt" text-anchor="end"><text x="42" y="234">0</text><text x="42" y="164">20</text><text x="42" y="94">40</text><text x="42" y="24">60</text></g>
+      <g class="c-txt" text-anchor="middle"><text x="48" y="250">0</text><text x="129.7" y="250">100</text><text x="211.4" y="250">200</text><text x="293.1" y="250">300</text><text x="374.9" y="250">400</text><text x="456.6" y="250">500</text><text x="538.3" y="250">600</text><text x="620" y="250">700</text></g>
+      <text class="c-txt" x="334" y="276" text-anchor="middle">ms since the round was fired, normal speed</text>
+      <text class="c-txt" x="56" y="222">plainly visible</text>
+      <path class="c-fit" d="M75.0 44.5 L84.8 53.0 L94.6 61.0 L104.4 68.7 L114.2 76.1 L124.0 83.1 L133.8 89.8 L143.6 96.2 L153.4 102.3 L163.2 108.1 L173.0 113.7 L182.8 119.0 L192.6 124.1 L202.4 128.9 L212.2 133.5 L222.1 137.9 L231.9 142.1 L241.7 146.1 L251.5 150.0 L261.3 153.6 L271.1 157.1 L280.9 160.4 L290.7 163.6 L300.5 166.6 L310.3 169.5 L320.1 172.3 L329.9 174.9 L339.7 177.4 L349.5 179.8 L359.3 182.1 L369.1 184.3 L378.9 186.4 L388.7 188.4 L398.6 190.3 L408.4 192.1 L418.2 193.8 L428.0 195.5 L437.8 197.0 L447.6 198.5 L457.4 200.0 L467.2 201.3 L477.0 202.7 L486.8 203.9 L496.6 205.1 L506.4 206.2 L516.2 207.3 L526.0 208.3 L535.8 209.3 L545.6 210.3 L555.4 211.2 L565.3 212.0 L575.1 212.9 L584.9 213.6 L594.7 214.4 L604.5 215.1 L614.3 215.8 L619.2 216.1"/>
+      <g>
+        <rect class="c-rng" x="266.2" y="170" width="53.9" height="4.5" rx="2"><title>267–333 ms: 16–17 levels</title></rect>
+        <rect class="c-rng" x="374.9" y="188" width="81.7" height="14" rx="2"><title>400–500 ms: 8–12 levels</title></rect>
+        <rect class="c-rng" x="538.3" y="209" width="68.6" height="10.5" rx="2"><title>600–684 ms: 3–6 levels</title></rect>
+        <circle class="c-pt" cx="61.9" cy="170.5" r="5"><title>17 ms: 17 levels</title></circle>
+        <circle class="c-pt" cx="75" cy="44.5" r="5"><title>33 ms: 53 levels</title></circle>
+        <circle class="c-pt" cx="102.7" cy="65.5" r="5"><title>67 ms: 47 levels</title></circle>
+        <circle class="c-pt" cx="156.7" cy="121.5" r="5"><title>133 ms: 31 levels</title></circle>
+        <circle class="c-pt" cx="211.4" cy="153" r="5"><title>200 ms: 22 levels</title></circle>
+      </g>
+      <text class="c-lab" x="88" y="42">53 levels at 33 ms</text>
+      <text class="c-lab" x="236" y="128">half-life about 180 ms</text>
+      <text class="c-lab" x="480" y="192">gone by about 0.7 s</text>
+    </svg>
+    <figcaption>
+      <p><span class="cap-t">Mist strength by age.</span> The brightness the mist adds over the background, in 8-bit levels, for the round in the mist frames under The reference frames, below. Dots are single frames; bars are spans of ages measured as one range. It rises over 2 frames, then falls roughly exponentially, with no hold and no late collapse. Dashed: the exponential fit.</p>
+    </figcaption>
+  </figure>
+
+  <h3 class="flame" id="g-edge">A soft glow at the edge of the first flames</h3>
+  <p class="take flame">Measured across the edge of the opening flames, the game's brightness falls away slowly, like a glow, where our earlier pass 3 cut off sharply; pass 4 gave the opening flames a soft glow of their own and kept the column's edge crisp.</p>
+  <figure class="flame">
+    <a class="media" href="img/chart-edge-1.webp"><img style="aspect-ratio:620/330" src="img/chart-edge-1.webp" width="620" height="330" loading="lazy" alt="Edge brightness profile at tile +1: the game's curve falls slowly outside the outline, ours drops sharply."></a>
+    <figcaption>
+      <p><span class="cap-t">Edge of the opening flames at +1.</span> Brightness across the flame's outline, from 10 px inside to 30 px outside, in the game (orange) and in pass 3 (green, labelled "ours (snapshot)"). The game's edge is a soft, glowing puff 26.5 px wide; pass 3 was a crisp 10 px cut-out. Pass 4 measures 21.0 px here. The +2 and +4 edges are under Measuring each layer.</p>
+    </figcaption>
+  </figure>
+
+  <h3 class="flame" id="g-phases">The order of the flash's phases</h3>
+  <p class="take flame">Counting the white-hot pixels in each slow-motion frame shows the AK's flash growing to a peak at +5 and collapsing at +6; pass 3 already rose and fell in that order, though it ran bigger than the game at several frames.</p>
+  <figure class="flame">
+    <a class="media" href="img/chart-tiles.webp"><img style="aspect-ratio:660/300" src="img/chart-tiles.webp" width="660" height="300" loading="lazy" alt="Line chart of clipped white area per slow-motion tile from +0 to +9 for the game's AK and pass 3: both rise to a peak around +5 and collapse at +6."></a>
+    <figcaption>
+      <p><span class="cap-t">Clipped white area per slow-motion tile.</span> The game's AK against pass 3 (green, labelled "ours, shot 0"), one tile about 6.7 ms. Pass 3 follows the order of the phases, a peak at +5 and a collapse at +6, but not the size at every tile: at +0, +2, +5 and +8 it runs 126–190% of the game.</p>
+    </figcaption>
+  </figure>
+
+  <h3 class="flame" id="g-rhythm">Biggest in the first frame</h3>
+  <p class="take flame">At normal speed every real game shot is biggest in its very first frame, so pass 4 makes half its shots open at full size and shrink, which we call burst-first; the other half keep the AK's slower build.</p>
+  <figure class="mid flame">
+    <a class="media" href="img/chart-pass4-1x.webp"><img style="aspect-ratio:919/430" src="img/chart-pass4-1x.webp" width="919" height="430" loading="lazy" alt="Two panels of flash area per 60 fps frame: pass 4's burst-first shots fall from frame 0 like the game's pistol, at first-frame phases of 4.2 and 12.5 ms."></a>
+    <figcaption><p><span class="cap-t">Rhythm at normal speed, pass 4.</span> Flash size per 60 fps frame as a percentage of the first frame, at two moments a shot's first frame can land (4.2 and 12.5 ms after it). Green: pass 4's burst-first shots, falling like the game's pistol (orange). Dashed blue: its other shots, which keep the AK's slow-motion build.</p></figcaption>
+  </figure>
+
+  <!-- ============================================================ frames -->
+  <h2 id="frames">The reference frames</h2>
+  <p>Two public captures supplied every frame shown here. A 4K capture of the PS5 remaster, Uncharted: Legacy of Thieves Collection (<a href="https://www.youtube.com/watch?v=qqi_N6M8bgY">qqi_N6M8bgY</a>, no HUD) plays the game in slow motion. A 1080p capture (<a href="https://www.youtube.com/watch?v=TDpsY0crUjE">TDpsY0crUjE</a>, HUD on) plays it at normal speed, 60 fps, with every frame unique. From them, 40 reference frames, crops and strips were kept, and every line in the two written specs is tagged: observed (measured in a named frame), text (from a written source) or inferred.</p>
+  <p>These are the frames that set a default or a preset. Each caption links to its moment. The 4K capture is slowed twice, by the game's Slow Motion cheat and then by the uploader's 60% playback, so watch it at speed 0.25 and step with the <code>.</code> and <code>,</code> keys.</p>
+
+  <h3 class="tracer">Bullet tracer</h3>
+  <p class="note">Four slow-motion moments, plus one round at normal speed for the mist.</p>
+
+  <figure class="wide tracer">
+    <a class="media" href="img/tracer-02-lens-pass.webp"><img style="aspect-ratio:1600/800" src="img/tracer-02-lens-pass.webp" width="1600" height="800" loading="lazy" alt="A jungle scene in Uncharted 4: a long tracer streak, white at its head and yellow along its body, crosses the frame toward the camera above Drake crouched behind rock cover; a red laser sight runs beside it."></a>
+    <figcaption>
+      <p><span class="cap-t">Moment 02, a round passing the lens.</span> An enemy round over its whole 9-frame flight, ending in a pass at the lens. The red line is a sniper's laser sight, not a tracer. <span class="cap-src"><a href="https://www.youtube.com/watch?v=qqi_N6M8bgY&amp;t=183s">qqi 183.5–183.8 s</a></span></p>
+      <p class="why">Max picked this as the most accurate reference, so every tracer default is calibrated to it: the streak's length and width at mid-distance, the head, body and tail colours, the halo, the light on nearby surfaces and the start of the smoke trail.</p>
+    </figcaption>
+  </figure>
+
+  <div class="wide pair tracer">
+    <figure>
+      <a class="media" href="img/tracer-01-market.webp"><img style="aspect-ratio:1600/851" src="img/tracer-01-market.webp" width="1600" height="851" loading="lazy" alt="A market in daylight: a tracer crosses side-on from lower left, tapering to a point at the back, past Drake crouched under a green table."></a>
+      <figcaption>
+        <p><span class="cap-t">Moment 01, a near pass side-on.</span> An enemy round crossing the market close to the camera. <span class="cap-src"><a href="https://www.youtube.com/watch?v=qqi_N6M8bgY&amp;t=53s">qqi 53.6–53.9 s</a></span></p>
+        <p class="why">The cleanest anatomy: clipped white over the front 25–35% of the streak, a lemon-to-gold body, an orange tail tapering to a point and only a 2–6 px orange rim. Because the round passes so close, it sets the near-camera case, not the default length. Its first frame starts about 40 px ahead of the muzzle, so ours is born detached from the barrel.</p>
+      </figcaption>
+    </figure>
+    <figure>
+      <a class="media" href="img/tracer-04-turret.webp"><img style="aspect-ratio:1600/808" src="img/tracer-04-turret.webp" width="1600" height="808" loading="lazy" alt="Red dirt and grass by a truck: a tracer with a white core flies toward the camera, with pale smoke trails hanging along the paths of earlier rounds."></a>
+      <figcaption>
+        <p><span class="cap-t">Moment 04, turret fire head-on.</span> Every round from the truck's turret leaves a smoke trail that lingers for over a second of video. <span class="cap-src"><a href="https://www.youtube.com/watch?v=qqi_N6M8bgY&amp;t=251s">qqi 251.9–253.3 s</a></span></p>
+        <p class="why">The research pass had assumed small arms leave no smoke. These trails proved otherwise, so the tracer got a mist layer, lit by the scene and blended over it, never glowing.</p>
+      </figcaption>
+    </figure>
+  </div>
+
+  <figure class="wide tracer">
+    <a class="media" href="img/tracer-mist-life.webp"><img style="aspect-ratio:1852/512" src="img/tracer-mist-life.webp" width="1852" height="512" loading="lazy" alt="Four crops of the same ruined wall at 17, 33, 133 and 333 milliseconds after a shot: a yellow streak, then a pale straight line of mist, then a softer line, then almost nothing."></a>
+    <figcaption>
+      <p><span class="cap-t">One round's mist at normal speed.</span> The same window at four ages, 1080p and 60 fps. <span class="cap-src"><a href="https://www.youtube.com/watch?v=TDpsY0crUjE&amp;t=99s">TDp 99.85–100.62 s</a></span></p>
+      <p class="why">Max asked for a mist that “warps then dissipates, starting as a somewhat straight line”. Frame by frame, it is born whole along the path within 1–2 frames, almost straight, then fades in place: its strength halves about every 11–13 frames and it is gone by about 0.7 s. The build matches that and keeps warp and drift sliders.</p>
+    </figcaption>
+  </figure>
+
+  <figure class="tracer">
+    <a class="media" href="img/tracer-03-from-behind.webp"><img style="aspect-ratio:1400/1064" src="img/tracer-03-from-behind.webp" width="1400" height="1064" loading="lazy" alt="A dusk vehicle chase: the player's orange tracer heads away toward a jeep's front wheel, which flashes orange; another tracer crosses the dirt toward the camera."></a>
+    <figcaption>
+      <p><span class="cap-t">Moment 03, seen from behind.</span> The player's round hits the jeep's wheel while an enemy round comes at the camera. <span class="cap-src"><a href="https://www.youtube.com/watch?v=qqi_N6M8bgY&amp;t=217s">qqi 217.75–218.05 s</a></span></p>
+      <p class="why">From behind, the round looks more orange because its cooler tail is nearest the camera. There is no sign of a separate player colour, so one colour ramp serves every shooter. The round runs straight to the wheel and stops there; the impact appears on the next frame.</p>
+    </figcaption>
+  </figure>
+
+  <h3 class="flame">Muzzle flash</h3>
+  <p class="note">Four moments of the player's own fire, all over the shoulder in slow motion.</p>
+
+  <figure class="wide flame">
+    <a class="media" href="img/muzzle-01-ak.webp"><img style="aspect-ratio:1400/1000" src="img/muzzle-01-ak.webp" width="1400" height="1000" loading="lazy" alt="Over Drake's shoulder in a forest by a pool: an AK-47 fires, with two big white-gold flame lobes either side of the muzzle, a warm haze above and a yellow tracer leaving between them."></a>
+    <figcaption>
+      <p><span class="cap-t">Moment 01, AK-47 in daylight.</span> Frame +2 of the 10 the flash lasts: two flame lobes either side of the muzzle, 941 × 718 px at 4K and clipped white over 48% of that area, with the tracer leaving between them. <span class="cap-src"><a href="https://www.youtube.com/watch?v=qqi_N6M8bgY&amp;t=171s">qqi 171.04–171.52 s</a></span></p>
+      <p class="why">The base. After seeing the strips and crops, Max said: “make the base version the ak one: the others are identically made i think, just with the base modified”. Every default is calibrated to it: the opening puff, the two lobes, the tall flame column, the orange licks, the violet afterglow, the warm haze and the hard cut. The warm haze was later switched off by default at Max's request; the flames carry their own glow instead.</p>
+    </figcaption>
+  </figure>
+
+  <div class="wide trio-fig flame">
+    <figure>
+      <a class="media" href="img/muzzle-02-jet.webp"><img style="aspect-ratio:1260/900" src="img/muzzle-02-jet.webp" width="1260" height="900" loading="lazy" alt="A rifle with a red-dot sight fires on a dark wooden pier: a long white flame jet shoots forward from the muzzle, ending in a brownish ring."></a>
+      <figcaption>
+        <p><span class="cap-t">Moment 02, a forward jet.</span> A rifle with a red-dot sight on a dark, foggy pier: a long forward jet and a downward lobe, the jet ending in an orange-brown smoky ring. <span class="cap-src"><a href="https://www.youtube.com/watch?v=qqi_N6M8bgY&amp;t=84s">qqi 84.95–85.39 s</a></span></p>
+        <p class="why">The same effect with the base settings changed, so it ships as the Rifle jet preset made from the AK, not as a separate build.</p>
+      </figcaption>
+    </figure>
+    <figure>
+      <a class="media" href="img/muzzle-03-x.webp"><img style="aspect-ratio:1400/1000" src="img/muzzle-03-x.webp" width="1400" height="1000" loading="lazy" alt="Night jungle, close behind Drake: a green rifle fires an X-shaped yellow-white flash that lights his hands and the ground."></a>
+      <figcaption>
+        <p><span class="cap-t">Moment 03, an X flash at night.</span> Four lobes in an X, 758 × 651 px, with a yellow bloom that lights Drake's face, hands, the rock and the ground. <span class="cap-src"><a href="https://www.youtube.com/watch?v=qqi_N6M8bgY&amp;t=186s">qqi 186.25–186.70 s</a></span></p>
+        <p class="why">Ships as the X flash preset. Its frames also time the muzzle light: on at +0, peak at +1, about 25–50% of the peak until +5, off at +6.</p>
+      </figcaption>
+    </figure>
+    <figure>
+      <a class="media" href="img/muzzle-04-snow.webp"><img style="aspect-ratio:1200/850" src="img/muzzle-04-snow.webp" width="1200" height="850" loading="lazy" alt="An AK fires over bright snow: a round white puff at the muzzle is outlined by a thick, ragged blue-black rim."></a>
+      <figcaption>
+        <p><span class="cap-t">Moment 04, the same AK over snow.</span> The first flash frame: a round puff, clipped white over 286 × 292 px, outlined by a ragged blue-black rim 20–60 px thick. <span class="cap-src"><a href="https://www.youtube.com/watch?v=qqi_N6M8bgY&amp;t=66s">qqi 66.25 s</a></span></p>
+        <p class="why">The AK's second reference for the opening puff that some shots start with. The rim shows the flash has sooty, alpha-blended edges, not only additive light. It reads only over bright backgrounds and belongs to the secondary layers, which are not in the live build yet.</p>
+      </figcaption>
+    </figure>
+  </div>
+
+  <!-- ============================================================ timing -->
+  <h2 id="timing">Timing: solving the slow-motion factor</h2>
+  <p>The 4K capture is slowed twice. The uploader's part is easy to undo: the stream shows 3 new frames for every 5 video frames, a 60 fps capture played at 60%. The game's Slow Motion cheat is the problem. Its factor, <i>f</i> (game time per rendered frame), is not documented anywhere, and every normal-speed number taken from a slow-motion strip depends on it.</p>
+  <p>The answer was to find the same kind of flash at both speeds. A pistol at normal speed is lit for exactly 4 frames, shrinking to 100, 52, 29 and 23% of its first frame before it vanishes. A pistol in the slow-motion video, a different model but also a round white ball, is lit for exactly 10 frames, shrinking from 100 to 23%, then cut hard. Re-timing the slow curve fits the real one best at <i>f</i> = 0.33–0.42; from 0.45 up, a fifth lit frame appears, which no real shot has.</p>
+
+  <figure class="wide flame">
+    <a class="media" href="img/pistol-both-speeds.webp"><img style="aspect-ratio:1552/728" src="img/pistol-both-speeds.webp" width="1552" height="728" loading="lazy" alt="Two strips of pistol frames. Top: at normal speed, the flash is lit in frames 0 to 3 and gone at frame 4. Bottom: in the slow-motion video, the flash is lit in frames 0 to 9 and gone at frame 10."></a>
+    <figcaption>
+      <p><span class="cap-t">One pistol flash at both speeds.</span> An orange bar marks a lit frame. <span class="cap-src"><a href="https://www.youtube.com/watch?v=TDpsY0crUjE&amp;t=47s">TDp 47.55 s</a> · <a href="https://www.youtube.com/watch?v=qqi_N6M8bgY&amp;t=77s">qqi 77 s</a></span></p>
+    </figcaption>
+  </figure>
+
+  <figure class="wide flame">
+    <div class="media"><video muted loop playsinline autoplay preload="metadata" width="1272" height="530" poster="media/pistol-f-proof-poster.webp" aria-label="Three panels in slow motion on one game clock: the real-speed pistol flash, the slow-motion pistol re-timed at f 0.40, and the same at 0.55, which outlasts the others." tabindex="0"><source src="media/pistol-f-proof.mp4" type="video/mp4"></video></div>
+    <figcaption>
+      <p><span class="cap-t">The same three on one clock, slowed 24×.</span> Real speed, slow motion at 0.40, slow motion at 0.55. <span class="motion-hint">Click or tap to pause.</span></p>
+    </figcaption>
+  </figure>
+
+  <p class="note">The graph that settles it is the first one in <a href="#g-speed">How the visuals were recreated</a>, above.</p>
+
+  <p>A second check agrees. The AK fires every 14 slow-motion frames: that is 643 rpm at <i>f</i> = 0.40, against about 600 for a real AK, and 468 rpm at 0.55. So one slow-motion frame is about 6.7 ms of game time, and the 10-frame rifle flash lasts 55–70 ms. The build's 66 ms sits inside that.</p>
+  <p class="note">An earlier estimate from a falling can gave 0.52–0.66, but it rested on a guessed can size; a 5–6 cm can would agree with 0.40. The tracer was built before this result and converts with 0.55, so its slow-motion timings may run 25–35% long at normal speed. Max approved it by eye at normal speed, and an A/B at 0.40 is waiting on his pick.</p>
+
+  <!-- ============================================================ layers -->
+  <h2 id="layers">Measuring each layer</h2>
+  <p>Each layer was measured on its own: its sampled sRGB colour, its size and the frames it is visible in. Sizes are pixels in the 4K stream. The colours come from compressed YouTube video, so thin coloured edges are smeared and the hex values are approximate.</p>
+
+  <h3 class="tracer">Tracer: five layers seen, two not</h3>
+  <div class="wide tracer">
+    <table class="layers">
+      <thead><tr><th scope="col">Layer</th><th scope="col">Colour (sampled)</th><th scope="col">Size</th><th scope="col">Visible at normal speed</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>Core streak</b><span class="look">Straight, hottest at the front, the back tapering to a point. About 1.5 frames of travel long.</span></td>
+          <td data-label="Colour (sampled)"><span class="sw-line"><span class="sw" style="--c:#FFFFFF"></span><code class="hex">#FFFFFF</code>head</span><span class="sw-line"><span class="sw" style="--c:#FFE452"></span><code class="hex">#FFE452</code><span class="sw" style="--c:#FFFF7F"></span><code class="hex">#FFFF7F</code>body</span><span class="sw-line"><span class="sw" style="--c:#FFEB74"></span><code class="hex">#FFEB74</code><span class="sw" style="--c:#FF955F"></span><code class="hex">#FF955F</code>tail</span></td>
+          <td data-label="Size">Body 12–30 px wide at mid-distance; up to 55 px on the closest passes</td>
+          <td data-label="Visible at normal speed">The whole flight, about 2–6 frames, then one dimmer, oranger frame</td>
+        </tr>
+        <tr>
+          <td><b>Edge fringe</b><span class="look">A thin orange rim on the core.</span></td>
+          <td data-label="Colour (sampled)"><span class="sw" style="--c:#DC8642"></span><code class="hex">#DC8642</code> <span class="sw" style="--c:#C1714B"></span><code class="hex">#C1714B</code></td>
+          <td data-label="Size">2–6 px</td>
+          <td data-label="Visible at normal speed">With the core</td>
+        </tr>
+        <tr>
+          <td><b>Halo</b><span class="look">Warm haze around the core: strong in the dark, almost absent in daylight.</span></td>
+          <td data-label="Colour (sampled)"><span class="sw" style="--c:#8D4022"></span><code class="hex">#8D4022</code> 40 px out</td>
+          <td data-label="Size">About 100–300 px on a near pass in the dark</td>
+          <td data-label="Visible at normal speed">With the core</td>
+        </tr>
+        <tr>
+          <td><b>Mist trail</b><span class="look">Pale smoke, born whole along the path, then fading in place. Lit by the scene, not glowing.</span></td>
+          <td data-label="Colour (sampled)"><span class="sw-line"><span class="sw" style="--c:#D8CFC0"></span><code class="hex">#D8CFC0</code>daylight and shade</span><span class="sw-line"><span class="sw" style="--c:#F3CCB8"></span><code class="hex">#F3CCB8</code>low sun, about 40% opaque</span></td>
+          <td data-label="Size">About 1.1× the streak's width, growing only 10–20%</td>
+          <td data-label="Visible at normal speed">Plainly for about 0.2 s; gone by about 0.7 s</td>
+        </tr>
+        <tr>
+          <td><b>Moving light</b><span class="look">Warm light that travels with the round and lights nearby surfaces.</span></td>
+          <td data-label="Colour (sampled)"><span class="sw-line"><span class="sw" style="--c:#333313"></span><code class="hex">#333313</code><span class="arrow">→</span><span class="sw" style="--c:#84652A"></span><code class="hex">#84652A</code>lit rock</span><span class="sw-line"><span class="sw" style="--c:#C58E59"></span><code class="hex">#C58E59</code>brightest lit pixels</span></td>
+          <td data-label="Size">Reaches surfaces about 150–250 px from the streak</td>
+          <td data-label="Visible at normal speed">About 1 frame per surface it passes</td>
+        </tr>
+        <tr class="off">
+          <td><b>Heat haze, sparks</b></td>
+          <td colspan="3">Not seen. No refraction along any path at 4K, and no sparks riding the streak: sparks belong to impacts and muzzles.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="tracer">
+    <h4>Across the streak</h4>
+    <p class="note" style="margin:0">Moment 01, 45% of the way along, in 4 px steps from edge to edge: a hard, saturated core with only a thin orange rim.</p>
+    <div class="xsec" role="img" aria-label="Six colour steps across the streak: C1714B, F5B94B, FFE452, FFD64E, FFBC41, DC8642"><span style="--c:#C1714B"></span><span style="--c:#F5B94B"></span><span style="--c:#FFE452"></span><span style="--c:#FFD64E"></span><span style="--c:#FFBC41"></span><span style="--c:#DC8642"></span></div>
+    <div class="xsec-k" aria-hidden="true"><code>C1714B</code><code>F5B94B</code><code>FFE452</code><code>FFD64E</code><code>FFBC41</code><code>DC8642</code></div>
+  </div>
+
+  <p class="note tracer">The mist's strength by age is graphed in <a href="#g-mist">How the visuals were recreated</a>, above.</p>
+
+  <figure class="tracer">
+    <a class="media" href="img/tonemap-ab.webp"><img style="aspect-ratio:986/449" src="img/tonemap-ab.webp" width="986" height="449" loading="lazy" alt="Three columns: the game's tracer and AK flash, ours under stock ACES filmic, and ours under per-channel curve E. Under ACES the tracer body is pale gold; under E it is lemon yellow like the game's."></a>
+    <figcaption>
+      <p><span class="cap-t">One more measurement: the colour conversion.</span> The same build under two output curves, with the game for reference. Stock ACES filmic bleeds blue into bright yellow, so the tracer's lemon body read pale gold and the flash read cream.</p>
+      <p class="why">A per-channel filmic curve, E, keeps the saturated golds. Max picked it on 12 Oct, and it runs on all three pages.</p>
+    </figcaption>
+  </figure>
+
+  <h3 class="flame">Muzzle flash: nine layers seen, one not</h3>
+  <p>The flash breaks into nine layers, each on its own clock; a tenth, heat haze, was looked for and not seen. Frame numbers are slow-motion frames from the first flash frame, +0, to the hard cut at +10; one is about 6.7 ms of game time.</p>
+  <div class="wide flame">
+    <table class="layers">
+      <thead><tr><th scope="col">Layer</th><th scope="col">Colour (sampled)</th><th scope="col">Size, over the shoulder</th><th scope="col">Visible</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>Opening flames</b><span class="look">Ragged lobes from the muzzle: a forward jet, two side lobes or an X.</span></td>
+          <td data-label="Colour (sampled)"><span class="sw-line"><span class="sw" style="--c:#FFFFFF"></span><code class="hex">#FFFFFF</code>clipped core</span><span class="sw-line"><span class="sw" style="--c:#FFFFD3"></span><code class="hex">#FFFFD3</code><span class="sw" style="--c:#FFEFB2"></span><code class="hex">#FFEFB2</code>inner bands</span><span class="sw-line"><span class="sw" style="--c:#ECCC97"></span><code class="hex">#ECCC97</code>edge</span></td>
+          <td data-label="Size, over the shoulder">690–940 × 550–720 px, 25–33% of the frame's height</td>
+          <td data-label="Visible">+0 to +1 (+2 for the AK). At normal speed, frame 0 is the largest</td>
+        </tr>
+        <tr>
+          <td><b>Flame column</b><span class="look">A compact ball or an upright column at the muzzle that shrinks and warms.</span></td>
+          <td data-label="Colour (sampled)"><span class="sw" style="--c:#FFFFFF"></span><code class="hex">#FFFFFF</code> <span class="sw" style="--c:#FFC895"></span><code class="hex">#FFC895</code> <span class="sw" style="--c:#FEC492"></span><code class="hex">#FEC492</code></td>
+          <td data-label="Size, over the shoulder">290–320 px across; the AK's column 350–465 px</td>
+          <td data-label="Visible">+1 to +5</td>
+        </tr>
+        <tr>
+          <td><b>Break-up and orange pieces</b><span class="look">The fireball tears into ragged orange clumps; small licks drift forward and up.</span></td>
+          <td data-label="Colour (sampled)"><span class="sw" style="--c:#DD926D"></span><code class="hex">#DD926D</code> <span class="sw" style="--c:#F3A77B"></span><code class="hex">#F3A77B</code> <span class="sw" style="--c:#E2975A"></span><code class="hex">#E2975A</code> <span class="sw" style="--c:#FFBC7E"></span><code class="hex">#FFBC7E</code></td>
+          <td data-label="Size, over the shoulder">A cloud about the fireball's size; licks 40–80 px</td>
+          <td data-label="Visible">+5 to +6</td>
+        </tr>
+        <tr>
+          <td><b>Violet afterglow</b><span class="look">A soft, static lavender glow hugging the muzzle after the flame.</span></td>
+          <td data-label="Colour (sampled)"><span class="sw-line"><span class="sw" style="--c:#BAADCF"></span><code class="hex">#BAADCF</code><span class="sw" style="--c:#C7B1D4"></span><code class="hex">#C7B1D4</code>body</span><span class="sw-line"><span class="sw" style="--c:#E0DAF9"></span><code class="hex">#E0DAF9</code><span class="sw" style="--c:#E9DCF7"></span><code class="hex">#E9DCF7</code>centre</span></td>
+          <td data-label="Size, over the shoulder">Core 220–270 × 230–360 px</td>
+          <td data-label="Visible">+6 to +9, then a hard cut</td>
+        </tr>
+        <tr>
+          <td><b>Warm haze</b><span class="look">A large, soft warm glow around and above the gun.</span><span class="tag">Off by default: Max asked to try removing it</span></td>
+          <td data-label="Colour (sampled)"><span class="sw-line"><span class="sw" style="--c:#373433"></span><code class="hex">#373433</code><span class="arrow">→</span><span class="sw" style="--c:#AB8E68"></span><code class="hex">#AB8E68</code>daylight</span><span class="sw-line"><span class="sw" style="--c:#C2A65C"></span><code class="hex">#C2A65C</code>night</span></td>
+          <td data-label="Size, over the shoulder">About 2–3× the opening flames</td>
+          <td data-label="Visible">The flash's whole life</td>
+        </tr>
+        <tr>
+          <td><b>Muzzle light</b><span class="look">Lights the face, hands, gun, rock and ground; warm yellow turning orange.</span></td>
+          <td data-label="Colour (sampled)"><span class="sw-line"><span class="sw" style="--c:#FFB347"></span><code class="hex">#FFB347</code><span class="sw" style="--c:#FFBD40"></span><code class="hex">#FFBD40</code>peak</span><span class="sw-line"><span class="sw" style="--c:#FF8045"></span><code class="hex">#FF8045</code><span class="sw" style="--c:#FF883B"></span><code class="hex">#FF883B</code>after</span></td>
+          <td data-label="Size, over the shoulder">Reaches surfaces several metres off</td>
+          <td data-label="Visible">Peak at +1, 25–50% until +5, off at +6</td>
+        </tr>
+        <tr>
+          <td><b>Dark rim</b><span class="look">A ragged blue-black edge round the first puff, seen only over bright backgrounds.</span><span class="tag">Not in the live build yet</span></td>
+          <td data-label="Colour (sampled)"><span class="sw" style="--c:#2C2E3D"></span><code class="hex">#2C2E3D</code> <span class="sw" style="--c:#363B53"></span><code class="hex">#363B53</code> <span class="sw" style="--c:#5B5E84"></span><code class="hex">#5B5E84</code> fringe</td>
+          <td data-label="Size, over the shoulder">A 20–60 px band</td>
+          <td data-label="Visible">+0, turning red-black at +1 and +2</td>
+        </tr>
+        <tr>
+          <td><b>Smoke</b><span class="look">Lit, not glowing: a white cloud over sunlit snow, invisible at night.</span><span class="tag">Not in the live build yet</span></td>
+          <td data-label="Colour (sampled)">Near-clipped white on snow</td>
+          <td data-label="Size, over the shoulder">About the fireball's size</td>
+          <td data-label="Visible">16 frames or more after the flame on snow</td>
+        </tr>
+        <tr>
+          <td><b>Embers</b><span class="look">A few tiny orange-yellow specks, in dark scenes only.</span><span class="tag">Not in the live build yet</span></td>
+          <td data-label="Colour (sampled)">Orange-yellow</td>
+          <td data-label="Size, over the shoulder">2–5 px each, 3–6 per shot</td>
+          <td data-label="Visible">+1 to +2</td>
+        </tr>
+        <tr class="off">
+          <td><b>Heat haze</b></td>
+          <td colspan="3">Not seen in any moment.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4 class="flame">The same flash at normal speed, frame by frame</h4>
+  <p class="note" style="margin-bottom:.25rem">Clipped white area is the mean of 5 pistol shots at 60 fps, as the first capture pass measured them; the slow-motion order of the phases is spread over the 4 lit frames. The independent review later re-measured the same 5 shots as 100, 52, 29 and 23%, the figures used in the timing proof.</p>
+  <div class="flame">
+    <table class="frames">
+      <thead><tr><th scope="col">Frame</th><th scope="col">On screen</th><th scope="col">Clipped white area</th><th scope="col">Light</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td>Opening flames or puff at full size</td><td><span class="bar"><i style="--v:100"></i><b>100%</b></span></td><td>100%</td></tr>
+        <tr><td>1</td><td>Compact fireball or column; violet glow growing behind</td><td><span class="bar"><i style="--v:53"></i><b>53%</b></span></td><td>10–50%</td></tr>
+        <tr><td>2</td><td>Break-up: orange pieces; violet glow at full size</td><td><span class="bar"><i style="--v:32"></i><b>32%</b></span></td><td>0–20%</td></tr>
+        <tr><td>3</td><td>Violet glow only</td><td><span class="bar"><i style="--v:24"></i><b>24%</b></span></td><td>off</td></tr>
+        <tr><td>4</td><td>Nothing: a hard cut</td><td><span class="bar"><i class="zero" style="--v:0"></i><b>0%</b></span></td><td>off</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4 class="flame" style="margin-top:2.5rem">Edges: defined flames and soft glare</h4>
+  <p>After the first normal-speed GIFs, Max saw two kinds of element in the game's flash: “the blurry ones which are like camera glare and the defined flames”. So the edges were measured too: brightness across the flame's outline, from 10 px inside to 30 px outside. The +1 graph is in <a href="#g-edge">How the visuals were recreated</a>, above; +2 and +4 are here.</p>
+  <div class="wide quad flame">
+      <a class="media" href="img/chart-edge-2.webp"><img style="aspect-ratio:620/330" src="img/chart-edge-2.webp" width="620" height="330" loading="lazy" alt="Edge brightness profile at tile +2: the game's edge is still softer than ours, by less."></a>
+      <a class="media" href="img/chart-edge-4.webp"><img style="aspect-ratio:620/330" src="img/chart-edge-4.webp" width="620" height="330" loading="lazy" alt="Edge brightness profile at tile +4, the column: the game's and our curves nearly overlap."></a>
+    <div class="quad-note">
+      <p>An independent review measured pass 3 (green, labelled "ours (snapshot)") against the game (orange). The opening flames were the gap: at +1 the game's edge is a soft, glowing puff 26.5 px wide, where pass 3 was a crisp 10 px cut-out; at +2, 13.5 px against 10.5. The column at +4 already matched, 10.5 px against 10.0. Pass 4 gave the opening flames their own glow and measures 21.0 px at +1 and 15.5 px at +2, with the column still crisp inside a faint, wide glow.</p>
+    </div>
+  </div>
+
+  <figure class="mid flame">
+    <a class="media" href="img/chart-envelope.webp"><img style="aspect-ratio:960/380" src="img/chart-envelope.webp" width="960" height="380" loading="lazy" alt="Chart of flash area per 60 fps frame as a percentage of frame 0: the game's pistol and SMG fall from frame 0, while pass 3's six shots rise above 100% in frames 1 and 2."></a>
+    <figcaption>
+      <p><span class="cap-t">When the flash is biggest at normal speed.</span> All 14 real-speed game shots are biggest in their first frame. Pass 3's shots swelled to 118–233% of frame 0 one or two frames later, which led to pass 4's burst-first shots. The green lines are pass 3, labelled "ours now". The slow-motion graph of the same flash, tile by tile, is in <a href="#g-phases">How the visuals were recreated</a>, above.</p>
+    </figcaption>
+  </figure>
+
+  <!-- ============================================================ process -->
+  <h2 id="process">How it got better</h2>
+  <p>Each effect is one adjustable build with every layer exposed as a control. The AK flash is the base, and the other looks are presets made from it. The work ran in stages, and each stage ended with side-by-side boards against the game and GIFs at normal speed, so Max could judge how it feels, not only how it looks, before the next one started.</p>
+  <p>The builder never grades its own work: an independent critic re-measures each pass with the same tools. Every fix goes into a symptom → cause table, and layers are switched off one at a time before any one of them gets the blame. That is how too much blue-white glare at +6 and +7 turned out to be the violet afterglow, not the glare.</p>
+
+  <h4 class="flame">The muzzle flash's match score</h4>
+  <p class="note" style="margin:0">One error summed over the flash's size, colour bands, clipped-white curve, veil, haze, shape and colour against the AK frames. Lower is closer.</p>
+  <ul class="scores flame" aria-label="Match score by pass">
+    <li><span class="s-l"><b>Pass 1</b></span><span class="s-b" style="--v:5.35"></span><span class="s-v">5.35</span></li>
+    <li><span class="s-l"><b>Pass 2</b></span><span class="s-b" style="--v:1.57"></span><span class="s-v">1.57</span></li>
+    <li><span class="s-l"><b>Pass 3</b></span><span class="s-b" style="--v:1.474"></span><span class="s-v">1.474</span></li>
+    <li><span class="s-l"><b>Pass 3</b>, haze off</span><span class="s-b alt" style="--v:4.48"></span><span class="s-v">4.480</span></li>
+    <li><span class="s-l"><b>Pass 4</b>, haze off</span><span class="s-b alt" style="--v:4.269"></span><span class="s-v">4.269</span></li>
+  </ul>
+  <p class="note">After pass 3 the warm haze was switched off at Max's request, and the score counts the game's haze, so from then on it was compared with the haze off. Passes 1 and 2 were scored under stock ACES and later passes under curve E; pass 2 re-scored under E is 1.655.</p>
+</main>
+
+<footer>
+  <p>Footage: Uncharted 4: A Thief's End (Naughty Dog / Sony Interactive Entertainment), from YouTube captures linked above. Frames are shown for reference and comparison.</p>
+  <p>Not affiliated with or endorsed by Naughty Dog or Sony. Every sprite in the effects is drawn by the page; the game frames here are reference only.</p>
+  <p>Try the <a href="../u4-range-combined.html">live range</a>, read the full <a href="https://github.com/mbschenked/FunArtTests/blob/main/vfx-studies/refs/tracer-spec.md">tracer spec</a> and <a href="https://github.com/mbschenked/FunArtTests/blob/main/vfx-studies/refs/muzzle-flash-spec.md">muzzle flash spec</a>, or go back to <a href="../../tools/">Game feel tools</a>. The specs were written while the frames were private; a curated, credited set is now published on this page, and the effects' sprites are still all our own.</p>
+</footer>
+
+<script>
+(function () {
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  document.querySelectorAll('video').forEach(function (v) {
+    if (reduce) {
+      v.removeAttribute('autoplay');
+      v.autoplay = false;
+      v.pause();
+      v.controls = true;
+      v.removeAttribute('tabindex');
+      return;
+    }
+    function toggle() { if (v.paused) { v.play(); } else { v.pause(); } }
+    v.addEventListener('click', toggle);
+    v.addEventListener('keydown', function (e) {
+      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(); }
+    });
+  });
+})();
+</script>
+</body>
+</html>

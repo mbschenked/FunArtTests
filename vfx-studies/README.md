@@ -4,7 +4,7 @@ Real-time browser studies of two effects from *Uncharted 4: A Thief's End* (Naug
 
 Live: **https://mbschenked.github.io/FunArtTests/vfx-studies/u4-range-combined.html**
 
-Visual homage; not affiliated with or endorsed by Naughty Dog or Sony. No game assets are used: every flame, glare and mist texture is drawn by the page when it loads. The gameplay frames the effects were matched against stay private (`refs/frames/` is git-ignored).
+Visual homage; not affiliated with or endorsed by Naughty Dog or Sony. The effects use no game assets: every flame, glare and mist texture is drawn by the page when it loads. A curated set of the reference frames they were matched against, with the measurements, is on the [data page](data/).
 
 ## The pages
 
@@ -13,6 +13,7 @@ Visual homage; not affiliated with or endorsed by Naughty Dog or Sony. No game a
 | [Combined range](u4-range-combined.html) | Both effects on every shot. Generated from the two study pages by `tools/combine.py`; don't edit it by hand. |
 | [Muzzle flash](u4-muzzle-flash.html) | Soft glowing opening flames, a white column that tears into hot pieces, a cream-peach rim and a late glare. Some shots open full size and shrink, the rest open with a small puff and peak later; a slider sets the share. Presets: U4 AK (base), Rifle jet (02), X flash (03), Cinematic. |
 | [Bullet tracer](u4-tracer.html) | A contrasty streak with a quick hand-off, a mist trail that fades in place behind the head, and a warm light that travels with each round. Presets: U4 reference, Cinematic. |
+| [How the VFX were matched](data/) | The curated reference frames, the measurements and the timing proof, with the live versions set beside the game. |
 | [Range](range.html) | The shared test range the studies are built on: placeholder shooter and rifle, targets, cameras, lighting, bloom and tone mapping, with an empty effect slot. |
 
 Every element of an effect is a control in the side panel, with presets and **Copy settings**.
@@ -49,4 +50,4 @@ u4-range-combined.html?preflight&hud=0&cam=hero&look=day&shot=0&t=0.012
 - `refs/tracer-spec.md` and `refs/muzzle-flash-spec.md`: what each effect was matched against, the measurements, the art direction and what is still open.
 - `refs/ai-vfx-scouting.md`: a survey of AI-assisted VFX techniques and which ones these builds use.
 
-Work in progress: the tracer's moving light (stage 2) is approved; the muzzle flash's fourth pass is in review.
+Work in progress: the tracer's moving light (stage 2) is approved and live; the muzzle flash's fourth pass is live, and later passes (5, 5b and 5c) are built or in progress and not live yet.

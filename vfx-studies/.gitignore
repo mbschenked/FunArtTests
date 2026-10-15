@@ -1,2 +1,2 @@
-# Private reference frames (game screenshots) and verification renders: never commit
+# Full reference frames (game screenshots) and verification renders: never commit. A curated, credited set is published in data/img.
 refs/frames/
