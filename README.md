@@ -1,6 +1,8 @@
 # FunArtTests
 
-A pile of small web-based art experiments by [Max Schenk](https://github.com/mbschenked). Each subfolder is one self-contained study — open `index.html` to view, or use the live links below.
+A pile of small web-based art experiments by [Max Schenk](https://github.com/mbschenked). Each study folder is self-contained — open `index.html` to view, or use the live links below.
+
+**Tools page:** [mbschenked.github.io/FunArtTests/tools/](https://mbschenked.github.io/FunArtTests/tools/) collects the interactive tools (Camera Shake Lab, Trajectory Sandbox, the Uncharted 4 VFX range) on one page you can share. It lives in [`tools/`](tools/) and only links to the study folders.
 
 ## Studies
 
@@ -27,6 +29,14 @@ A playable Sekiro-style boss duel — **Micheal vs Arelius** — porting the com
 - **Posture combat** — poise fills to break, deflect / counter / finisher, paired clash reactions, 0.1s hitstop
 - **Two-phase boss AI** — weighted attacks with pity counters, escalating deflects vs spam, giant-sword throw → teleport mixup
 - **Zero assets** — procedural vector swordsmen, keyframed FK poses, WebAudio oscillator SFX
+
+### [`trajectory-sandbox/`](trajectory-sandbox/) &nbsp; · &nbsp; [▶ live](https://mbschenked.github.io/FunArtTests/trajectory-sandbox/)
+
+A sandbox for the flight path of a Death From Above takedown, the leap from a ledge onto an enemy below:
+
+- **Draggable curve** — Control points, play-back at 1× / 0.5× / 0.25×, undo and redo
+- **One equation for every jump** — four reference jumps (near / far × low / high drop) blend by distance and drop
+- **Unreal export** — Curve Vector `.csv` for one Span, or all four references on shared keys
 
 ### [`vfx-studies/`](vfx-studies/) &nbsp; · &nbsp; [▶ live](https://mbschenked.github.io/FunArtTests/vfx-studies/u4-range-combined.html)
 
