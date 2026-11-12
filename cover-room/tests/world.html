@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Collision sandbox</title>
+<link rel="icon" href="data:,">
+<!-- Visual test page for src/core/world.js (A2). ?preflight runs scripted checks, then sets the title to
+     "PREFLIGHT READY" and exposes window.__preflight = {ok, checks}. Headless only: tools/shoot.mjs. -->
+<style>
+  :root { color-scheme: dark; --bg: #0d1014; --panel: rgba(13, 17, 23, 0.86); --line: #243040; --ink: #d8dee6; --dim: #8a96a3; --ok: #5fd38d; --bad: #ff5d6c; --acc: #37d6ff; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; overflow: hidden; }
+  canvas { display: block; }
+  #hud { position: fixed; left: 12px; top: 12px; max-width: calc(100vw - 48px); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; white-space: pre; pointer-events: none; }
+  #keys { position: fixed; left: 12px; bottom: 12px; max-width: calc(100vw - 48px); color: var(--dim); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+  .k { color: var(--acc); } .ok { color: var(--ok); } .bad { color: var(--bad); }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three":         "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "lil-gui":       "https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.min.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="hud"></div>
+<div id="keys"><span class="k">WASD</span> move · <span class="k">Shift</span> 9 m/s · <span class="k">Space</span> jump · <span class="k">right-drag / Q E</span> camera · <span class="k">wheel</span> zoom · <span class="k">click</span> raycast + LOS · <span class="k">G</span> grenade · <span class="k">H</span> wireframes · <span class="k">R</span> reset</div>
+<script type="module">
+import * as THREE from 'three';
+import { createWorld, bounce } from '../src/core/world.js';
+
+const PREFLIGHT = new URLSearchParams(location.search).has('preflight');
+const FROZEN = new URLSearchParams(location.search).has('view'); // ?preflight&view=rig: hold the scripted pose for a screenshot
+const DT = 1 / 60;
+const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+
+// ---------------------------------------------------------------- renderer, scene
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d1014);
+scene.fog = new THREE.Fog(0x0d1014, 32, 70);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.05, 200);
+scene.add(new THREE.HemisphereLight(0xc4d6ff, 0x2a2018, 1.1));
+const sun = new THREE.DirectionalLight(0xfff1dc, 1.8);
+sun.position.set(-9, 16, -7);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -18, right: 18, top: 14, bottom: -14, near: 1, far: 60 });
+scene.add(sun);
+addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
+
+// ---------------------------------------------------------------- world: a 30 x 22 m box maze
+const world = createWorld({ Vector3: THREE.Vector3, cellSize: 2 });
+const COLORS = { floor: 0x262c34, wall: 0x667080, low: 0xa08a68, crate: 0x8c6a43, step: 0x3aa39a, block: 0xb4533a, yawed: 0xd08a3a, pillar: 0x7d8796, stair: 0x5c8fb0 };
+function box(center, size, tag, yaw = 0) {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(size[0], size[1], size[2]), new THREE.MeshStandardMaterial({ color: COLORS[tag], roughness: 0.92 }));
+  mesh.position.set(center[0], center[1], center[2]);
+  mesh.rotation.y = yaw;                      // same yaw sense as the collider
+  mesh.castShadow = tag !== 'floor'; mesh.receiveShadow = true;
+  scene.add(mesh);
+  return world.addBox({ center, size, yaw }, { tags: [tag], material: tag, owner: mesh });
+}
+box([0, -0.5, 0], [30, 1, 22], 'floor');
+box([0, 1.25, 11.25], [31, 2.5, 0.5], 'wall'); box([0, 1.25, -11.25], [31, 2.5, 0.5], 'wall');
+box([15.25, 1.25, 0], [0.5, 2.5, 22], 'wall'); box([-15.25, 1.25, 0], [0.5, 2.5, 22], 'wall');
+box([-6, 1, 2], [0.2, 2, 8], 'wall');                 // 0.2 m wall: try to tunnel at 9 m/s
+box([-2, 1, 6], [8, 2, 0.4], 'wall');
+box([4, 1, -4], [0.4, 2, 10], 'wall');
+box([8, 1, 5], [6, 2, 0.4], 'yawed', Math.PI / 4);    // 45-degree slide
+box([-9.5, 1, -5], [5, 2, 0.4], 'yawed', Math.PI / 6);
+box([0, 0.5, -6], [4, 1, 0.5], 'low');                // low cover, 1.0 m
+box([1, 1.25, -6], [1, 0.5, 0.5], 'crate');           // crate stacked on it: stack top 1.5
+box([-12, 0.15, 3], [2, 0.3, 2.5], 'step');           // 0.3 m: steps up
+box([-8.5, 0.2, 3], [2, 0.4, 2.5], 'block');          // 0.4 m: blocks
+box([9, 0.1, -7], [4, 0.2, 4], 'step');               // 0.2 m platform: snap down off it
+box([12.6, 0.25, -7], [2.5, 0.5, 4], 'block');        // 0.5 m platform: fall off it
+box([6, 1, 8], [0.8, 2, 0.8], 'pillar');
+box([-4, 1, -8.5], [0.8, 2, 0.8], 'pillar', 0.4);
+for (let i = 0; i < 4; i++) { const h = 0.25 * (i + 1); box([-13.7 + i * 0.6, h / 2, -8.5], [0.6, h, 2], 'stair'); }
+box([-10.3, 0.5, -8.5], [2, 1, 2], 'stair');          // 1.0 m landing at the top of the stairs
+
+// ---------------------------------------------------------------- actors
+const CAPSULE_GEO = new THREE.CapsuleGeometry(0.35, 1.1, 6, 14);
+function capsuleActor(id, x, z, color) {
+  const a = { id, team: 'enemy', pos: V(x, 0, z), vel: V(), yaw: 0, height: 1.8, radius: 0.35, health: 100, maxHealth: 100, alive: true, rig: null, state: {} };
+  a.mesh = new THREE.Mesh(CAPSULE_GEO, new THREE.MeshStandardMaterial({ color, roughness: 0.6 }));
+  a.mesh.castShadow = true;
+  scene.add(a.mesh);
+  return a;
+}
+const player = capsuleActor('player', 0, -9, 0x4fa3ff);
+player.team = 'player';
+const nose = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.3, 10).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+nose.position.set(0, 0.45, 0.4); player.mesh.add(nose);
+const dummyA = capsuleActor('dummyA', 3, 2, 0xd0605a);
+const dummyB = capsuleActor('dummyB', -3, -3, 0xd0605a);
+world.addHitboxes(dummyA, null);                      // no rig: fallback capsule
+world.addHitboxes(dummyB, null);
+
+// A stand-in rig with the contract shape (rig.bones, rig.getBoneWorld): THREE bones, animated in code.
+// Its visible limbs are capsules the same size as its hitboxes, so the wireframes should sit exactly on them.
+const PARTS = [
+  { bone: 'pelvis', a: [0, 0, 0], b: [0, 0.2, 0], radius: 0.16, part: 'torso' },
+  { bone: 'chest', a: [0, 0, 0], b: [0, 0.22, 0], radius: 0.19, part: 'torso' },
+  { bone: 'head', a: [0, 0.06, 0], b: [0, 0.16, 0], radius: 0.12, part: 'head' },
+  { bone: 'shoulder_l', a: [0, 0, 0], b: [0, -0.55, 0], radius: 0.06, part: 'limb' },
+  { bone: 'shoulder_r', a: [0, 0, 0], b: [0, -0.55, 0], radius: 0.06, part: 'limb' },
+  { bone: 'hip_l', a: [0, -0.05, 0], b: [0, -0.8, 0], radius: 0.08, part: 'limb' },
+  { bone: 'hip_r', a: [0, -0.05, 0], b: [0, -0.8, 0], radius: 0.08, part: 'limb' },
+];
+function makeRig() {
+  const root = new THREE.Group();
+  const bones = {};
+  const mk = (name, parent, x, y, z) => { const b = new THREE.Bone(); b.name = name; b.position.set(x, y, z); parent.add(b); bones[name] = b; return b; };
+  const pelvis = mk('pelvis', root, 0, 0.95, 0);
+  const spine = mk('spine', pelvis, 0, 0.2, 0);
+  const chest = mk('chest', spine, 0, 0.2, 0);
+  mk('head', chest, 0, 0.3, 0);
+  mk('shoulder_l', chest, 0.25, 0.2, 0); mk('shoulder_r', chest, -0.25, 0.2, 0);
+  mk('hip_l', pelvis, 0.1, 0, 0); mk('hip_r', pelvis, -0.1, 0, 0);
+  const mat = new THREE.MeshStandardMaterial({ color: 0xc7a46a, roughness: 0.55 });
+  for (const p of PARTS) {
+    const len = Math.abs(p.b[1] - p.a[1]);
+    const m = new THREE.Mesh(new THREE.CapsuleGeometry(p.radius, len, 4, 12), mat);
+    m.position.set(0, (p.a[1] + p.b[1]) / 2, 0);
+    m.castShadow = true;
+    bones[p.bone].add(m);
+  }
+  scene.add(root);
+  return { root, bones, getBoneWorld(name, out) { return bones[name].getWorldPosition(out); } };
+}
+const rig = makeRig();
+const rigged = { id: 'rigged', team: 'enemy', pos: rig.root.position, vel: V(), yaw: 0, height: 1.8, radius: 0.35, alive: true, rig, state: {} };
+rigged.pos.set(7, 0, -1);
+world.addHitboxes(rigged, PARTS);
+function poseRig(t) {
+  rig.root.rotation.y = 0.6 * Math.sin(t * 0.5);
+  rig.bones.spine.rotation.x = 0.35 * Math.sin(t * 1.3);
+  rig.bones.shoulder_l.rotation.z = 0.3 + 0.5 * Math.sin(t * 2.0);
+  rig.bones.shoulder_r.rotation.x = -1.2 * (0.5 + 0.5 * Math.sin(t * 1.7)); // raises an arm forward
+  rig.bones.hip_l.rotation.x = 0.4 * Math.sin(t * 2.2);
+  rig.bones.hip_r.rotation.x = -0.4 * Math.sin(t * 2.2);
+}
+
+// ---------------------------------------------------------------- debug wireframes, markers
+const debug = world.debugMeshes(THREE, scene, { colorFn: (c) => (c.tags.has('floor') ? 0x2b5566 : c.tags.has('yawed') ? 0xffb347 : 0x37d6ff) });
+const marker = new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffe066 }));
+marker.visible = false; scene.add(marker);
+const normalArrow = new THREE.ArrowHelper(V(0, 1, 0), V(), 0.6, 0xffe066, 0.15, 0.08);
+normalArrow.visible = false; scene.add(normalArrow);
+const losGeo = new THREE.BufferGeometry().setFromPoints([V(), V()]);
+const losLine = new THREE.Line(losGeo, new THREE.LineBasicMaterial({ color: 0x5fd38d }));
+losLine.visible = false; scene.add(losLine);
+const probeDot = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 6), new THREE.MeshBasicMaterial({ color: 0xff7ad9 }));
+scene.add(probeDot);
+
+// ---------------------------------------------------------------- player + grenade sim (fixed step)
+const SPAWN = V(0, 0, -9);
+const keys = new Set();
+let camYaw = 0, camPitch = 0.42, camDist = 6.5;
+let vy = 0, grounded = true, simTime = 0, lastMove = null, probe = null;
+const facing = V(0, 0, 1), delta = V(), tmp = V(), eye = V();
+const probeHit = world.makeHit(), clickHit = world.makeHit();
+let clickInfo = null, losClear = null;
+const stepMs = [];
+
+const grenades = [];
+const GR = 0.06, gGeo = new THREE.SphereGeometry(GR, 12, 8), gMat = new THREE.MeshStandardMaterial({ color: 0x9be564, roughness: 0.4 });
+function throwGrenade(pos, vel) {
+  const g = { pos: pos.clone(), vel: vel.clone(), rest: false, bounces: 0, mesh: new THREE.Mesh(gGeo, gMat), trail: [], line: null };
+  g.mesh.castShadow = true; scene.add(g.mesh);
+  g.line = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(600 * 3), 3)), new THREE.LineBasicMaterial({ color: 0x9be564, transparent: true, opacity: 0.6 }));
+  g.line.frustumCulled = false; scene.add(g.line);
+  grenades.push(g);
+  if (grenades.length > 6) { const old = grenades.shift(); scene.remove(old.mesh, old.line); }
+  return g;
+}
+const gTo = V();
+function stepGrenade(g) {
+  if (g.rest) return;
+  g.vel.y -= 9.81 * DT;
+  let remaining = DT;
+  for (let k = 0; k < 4 && remaining > 1e-7; k++) {
+    gTo.copy(g.pos).addScaledVector(g.vel, remaining);
+    const hit = world.sweepSphere(g.pos, gTo, GR, { hitActors: true });
+    if (!hit) { g.pos.copy(gTo); break; }
+    g.pos.copy(hit.center).addScaledVector(hit.normal, 1e-4);
+    remaining *= 1 - hit.t;
+    bounce(g.vel, hit.normal, 0.35, 0.25);
+    g.bounces++;
+  }
+  if (g.vel.lengthSq() < 0.01) { const gy = world.groundAt(g.pos.x, g.pos.z, g.pos.y); if (gy !== null && g.pos.y - GR - gy < 0.005) { g.rest = true; g.vel.set(0, 0, 0); } }
+  if (g.trail.length < 600) g.trail.push(g.pos.x, g.pos.y, g.pos.z);
+}
+
+function simStep(inp) {
+  const t0 = performance.now();
+  simTime += DT;
+  poseRig(simTime);
+  world.updateHitboxes();
+  // camera-relative move: forward f = (sin yaw, 0, cos yaw), right = (-f.z, 0, f.x)
+  let mx = inp.x, my = inp.y;
+  const ml = Math.hypot(mx, my);
+  if (ml > 1) { mx /= ml; my /= ml; }
+  const fx = Math.sin(camYaw), fz = Math.cos(camYaw);
+  const wx = fx * my - fz * mx, wz = fz * my + fx * mx;
+  const speed = inp.sprint ? 9 : 5.5;
+  if (grounded && inp.jump) vy = 5.2; else if (!grounded) vy -= 9.81 * DT;
+  delta.set(wx * speed * DT, vy * DT, wz * speed * DT);
+  const res = world.moveCapsule(player, delta);
+  grounded = res.grounded;
+  if (grounded && vy < 0) vy = 0;
+  if (res.hitCeiling && vy > 0) vy = 0;
+  if (ml > 0.1) { facing.set(wx, 0, wz).normalize(); player.yaw = Math.atan2(wx, wz); }
+  lastMove = { grounded: res.grounded, groundY: res.groundY, ground: res.ground, hitWall: res.hitWall, wallNormal: res.wallNormal.clone(), stepped: res.stepped, hitCeiling: res.hitCeiling };
+  if (player.pos.y < -10) resetPlayer();
+  probe = world.probeWall(player.pos, facing, 1.2, 0.5, { out: probeHit });
+  for (const g of grenades) stepGrenade(g);
+  stepMs.push(performance.now() - t0); if (stepMs.length > 120) stepMs.shift();
+}
+function resetPlayer() { player.pos.copy(SPAWN); vy = 0; grounded = true; facing.set(0, 0, 1); player.yaw = 0; }
+
+// ---------------------------------------------------------------- input
+addEventListener('keydown', (e) => {
+  keys.add(e.code);
+  if (e.code === 'KeyH') debug.toggle();
+  if (e.code === 'KeyR') resetPlayer();
+  if (e.code === 'KeyG') {
+    const f = V(Math.sin(camYaw), 0, Math.cos(camYaw));
+    throwGrenade(V(player.pos.x + f.x * 0.4, player.pos.y + 1.5, player.pos.z + f.z * 0.4), f.multiplyScalar(8.5).add(V(0, 4.2, 0)));
+  }
+});
+addEventListener('keyup', (e) => keys.delete(e.code));
+addEventListener('blur', () => keys.clear());
+addEventListener('contextmenu', (e) => e.preventDefault());
+addEventListener('wheel', (e) => { camDist = THREE.MathUtils.clamp(camDist * (e.deltaY > 0 ? 1.1 : 0.9), 2, 25); });
+let dragging = false;
+addEventListener('pointerdown', (e) => {
+  if (e.button === 2) { dragging = true; return; }
+  if (e.button === 0) clickRay(e.clientX, e.clientY);
+});
+addEventListener('pointerup', () => { dragging = false; });
+addEventListener('pointermove', (e) => {
+  if (!dragging) return;
+  camYaw -= e.movementX * 0.005;
+  camPitch = THREE.MathUtils.clamp(camPitch + e.movementY * 0.004, -0.2, 1.3);
+});
+function readInput() {
+  return {
+    x: (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0),
+    y: (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0),
+    jump: keys.has('Space'), sprint: keys.has('ShiftLeft') || keys.has('ShiftRight'),
+  };
+}
+
+// Click: ray from the camera through the cursor (THREE.Raycaster only builds the ray; world.js does the hit),
+// then a line-of-sight check from the player's eye to just off the hit surface.
+const raycaster = new THREE.Raycaster(), ndc = new THREE.Vector2();
+function clickRay(x, y) {
+  ndc.set((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  const hit = world.raycast(raycaster.ray.origin, raycaster.ray.direction, 200, { out: clickHit, ignore: player });
+  if (!hit) { clickInfo = null; marker.visible = normalArrow.visible = losLine.visible = false; return null; }
+  marker.position.copy(hit.point); marker.visible = true;
+  normalArrow.position.copy(hit.point); normalArrow.setDirection(hit.normal); normalArrow.visible = true;
+  eye.set(player.pos.x, player.pos.y + 1.6, player.pos.z);
+  tmp.copy(hit.point).addScaledVector(hit.normal, 0.02);
+  losClear = world.lineOfSight(eye, tmp, { ignore: player, hitActors: true });
+  losGeo.setFromPoints([eye, tmp]);
+  losLine.material.color.set(losClear ? 0x5fd38d : 0xff5d6c); losLine.visible = true;
+  clickInfo = { dist: hit.dist, point: hit.point.clone(), normal: hit.normal.clone(), what: hit.actor ? `actor ${hit.actor.id} · ${hit.part}` : `box #${hit.collider.id} [${[...hit.collider.tags].join(',')}]` };
+  return hit;
+}
+
+// ---------------------------------------------------------------- frame
+const camTarget = V(), camWant = V();
+function placeCamera() {
+  camTarget.set(player.pos.x, player.pos.y + 1.5, player.pos.z);
+  const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
+  camWant.set(camTarget.x - Math.sin(camYaw) * cp * camDist, camTarget.y + sp * camDist, camTarget.z - Math.cos(camYaw) * cp * camDist);
+  const hit = world.sweepSphere(camTarget, camWant, 0.2);   // camera collision: the sweep stops at the first wall
+  camera.position.copy(hit ? hit.center : camWant);
+  camera.lookAt(camTarget);
+}
+const fmt = (n) => (n === null || n === undefined ? '—' : (Math.abs(n) === Infinity ? (n > 0 ? '+inf' : '-inf') : n.toFixed(3)));
+const fv = (v) => `(${fmt(v.x)}, ${fmt(v.y)}, ${fmt(v.z)})`;
+const hud = document.getElementById('hud');
+function drawHud() {
+  const m = lastMove || {};
+  const avg = stepMs.length ? stepMs.reduce((a, b) => a + b, 0) / stepMs.length : 0;
+  const st = world.stats();
+  let s = `<span class="k">player</span> ${fv(player.pos)}  ${m.grounded ? '<span class="ok">grounded</span>' : '<span class="bad">airborne</span>'}${m.stepped ? ' · stepped' : ''}${m.hitCeiling ? ' · ceiling' : ''}\n`;
+  s += `<span class="k">ground</span> y ${fmt(m.groundY)}  ${m.ground ? '#' + m.ground.id + ' [' + [...m.ground.tags].join(',') + ']' : ''}\n`;
+  s += `<span class="k">wall</span>   ${m.hitWall ? 'hit  n ' + fv(m.wallNormal) : 'none'}\n`;
+  s += `<span class="k">probe</span>  ${probe ? `dist ${fmt(probe.dist)}  n ${fv(probe.normal)}  top ${fmt(probe.top)} (box ${fmt(probe.boxTop)})` : 'nothing within 1.2 m'}\n`;
+  s += `<span class="k">click</span>  ${clickInfo ? `${clickInfo.what}  dist ${fmt(clickInfo.dist)}\n       n ${fv(clickInfo.normal)}  LOS from eye ${losClear ? '<span class="ok">clear</span>' : '<span class="bad">blocked</span>'}` : 'click anything'}\n`;
+  s += `<span class="k">grenades</span> ${grenades.length}  ${grenades.length ? 'last: ' + grenades[grenades.length - 1].bounces + ' contacts' + (grenades[grenades.length - 1].rest ? ', at rest' : '') : ''}\n`;
+  s += `<span class="k">world</span>  ${st.colliders} boxes · ${st.cells} cells · ${st.actors} actors / ${st.capsules} capsules · sim step ${avg.toFixed(3)} ms · wireframes ${debug.group.visible ? 'on' : 'off'} (H)`;
+  if (window.__preflight) s += `\n<span class="k">preflight</span> ${window.__preflight.checks.filter((c) => c.ok).length}/${window.__preflight.checks.length} ${window.__preflight.ok ? '<span class="ok">ok</span>' : '<span class="bad">FAILED</span>'}`;
+  hud.innerHTML = s;
+}
+function syncMeshes() {
+  for (const a of [player, dummyA, dummyB]) { a.mesh.position.set(a.pos.x, a.pos.y + 0.9, a.pos.z); a.mesh.rotation.y = a.yaw; }
+  if (probe) { probeDot.position.copy(probe.point); probeDot.visible = true; } else probeDot.visible = false;
+  for (const g of grenades) {
+    g.mesh.position.copy(g.pos);
+    g.line.geometry.attributes.position.array.set(g.trail);
+    g.line.geometry.attributes.position.needsUpdate = true;
+    g.line.geometry.setDrawRange(0, g.trail.length / 3);
+  }
+}
+function render() {
+  syncMeshes();
+  placeCamera();
+  debug.update();
+  drawHud();
+  renderer.render(scene, camera);
+}
+let acc = 0, last = performance.now();
+function loop(now) {
+  acc += Math.min((now - last) / 1000, 0.25); last = now;
+  let n = 0;
+  while (acc >= DT && n < 4 && !FROZEN) { simStep(readInput()); acc -= DT; n++; }
+  if (n === 4) acc = 0;
+  render();
+  requestAnimationFrame(loop);
+}
+
+// ---------------------------------------------------------------- preflight (expected values from the layout above)
+function runPreflight() {
+  const checks = [];
+  const ok = (name, cond, info) => checks.push({ name, ok: !!cond, info });
+  const run = (inp, n) => { for (let i = 0; i < n; i++) simStep(inp); };
+  const fwd = { x: 0, y: 1, jump: false, sprint: false }, fast = { ...fwd, sprint: true };
+  camYaw = 0; // forward = +z during the scripted runs
+
+  // 1. low wall (z -6.25..-5.75, top 1.0) seen from z = -9 at 0.5 m: its face is 2.75 m away
+  let h = world.raycast(V(0, 0.5, -9), V(0, 0, 1), 50);
+  ok('ray hits the low wall face at 2.75 m', h && Math.abs(h.dist - 2.75) < 1e-9 && h.collider.tags.has('low'), h && h.dist);
+  // 2. the rigged dummy's head, read from real THREE bone matrices. Pose t=0: no yaw, no bend, so the head capsule
+  //    axis is vertical through the head bone; a ray through its midpoint from 3 m away hits at 3 - 0.12 m.
+  poseRig(0); world.updateHitboxes();
+  const head = rig.bones.head.getWorldPosition(V());
+  h = world.raycast(V(head.x, head.y + 0.11, head.z - 3), V(0, 0, 1), 10);
+  ok('ray hits the rigged head capsule at 2.88 m', h && h.actor === rigged && h.part === 'head' && Math.abs(h.dist - 2.88) < 1e-6, h && `${h.part} ${h.dist}`);
+  // 3. walk into the 1.0 m low wall: stop r = 0.35 short of z = -6.25 (minus 1 mm skin)
+  player.pos.set(0, 0, -9); vy = 0; grounded = true;
+  run(fwd, 60);
+  ok('walk into low wall stops at z = -6.6', Math.abs(player.pos.z + 6.6) <= 0.0015 && player.pos.y === 0, fv(player.pos));
+  // 4. 0.3 m step (x -13..-11, z 1.75..4.25): walking +z 3 m from z = 0 ends on top of it
+  player.pos.set(-12, 0, 0); vy = 0; grounded = true;
+  run(fwd, 33);
+  ok('steps up onto 0.3 m', Math.abs(player.pos.y - 0.3) < 1e-12 && player.pos.z > 2.9, fv(player.pos));
+  // 5. 0.4 m block (z 1.75..4.25) stops the capsule at 1.75 - 0.35
+  player.pos.set(-8.5, 0, 0); vy = 0; grounded = true;
+  run(fwd, 33);
+  ok('0.4 m block stops at z = 1.4', Math.abs(player.pos.z - 1.4) <= 0.0015 && player.pos.y === 0, fv(player.pos));
+  // 6. sprint (9 m/s) at the 0.2 m wall (x -6.1..-5.9, z -2..6) going +x: never crosses.
+  //    With camYaw 0, screen-right is world -x, so input x = -1 walks +x.
+  player.pos.set(-8, 0, -1); vy = 0; grounded = true;
+  let crossed = false;
+  for (let i = 0; i < 40; i++) { simStep({ x: -1, y: 0, jump: false, sprint: true }); if (player.pos.x > -6.1 - 0.35) crossed = true; }
+  ok('9 m/s into a 0.2 m wall does not tunnel', !crossed && Math.abs(player.pos.x - (-6.1 - 0.35)) <= 0.0015, fv(player.pos));
+  // 7. snap down off the 0.2 m platform (x 7..11, z -9..-5) walking -x (input x = +1) from its middle:
+  //    2.75 m later the 0.175 m footprint is clear of its x = 7 edge
+  player.pos.set(9, 0.2, -7); vy = 0; grounded = true;
+  run({ x: 1, y: 0, jump: false, sprint: false }, 30);
+  ok('snaps down off a 0.2 m drop', player.pos.y === 0 && grounded === true, fv(player.pos));
+  // 8. line of sight across the low wall: blocked at 0.5 m, clear at 1.5 m (x = 0, clear of the crate at x 0.5..1.5)
+  ok('LOS blocked at 0.5 m, clear at 1.5 m', world.lineOfSight(V(0, 0.5, -9), V(0, 0.5, 0)) === false && world.lineOfSight(V(0, 1.5, -9), V(0, 1.5, 0)) === true);
+  // 9. probe the low wall from z = -7 at 0.5 m: normal -z, box top 1.0; from x = 1 the crate makes the stack 1.5
+  player.pos.set(0, 0, -7);
+  let p = world.probeWall(player.pos, V(0, 0, 1), 1.2, 0.5);
+  const p1 = p && { dist: p.dist, nz: p.normal.z, top: p.top };
+  p = world.probeWall(V(1, 0, -7), V(0, 0, 1), 1.2, 0.5);
+  ok('probeWall: wall normal, top 1.0, crate stack 1.5', p1 && Math.abs(p1.dist - 0.75) < 1e-9 && p1.nz === -1 && p1.top === 1 && p && p.top === 1.5, JSON.stringify(p1));
+  // 10. a grenade dropped from 2 m comes to rest on the floor with its centre at the radius
+  const g = throwGrenade(V(2.5, 2, -1.5), V(0, 0, 0));
+  for (let i = 0; i < 300; i++) stepGrenade(g);
+  ok('dropped grenade rests at y = r', g.rest && Math.abs(g.pos.y - GR) < 0.002, fv(g.pos));
+  // 11. a thrown grenade bounces off the 45-degree wall
+  const g2 = throwGrenade(V(5, 1.2, 1.5), V(4, 1, 4));
+  for (let i = 0; i < 200; i++) stepGrenade(g2);
+  ok('thrown grenade bounces and settles', g2.bounces > 0 && g2.rest, `${g2.bounces} contacts ${fv(g2.pos)}`);
+  // 12. wireframes exist for statics and hitboxes
+  debug.toggle(true); debug.update();
+  ok('debug wireframes built', debug.statics.geometry.attributes.position.count === world.colliders.length * 24 && debug.hitboxes.geometry.drawRange.count > 0);
+
+  resetPlayer();
+  setView(new URLSearchParams(location.search).get('view') || 'overview');
+  window.__preflight = { ok: checks.every((c) => c.ok), checks };
+  document.title = 'PREFLIGHT READY';
+}
+
+// Screenshot framings (also handy in the console): overview, rig (hitbox wireframes over the posed limbs).
+function setView(name) {
+  if (name === 'rig') { // hide the player, aim the camera at the rig, click its head
+    poseRig(1.1); world.updateHitboxes();
+    camYaw = 0.3; camPitch = 0.12; camDist = 2.2;
+    player.pos.set(rigged.pos.x - Math.sin(camYaw) * 1.6, 0, rigged.pos.z - Math.cos(camYaw) * 1.6);
+    player.mesh.visible = false;
+    render();
+    const hp = rig.bones.head.getWorldPosition(V()).add(V(0, 0.11, 0)).project(camera);
+    clickRay((hp.x + 1) / 2 * innerWidth, (1 - hp.y) / 2 * innerHeight);
+  } else {
+    player.pos.set(-1.5, 0, -8.6); camYaw = 0.5; camPitch = 0.78; camDist = 13;
+    render();
+    clickRay(innerWidth * 0.46, innerHeight * 0.62);
+  }
+  render();
+}
+window.__sandbox = { world, player, rigged, rig, grenades, simStep, clickRay, debug, setView, THREE };
+if (PREFLIGHT) runPreflight();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

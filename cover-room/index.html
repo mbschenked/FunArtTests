@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Cover Room</title>
+<link rel="icon" href="data:,">
+<script type="importmap">
+{
+  "imports": {
+    "three":         "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "lil-gui":       "https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.min.js"
+  }
+}
+</script>
+<style>
+  :root {
+    --ink:     rgba(228, 232, 238, 0.93);
+    --ink-dim: rgba(150, 164, 184, 0.88);
+    --accent:  #ffb454;
+    --mono:    ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: #06080c; color: var(--ink);
+    font: 11px/1.4 var(--mono);
+  }
+  /* buffer is w*dpr, CSS size stays w: without width/height 100% the canvas shows at buffer size */
+  #gl {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    display: block; cursor: crosshair; touch-action: none;
+  }
+  #fallback {
+    position: fixed; inset: 0; z-index: 30;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; text-align: center; line-height: 1.7;
+    color: var(--ink-dim); background: #06080c;
+    letter-spacing: 0.08em;
+    white-space: pre-line; overflow-wrap: anywhere; overflow: auto;   /* an uncaught error is written here, newlines kept */
+  }
+  #fallback[hidden] { display: none; }
+  #hint {
+    position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 12; pointer-events: none;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-dim);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 0 7px rgba(0,0,0,0.65);
+  }
+  #hint[hidden] { display: none; }
+  #hint b { color: var(--accent); font-weight: 500; }
+  /* tuning panel (core/params.js): a changed value shows in the accent colour */
+  .lil-gui.cr-params { --font-family: var(--mono); z-index: 20; }
+  .lil-gui .cr-changed > .name { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<canvas id="gl" role="img" aria-label="Cover Room: a third-person cover-shooter test room, rendered with WebGL2"></canvas>
+<div id="hint" hidden>Click to play &middot; <b>`</b> tuning &middot; <b>P</b> pause &middot; <b>.</b> step &middot; <b>[ ]</b> slow-mo &middot; <b>H</b> HUD</div>
+<div id="fallback" role="status">Loading Three.js r160 from cdn.jsdelivr.net. If this message stays, the CDN, import-map support or WebGL2 is unavailable.<noscript><br>JavaScript is disabled; this page needs it to run WebGL.</noscript></div>
+
+<script>
+/* Error surface: a classic script on purpose, so it still runs when a module fails to compile. An uncaught error or
+ * unhandled rejection is written into #fallback. A CDN or import-map failure raises no uncaught error (the module just
+ * never runs), so the loading text stays. fatal() in src/main.js sets data-fatal so a rethrow can't overwrite its
+ * message. The first error wins. */
+(function () {
+  var shown = false;
+  function show(kind, detail, where) {
+    var el = document.getElementById('fallback');
+    if (shown || !el || el.hasAttribute('data-fatal')) return;
+    shown = true;
+    el.hidden = false;
+    el.setAttribute('role', 'alert');
+    el.textContent = 'Cover Room stopped on an uncaught ' + kind + '.\n' + detail + (where ? '\n' + where : '');
+  }
+  window.addEventListener('error', function (e) {
+    if (/ResizeObserver loop/.test(String(e.message))) return;   // a harmless browser notice, not a failure
+    var err = e.error;
+    var detail = err && err.message ? (err.name || 'Error') + ': ' + err.message : String(e.message || 'unknown error').replace(/^Uncaught /, '');
+    var where = e.filename ? e.filename.replace(location.origin, '') + (e.lineno ? ':' + e.lineno + (e.colno ? ':' + e.colno : '') : '') : '';
+    show('error', detail, where);
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason;
+    show('promise rejection', r && r.message ? (r.name || 'Error') + ': ' + r.message : String(r), '');
+  });
+})();
+</script>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

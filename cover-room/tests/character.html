@@ -1,0 +1,461 @@
+<!doctype html>
+<!-- Cover Room: character rig gallery (A4). Turntable / gallery for every animState mode of the procedural SMPL-22
+     mannequin (src/character/*). Interactive: mode dropdown, speed, aim yaw/pitch, cover side, progress (action t)
+     override, walk-a-circle, turntable, palette. Headless: ?preflight&mode=<name>&t=<s> (or &sheet=1 for the
+     scenario's contact-sheet time) draws exactly that frame and sets document.title = "PREFLIGHT READY".
+     window.__gal: seek(t), step(n), load(name, t), scenarios, info(), perf(n). Param overrides: ?set=anim.x:v -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Cover Room: character rig</title>
+<link rel="icon" href="data:,">
+<script type="importmap">
+{
+  "imports": {
+    "three":         "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "lil-gui":       "https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.min.js"
+  }
+}
+</script>
+<style>
+  :root {
+    --ink: rgba(228, 232, 238, 0.93); --ink-dim: rgba(150, 164, 184, 0.88); --accent: #7fd1c6;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1c2027; color: var(--ink); font: 11px/1.4 var(--mono); }
+  #gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  .hud { position: fixed; z-index: 10; pointer-events: none; letter-spacing: 0.1em;
+         text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 0 7px rgba(0,0,0,0.65); }
+  .tl { top: 12px; left: 14px; }
+  .tl h1 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; }
+  .tl .sub { margin-top: 3px; font-size: 10px; color: var(--ink-dim); }
+  .tl .sub b { color: var(--accent); font-weight: 500; }
+  .bl { bottom: 10px; left: 14px; font-size: 10px; color: var(--ink-dim); white-space: pre; }
+  body.sheet .tl h1 { font-size: 22px; letter-spacing: 0.08em; text-transform: none; }
+  body.sheet .tl .sub { font-size: 15px; }
+  body.sheet .bl { display: none; }
+  body.panel-off .lil-gui.root { display: none; }
+  .lil-gui.root { --width: 270px; }
+  #gal-gui { position: fixed; top: 0; right: 0; z-index: 20; max-height: 100%; overflow: auto; }
+  #fallback { position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center;
+              padding: 24px; text-align: center; color: var(--ink-dim); background: #1c2027; white-space: pre-line; }
+  #fallback[hidden] { display: none; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div class="hud tl"><h1 id="title">character rig</h1><div class="sub" id="sub"></div></div>
+<div class="hud bl" id="stats"></div>
+<div id="gal-gui"></div>
+<div id="fallback" hidden></div>
+<script>
+  // Surface uncaught errors on the page (headless runs read them from the console too).
+  addEventListener('error', (e) => { const f = document.getElementById('fallback'); if (f) { f.hidden = false; f.textContent = 'Error: ' + (e.message || e); } });
+</script>
+<script type="module">
+import * as THREE from 'three';
+import GUI from 'lil-gui';
+import { Params } from '../src/core/params.js';
+import { createCharacter } from '../src/character/index.js';
+
+// Frame budget: 60 fps (16.7 ms). Draw calls: per character 1 skinned body + 1 pistol (+ the same in the shadow pass),
+// plus ground + up to 4 props. The crowd scenario runs 7 characters (player + 6 enemies), the game's worst case.
+const QP = new URLSearchParams(location.search);
+const PREFLIGHT = QP.has('preflight');
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const SHEET = QP.has('sheet');
+const DT = 1 / 60;
+const num = (k, d) => { const v = parseFloat(QP.get(k)); return Number.isFinite(v) ? v : d; };
+if (PREFLIGHT && QP.get('panel') !== '1') document.body.classList.add('panel-off');
+if (SHEET) document.body.classList.add('sheet');
+
+const params = new Params({ storageKey: PREFLIGHT ? null : 'cover-room-character-gallery-v1' });
+const game = { params, world: null };
+
+// ---- renderer / scene ----------------------------------------------------------------------------------------------------
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: PREFLIGHT });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x232831);
+scene.fog = new THREE.Fog(0x232831, 16, 45);
+const camera = new THREE.PerspectiveCamera(36, 1, 0.05, 200);
+
+const hemi = new THREE.HemisphereLight(0xd6e2f2, 0x51483d, 1.15);
+const sun = new THREE.DirectionalLight(0xfff1de, 2.4);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -5, right: 5, top: 5, bottom: -5, near: 0.5, far: 30 });
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.02;
+scene.add(hemi, sun, sun.target);
+const SUN_OFF = new THREE.Vector3(3.5, 9, -4.5);
+
+function gridTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 512;
+  const g = c.getContext('2d');
+  g.fillStyle = '#77736b'; g.fillRect(0, 0, 512, 512);
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) if ((i + j) % 2) { g.fillStyle = '#716d65'; g.fillRect(i * 128, j * 128, 128, 128); }
+  g.strokeStyle = 'rgba(40,38,34,0.55)';
+  for (let i = 0; i <= 512; i += 32) { g.lineWidth = i % 128 === 0 ? 3 : 1; g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 512); g.moveTo(0, i); g.lineTo(512, i); g.stroke(); }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(50, 50); t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;   // one texture tile = 4 m: thick lines every 1 m, thin every 0.25 m
+}
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ map: gridTexture(), roughness: 0.95 }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true;
+scene.add(ground);
+
+const stoneMat = new THREE.MeshStandardMaterial({ color: 0x9d9282, roughness: 0.9 });
+function prop(w, h, d) { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), stoneMat); m.castShadow = m.receiveShadow = true; m.visible = false; scene.add(m); return m; }
+const P_LOW = prop(8, 1.0, 0.5), P_HIGH = prop(3, 2.2, 0.6), P_CLIMB = prop(8, 2.6, 1.2), P_BLOCK = prop(3, 1.2, 1.6), P_VAULT = prop(3, 1.0, 0.5);
+function props(which, side = 1) {
+  P_LOW.visible = which === 'low'; P_HIGH.visible = which === 'high'; P_CLIMB.visible = which === 'climb'; P_BLOCK.visible = which === 'block'; P_VAULT.visible = which === 'vault';
+  P_VAULT.position.set(0, 0.5, 0.7);                   // thin wall: face at z = 0.45, top 1.0, far face z = 0.95
+  P_LOW.position.set(0, 0.5, 0.6);
+  P_HIGH.position.set(side * 1.25, 1.1, 0.65);          // corner (wall edge) at x = -side * 0.25
+  P_CLIMB.position.set(0, 1.3, 0.9);                   // face at z = 0.3, top at y = 2.6
+  P_BLOCK.position.set(0, 0.6, 1.25);                  // face at z = 0.45, top at y = 1.2
+}
+
+// ---- UI state (URL-seeded) -----------------------------------------------------------------------------------------------
+const ui = {
+  mode: QP.get('mode') || 'run',
+  speed: num('speed', -1), aimOn: QP.get('aim') === '1', aimYaw: num('aimYaw', 0.3), aimPitch: num('aimPitch', 0.05),
+  side: num('side', 1) < 0 ? -1 : 1, actionT: num('at', -1), turntable: QP.get('turntable') === '1',
+  timeScale: num('ts', 1), palette: QP.get('palette') === 'enemy' ? 'enemy' : 'player', cam: QP.get('cam') || '',
+};
+const spd = (d) => (ui.speed >= 0 ? ui.speed : d);
+const prog = (auto) => (ui.actionT >= 0 ? ui.actionT : auto);
+const sst = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+const clamp01 = (x) => Math.min(1, Math.max(0, x));
+const mod = (a, n) => ((a % n) + n) % n;
+const tri = (t, period) => { const u = mod(t, period) / period; return u < 0.5 ? u * 2 : 2 - u * 2; };
+
+// ---- actors --------------------------------------------------------------------------------------------------------------
+function makeState() {
+  return {
+    mode: 'locomotion', modeT: undefined, aim: { on: false, yaw: 0, pitch: 0, weight: undefined }, fireT: 99, action: null,
+    cover: { height: 'low', side: 1, pose: 'idle', t: 1, normal: new THREE.Vector3(0, 0, -1) },
+    climb: { pose: 'hang', move: 'hang', handL: new THREE.Vector3(), handR: new THREE.Vector3(), t: 0, aim: 0, normal: new THREE.Vector3(0, 0, -1) },
+    mantle: { kind: 'mantle', height: 1.2, dist: 0.45, t: 0 }, hit: null, death: null,
+  };
+}
+function makeActor(palette, seed) {
+  const rig = createCharacter(game, { palette, seed, scene });
+  return { rig, pos: new THREE.Vector3(), yaw: 0, st: makeState(), act: { type: 'reload', t: 0 }, hitO: { dir: new THREE.Vector3(), part: 'torso', t: 0 }, deathO: { dir: new THREE.Vector3(0, 0, -1), t: 0 } };
+}
+function base(a) {
+  const st = a.st;
+  st.mode = 'locomotion'; st.modeT = undefined; st.fireT = 99; st.action = null; st.hit = null; st.death = null;
+  st.aim.on = ui.aimOn; st.aim.yaw = ui.aimYaw; st.aim.pitch = ui.aimPitch; st.aim.weight = undefined;
+  st.climb.move = 'hang'; st.climb.aim = 0; st.cover.normal.set(0, 0, -1);
+}
+function action(a, type, t) { a.act.type = type; a.act.t = prog(t); a.st.action = a.act; }
+function coverSt(a, height, pose, t, side = ui.side) { const c = a.st.cover; a.st.mode = 'cover'; c.height = height; c.pose = pose; c.t = prog(t); c.side = side; }
+
+// ---- scenarios: each is a stand-in controller (root motion + animState over time) -----------------------------------------
+// t = scenario time (s); warm = pre-roll simulated before t = 0; sheetT = contact-sheet frame time.
+const LEDGE_Y = 2.6, WALL_Z = 0.3;
+function hang(a, x, y = LEDGE_Y) {
+  a.st.mode = 'climb'; a.pos.set(x, y - 2.0, 0); a.yaw = 0;   // B3: feet climb.hang.drop (2.0 m) below the hands
+  a.st.climb.handL.set(x + 0.24, y, WALL_Z); a.st.climb.handR.set(x - 0.24, y, WALL_Z);
+}
+const SCEN = {
+  idle: { label: 'idle', note: 'breathing, weight shift', cam: 'front34', sheetT: 2.2, run(t, a) { base(a); a.pos.set(0, 0, 0); a.yaw = 0; } },
+  aimIdle: { label: 'aim idle', note: 'two-hand pistol, aim offset', cam: 'front34', sheetT: 1.0, run(t, a) { base(a); a.st.aim.on = true; a.pos.set(0, 0, 0); a.yaw = 0; } },
+  aimSweep: { label: 'aim sweep', note: 'yaw +-1.2 rad, pitch +-0.6 rad', cam: 'side34', sheetT: 1.3, run(t, a) { base(a); a.st.aim.on = true; a.st.aim.yaw = 1.2 * Math.sin(t * 1.1); a.st.aim.pitch = 0.6 * Math.sin(t * 0.7); a.pos.set(0, 0, 0); a.yaw = 0; } },
+  walk: { label: 'walk', note: '1.5 m/s', cam: 'side', warm: 2, sheetT: 0.25, run(t, a) { base(a); a.pos.set(0, 0, spd(1.5) * t); a.yaw = 0; } },
+  run: { label: 'run', note: '4.2 m/s', cam: 'side', warm: 2, sheetT: 0.2, run(t, a) { base(a); a.pos.set(0, 0, spd(4.2) * t); a.yaw = 0; } },
+  sprint: { label: 'sprint', note: '6.2 m/s', cam: 'side', warm: 2, sheetT: 0.2, run(t, a) { base(a); a.pos.set(0, 0, spd(6.2) * t); a.yaw = 0; } },
+  startStop: { label: 'start / stop', note: 'accel lean, stop settle step', cam: 'side34', sheetT: 2.55, run(t, a) {
+    base(a); const v = spd(4.2), P = 3.6, k = Math.floor(t / P), u = mod(t, P);
+    const d = (x) => x < 0.6 ? 0 : x < 0.9 ? 0.5 * (v / 0.3) * (x - 0.6) ** 2 : x < 2.1 ? v * 0.15 + v * (x - 0.9) : x < 2.45 ? v * 1.35 + v * (x - 2.1) - 0.5 * (v / 0.35) * (x - 2.1) ** 2 : v * 1.525;
+    a.pos.set(0, 0, k * v * 1.525 + d(u)); a.yaw = 0; } },
+  turn: { label: 'turn in place', note: '90 deg turns, re-steps', cam: 'front34', sheetT: 0.35, run(t, a) {
+    base(a); const k = Math.floor(t / 2), u = mod(t, 2); a.pos.set(0, 0, 0); a.yaw = (k + sst(0, 0.5, u)) * Math.PI / 2; } },
+  circle: { label: 'walk a circle', note: 'r 3 m, banks into the turn', cam: 'side34', warm: 2, sheetT: 0.4, run(t, a) {
+    base(a); const R = 3, v = spd(3.0), th = v * t / R; a.pos.set(R * Math.cos(th) - R, 0, R * Math.sin(th)); a.yaw = -th; } },
+  strafe: { label: 'aim strafe', note: '2 m/s side to side', cam: 'front34', sheetT: 0.6, run(t, a) {
+    base(a); a.st.aim.on = true; a.st.aim.yaw = 0; a.pos.set(-2 * 2 * (tri(t, 4) - 0.5) * 2, 0, 0); a.yaw = 0; } },
+  backpedal: { label: 'aim backpedal', note: '1.6 m/s', cam: 'side34', warm: 1.5, sheetT: 0.3, run(t, a) {
+    base(a); a.st.aim.on = true; a.st.aim.yaw = 0; a.pos.set(0, 0, -spd(1.6) * t); a.yaw = 0; } },
+  runAim: { label: 'run + aim fire', note: '3 m/s, shot every 0.25 s', cam: 'side34', warm: 2, sheetT: 0.27, run(t, a) {
+    base(a); a.st.aim.on = true; a.st.aim.yaw = 0; a.st.fireT = mod(t, 0.25); a.pos.set(0, 0, spd(3) * t); a.yaw = 0; } },
+  hipFire: { label: 'hip fire', note: 'one hand, recoil', cam: 'front34', sheetT: 1.42, run(t, a) { base(a); a.st.aim.on = false; a.st.fireT = mod(t, 0.35); a.pos.set(0, 0, 0); a.yaw = 0; } },
+  aimFire: { label: 'aim fire', note: 'two hands, recoil', cam: 'side34', sheetT: 1.23, run(t, a) { base(a); a.st.aim.on = true; a.st.fireT = mod(t, 0.3); a.pos.set(0, 0, 0); a.yaw = 0; } },
+  reload: { label: 'reload', note: 'mag out, pouch, insert, rack', cam: 'front34', sheetT: 1.0, run(t, a) {
+    base(a); const u = mod(t, 2.0); if (u < 1.5) action(a, 'reload', u / 1.5); a.pos.set(0, 0, 0); a.yaw = 0; } },
+  reloadWalk: { label: 'reload walking', note: '1.4 m/s', cam: 'side34', warm: 1, sheetT: 0.85, run(t, a) {
+    base(a); const u = mod(t, 2.0); if (u < 1.5) action(a, 'reload', u / 1.5); a.pos.set(0, 0, spd(1.4) * t); a.yaw = 0; } },
+  throwAim: { label: 'grenade wind-up', note: 'hold while aiming the arc', cam: 'side34', sheetT: 1.0, run(t, a) {
+    base(a); a.st.aim.on = true; a.st.aim.yaw = 0; a.st.aim.pitch = 0.3; action(a, 'throwAim', 0); a.pos.set(0, 0, 0); a.yaw = 0; } },
+  throw: { label: 'grenade throw', note: 'release at anim.throw.release', cam: 'side34', sheetT: 0.85, run(t, a) {
+    base(a); a.st.aim.on = true; a.st.aim.yaw = 0; a.st.aim.pitch = 0.3; const u = mod(t, 2.0);
+    if (u < 0.6) action(a, 'throwAim', 0); else if (u < 1.5) action(a, 'throw', (u - 0.6) / 0.9); a.pos.set(0, 0, 0); a.yaw = 0; } },
+  hitReact: { label: 'hit react', note: 'directional, stagger step', cam: 'front34', sheetT: 1.5, run(t, a) {
+    base(a); const P = 1.4, k = Math.floor(mod(t, P * 4) / P), u = mod(t, P); a.pos.set(0, 0, 0); a.yaw = 0;
+    const dirs = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+    if (u < 0.7) { a.st.mode = 'hitreact'; a.hitO.dir.set(dirs[k][0], 0, dirs[k][1]); a.hitO.t = u; a.hitO.part = k === 1 ? 'head' : 'torso'; a.st.hit = a.hitO; } } },
+  coverLow: { label: 'cover low', note: 'kneeling crouch, shoulder to wall', cam: 'cover', props: 'low', sheetT: 1.0, run(t, a) {
+    base(a); coverSt(a, 'low', 'idle', 1); a.pos.set(0, 0, 0); a.yaw = 0; } },
+  coverLowAway: { label: 'cover low (root faces out)', note: 'spec: snap facing away; normal given', cam: 'cover', props: 'low', sheetT: 1.0, run(t, a) {
+    base(a); coverSt(a, 'low', 'idle', 1); a.pos.set(0, 0, 0); a.yaw = Math.PI; } },
+  coverLowMove: { label: 'cover low move', note: 'crouch shuffle, side swap', cam: 'cover', props: 'low', sheetT: 0.75, run(t, a) {
+    base(a); const P = 4.4, u = mod(t, P), v = spd(1.8), side = u < 2.2 ? 1 : -1;
+    const x = u < 1.6 ? -v * u : u < 2.2 ? -v * 1.6 : u < 3.8 ? -v * 1.6 + v * (u - 2.2) : 0;
+    coverSt(a, 'low', u < 1.6 || (u > 2.2 && u < 3.8) ? 'move' : 'idle', 1, side); a.pos.set(x, 0, 0); a.yaw = 0; } },
+  coverPopup: { label: 'cover pop-up aim', note: 'rise over the wall, fire', cam: 'cover', props: 'low', sheetT: 1.25, run(t, a) {
+    base(a); const u = mod(t, 3.0); a.st.aim.yaw = 0.25 * Math.sin(t); a.st.aim.pitch = 0.04;
+    if (u > 0.6 && u < 2.2) { coverSt(a, 'low', 'popup', clamp01((u - 0.6) / 0.25)); a.st.aim.on = true; if (u > 1.0) a.st.fireT = mod(u - 1.0, 0.4); }
+    else coverSt(a, 'low', 'idle', 1); a.pos.set(0, 0, 0); a.yaw = 0; } },
+  coverLowBlind: { label: 'cover blind fire (low)', note: 'gun over the top', cam: 'cover', props: 'low', sheetT: 1.1, run(t, a) {
+    base(a); const u = mod(t, 3.0);
+    if (u > 0.6 && u < 2.2) { coverSt(a, 'low', 'blind', clamp01((u - 0.6) / 0.2)); if (u > 0.85) a.st.fireT = mod(u - 0.85, 0.3); }
+    else coverSt(a, 'low', 'idle', 1); a.pos.set(0, 0, 0); a.yaw = 0; } },
+  coverHigh: { label: 'cover high', note: 'back to the wall', cam: 'coverHigh', props: 'high', sheetT: 1.0, run(t, a) {
+    base(a); coverSt(a, 'high', 'idle', 1); a.pos.set(0, 0, 0); a.yaw = 0; } },
+  coverHighMove: { label: 'cover high move', note: 'side-step along the wall', cam: 'coverHigh', props: 'high', sheetT: 0.7, run(t, a) {
+    base(a); const P = 3.0, u = mod(t, P), v = spd(1.4); const x = u < 1.2 ? v * u : u < 1.5 ? v * 1.2 : u < 2.7 ? v * 1.2 - v * (u - 1.5) : 0;
+    coverSt(a, 'high', (u < 1.2 || (u > 1.5 && u < 2.7)) ? 'move' : 'idle', 1, u < 1.5 ? -1 : 1); a.pos.set(x + 0.4, 0, 0); a.yaw = 0; } },
+  coverLean: { label: 'cover corner lean aim', note: 'step out past the corner', cam: 'coverLean', props: 'high', sheetT: 1.3, run(t, a) {
+    base(a); const u = mod(t, 3.0); a.st.aim.yaw = 0.15 * Math.sin(t); a.st.aim.pitch = 0.02;
+    if (u > 0.6 && u < 2.2) { coverSt(a, 'high', 'lean', clamp01((u - 0.6) / 0.3)); a.st.aim.on = true; if (u > 1.0) a.st.fireT = mod(u - 1.0, 0.4); }
+    else coverSt(a, 'high', 'idle', 1); a.pos.set(0, 0, 0); a.yaw = 0; } },
+  coverHighBlind: { label: 'cover blind fire (high)', note: 'arm around the corner', cam: 'coverLean', props: 'high', sheetT: 1.1, run(t, a) {
+    base(a); const u = mod(t, 3.0);
+    if (u > 0.6 && u < 2.2) { coverSt(a, 'high', 'blind', clamp01((u - 0.6) / 0.2)); if (u > 0.85) a.st.fireT = mod(u - 0.85, 0.3); }
+    else coverSt(a, 'high', 'idle', 1); a.pos.set(0, 0, 0); a.yaw = 0; } },
+  coverEnter: { label: 'cover enter', note: 'run in, brace, settle', cam: 'cover', props: 'low', sheetT: 0.98, run(t, a) {
+    base(a); const u = mod(t, 2.6), v = 4.0;
+    if (u < 0.8) { a.pos.set(0, 0, -3.2 + v * u); }
+    else { a.pos.set(0, 0, 0); coverSt(a, 'low', u < 1.15 ? 'enter' : 'idle', u < 1.15 ? (u - 0.8) / 0.35 : 1); }
+    a.yaw = 0; } },
+  coverExit: { label: 'cover exit', note: 'stand and break away', cam: 'cover', props: 'low', sheetT: 1.0, run(t, a) {
+    base(a); const u = mod(t, 2.8);
+    if (u < 0.8) { coverSt(a, 'low', 'idle', 1); a.pos.set(0, 0, 0); a.yaw = 0; }
+    else if (u < 1.15) { coverSt(a, 'low', 'exit', (u - 0.8) / 0.35); a.pos.set(0, 0, 0); a.yaw = 0; }
+    else { const s = Math.min(3.2, (u - 1.15) * 3.2); a.pos.set(-Math.max(0, s), 0, -0.1 * s); a.yaw = -Math.PI / 2; } } },
+  roll: { label: 'roll', note: 'run, tuck, roll, rise', cam: 'side', warm: 1, sheetT: 1.15, run(t, a) {
+    base(a); const P = 2.4, k = Math.floor(t / P), u = mod(t, P), v = 4.2;
+    if (u > 0.8 && u < 1.6) { a.st.mode = 'roll'; a.st.modeT = prog((u - 0.8) / 0.8); }
+    a.pos.set(0, 0, v * (k * P + u)); a.yaw = 0; } },
+  jump: { label: 'jump', note: 'running jump: push, tuck', cam: 'side', warm: 1, sheetT: 0.85, run(t, a) {
+    base(a); const P = 2.4, k = Math.floor(t / P), u = mod(t, P), v = 4.0, vy = 4.0, g = 9.81, air = 2 * vy / g; let y = 0;
+    if (u > 0.6 && u < 0.6 + air) { const tau = u - 0.6; y = vy * tau - 0.5 * g * tau * tau; a.st.mode = tau < vy / g ? 'jump' : 'fall'; }
+    else if (u >= 0.6 + air && u < 0.95 + air) { a.st.mode = 'land'; a.st.modeT = (u - 0.6 - air) / 0.35; }
+    a.pos.set(0, Math.max(0, y), v * (k * P + u)); a.yaw = 0; } },
+  fall: { label: 'fall', note: 'arms out, legs dangle', cam: 'side34', sheetT: 0.55, run(t, a) {
+    base(a); const u = mod(t, 2.4), tf = Math.sqrt(2 * 3 / 9.81); let y = 0;
+    if (u < tf) { y = 3 - 4.905 * u * u; a.st.mode = 'fall'; } else if (u < tf + 0.45) { a.st.mode = 'land'; a.st.modeT = (u - tf) / 0.45; }
+    a.pos.set(0, Math.max(0, y), 0); a.yaw = 0; } },
+  land: { label: 'land', note: 'hard landing from 3 m', cam: 'side34', sheetT: 0.86, run(t, a) { SCEN.fall.run(t, a); } },
+  mantle: { label: 'mantle', note: '1.2 m block', cam: 'side', props: 'block', sheetT: 1.08, run(t, a) {
+    base(a); const u = mod(t, 3.0), v = 3.0;
+    if (u < 0.8) a.pos.set(0, 0, -2.4 + v * u);
+    else if (u < 1.4) {   // B1 controller: close to the wall 0-0.2, rise 0.15-0.65, step on 0.6-1 (player.mantle.time 0.6 s)
+      const m = (u - 0.8) / 0.6, ua = sst(0, 0.2, m), ub = 1 - Math.pow(1 - clamp01((m - 0.15) / 0.5), 2), uc = sst(0.6, 1, m);
+      a.st.mode = 'mantle'; a.st.modeT = prog(m); a.st.mantle.kind = 'mantle'; a.st.mantle.height = 1.2; a.st.mantle.dist = 0.0;
+      a.pos.set(0, 1.2 * ub, (0.45 - 0.38) * ua + (0.9 - 0.07) * uc); }
+    else a.pos.set(0, 1.2, 0.9 + Math.min(0.6, (u - 1.4) * 1.2));
+    a.yaw = 0; } },
+  vault: { label: 'vault', note: '1.0 m wall at a run', cam: 'side', props: 'vault', warm: 0.5, sheetT: 1.05, run(t, a) {
+    base(a); const u = mod(t, 2.6), v = 4.0, x0 = -0.75;   // B1 controller vault path, player.vault.time 0.55 s
+    if (u < 0.8) a.pos.set(0, 0, x0 - v * (0.8 - u));
+    else if (u < 1.35) { const m = (u - 0.8) / 0.55, z = x0 + (1.75 - x0) * sst(0, 1, m), peak = 1.0 + 0.12;
+      const y = m < 0.45 ? peak * (1 - Math.pow(1 - m / 0.45, 2)) : m < 0.6 ? peak : peak * (1 - Math.pow((m - 0.6) / 0.4, 2));
+      a.st.mode = 'mantle'; a.st.modeT = prog(m); a.st.mantle.kind = 'vault'; a.st.mantle.height = 1.0; a.st.mantle.dist = 0.45 - x0; a.pos.set(0, y, z); }
+    else a.pos.set(0, 0, 1.75 + v * 0.55 * (u - 1.35));
+    a.yaw = 0; } },
+  hang: { label: 'climb hang', note: 'braced, hands on the ledge', cam: 'climb', props: 'climb', sheetT: 1.0, run(t, a) { base(a); hang(a, 0); a.st.climb.pose = 'hang'; } },
+  shimmy: { label: 'climb shimmy', note: 'hand over hand, 0.6 m/s', cam: 'climb', props: 'climb', sheetT: 1.2, run(t, a) {
+    base(a); const x = -1.2 * (tri(t, 8) - 0.5) * 2; hang(a, x); a.st.climb.pose = 'shimmy'; } },
+  reach: { label: 'climb reach', note: 'far hold up-right, body follows', cam: 'climb', props: 'climb', sheetT: 1.45, run(t, a) {
+    base(a); const u = mod(t, 4.8), far = u > 1.2 && u < 3.6;
+    const k = u < 1.2 ? 0 : u < 2.2 ? sst(1.2, 2.2, u) : u < 3.6 ? 1 : 1 - sst(3.6, 4.6, u);
+    hang(a, 0); a.pos.set(-0.8 * k, LEDGE_Y + 0.3 * k - 2.15, 0);
+    if (far) { a.st.climb.handL.set(-0.8 + 0.24, LEDGE_Y + 0.3, WALL_Z); a.st.climb.handR.set(-0.8 - 0.24, LEDGE_Y + 0.3, WALL_Z); }
+    a.st.climb.pose = u > 1.2 && u < 2.2 ? 'reach' : 'hang'; a.st.climb.t = clamp01((u - 1.2) / 0.5); } },
+  climbUp: { label: 'climb up', note: 'pull, press, knee up, stand', cam: 'climb', props: 'climb', sheetT: 1.45, run(t, a) {
+    base(a); const u = mod(t, 3.4);
+    if (u < 0.8) { hang(a, 0); a.st.climb.pose = 'hang'; }
+    else if (u < 2.0) { const c = (u - 0.8) / 1.2; hang(a, 0); a.st.climb.pose = 'climbup'; a.st.climb.t = prog(c);
+      a.pos.set(0, 0.45 + 2.15 * sst(0.1, 0.75, c), 0.75 * sst(0.45, 1, c)); }
+    else { a.st.mode = 'locomotion'; a.pos.set(0, LEDGE_Y, 0.75); a.yaw = 0; } } },
+  drop: { label: 'climb drop', note: 'let go, fall, land', cam: 'climb', props: 'climb', sheetT: 0.95, run(t, a) {
+    base(a); const u = mod(t, 3.0), tf = Math.sqrt(2 * 0.45 / 9.81);
+    if (u < 0.8) { hang(a, 0); a.st.climb.pose = 'hang'; }
+    else if (u < 1.05) { hang(a, 0); a.st.climb.pose = 'drop'; a.st.climb.t = prog((u - 0.8) / 0.25); }
+    else if (u < 1.05 + tf) { const tau = u - 1.05; a.st.mode = 'fall'; a.pos.set(0, 0.45 - 4.905 * tau * tau, -0.05 * tau); a.yaw = 0; }
+    else if (u < 1.5 + tf) { a.st.mode = 'land'; a.st.modeT = (u - 1.05 - tf) / 0.45; a.pos.set(0, 0, -0.05 * tf); a.yaw = 0; }
+    else { a.pos.set(0, 0, -0.05 * tf); a.yaw = 0; } } },
+  hangAim: { label: 'one-hand hang aim', note: 'pull up, aim over the lip', cam: 'climbAim', props: 'climb', sheetT: 1.0, run(t, a) {
+    base(a); hang(a, 0); const u = mod(t, 3.2), k = u < 0.4 ? 0 : u < 2.6 ? sst(0.4, 0.58, u) : 1 - sst(2.6, 2.9, u);   // B3: aim enter 0.18 s, exit 0.3 s
+    a.st.climb.pose = k > 0 || (u > 0.4 && u < 2.9) ? 'hangAim' : 'hang'; a.st.climb.aim = k; a.pos.y += 0.65 * k;            // B3 lifts the root 0.65 m
+    a.st.aim.on = k > 0.5; a.st.aim.yaw = 0.5 * Math.sin(t * 0.9); a.st.aim.pitch = 0.3; if (u > 0.8 && u < 2.5) a.st.fireT = mod(u - 0.8, 0.45); } },
+  deathFront: { label: 'death (shot from front)', note: 'buckle, fall back, settle', cam: 'side34', sheetT: 0.6, run(t, a) {
+    base(a); const u = mod(t, 3.2); a.pos.set(0, 0, 0); a.yaw = 0; if (u < 2.8) { a.st.mode = 'death'; a.deathO.dir.set(0, 0, -1); a.deathO.t = u; a.st.death = a.deathO; } } },
+  deathBack: { label: 'death (shot from behind)', note: 'pitch forward', cam: 'side34', sheetT: 0.7, run(t, a) {
+    base(a); const u = mod(t, 3.2); a.pos.set(0, 0, 0); a.yaw = 0; if (u < 2.8) { a.st.mode = 'death'; a.deathO.dir.set(0, 0, 1); a.deathO.t = u; a.st.death = a.deathO; } } },
+  deathSettled: { label: 'death settled', note: 'shot from the right side', cam: 'top34', sheetT: 2.2, run(t, a) {
+    base(a); const u = mod(t, 3.2); a.pos.set(0, 0, 0); a.yaw = 0; if (u < 2.8) { a.st.mode = 'death'; a.deathO.dir.set(-1, 0, -0.3).normalize(); a.deathO.t = u; a.st.death = a.deathO; } } },
+  crowd: { label: 'crowd: player + 6 enemies', note: 'perf check', cam: 'wide', warm: 1, sheetT: 0.5, crowd: 6, run(t, a, i = 0) {
+    base(a);
+    if (i === 0) { a.st.aim.on = true; a.st.aim.yaw = 0.4 * Math.sin(t); a.st.fireT = mod(t, 0.4); a.pos.set(0, 0, 0); a.yaw = 0; return; }
+    const R = 1.5 + i * 0.6, v = 1.2 + (i % 3) * 1.4, th = v * t / R + i;
+    a.pos.set(R * Math.cos(th), 0, R * Math.sin(th) + 2); a.yaw = -th; a.st.aim.on = i % 2 === 0; a.st.aim.yaw = 0.3; if (i % 3 === 0) a.st.fireT = mod(t + i * 0.1, 0.5); } },
+};
+const NAMES = Object.keys(SCEN);
+
+const CAMS = {
+  side: { off: [3.7, 0.25, 0.3], ty: 0.92 },
+  side34: { off: [3.1, 0.55, 2.0], ty: 0.9 },
+  front34: { off: [2.0, 0.35, 3.1], ty: 0.95 },
+  cover: { off: [1.9, 0.9, -3.0], ty: 0.75, mirror: true },
+  coverHigh: { off: [-1.0, 0.45, -3.7], ty: 1.0, mirror: true },
+  coverLean: { off: [-2.2, 0.6, -3.4], ty: 1.0, mirror: true },
+  climb: { off: [2.7, 0.1, -3.7], ty: 1.25 },
+  climbAim: { off: [1.3, 0.75, -2.5], ty: 1.55 },
+  top34: { off: [2.6, 2.6, 2.6], ty: 0.2 },
+  wide: { off: [5.5, 4.0, -7.5], ty: 0.6 },
+};
+
+// ---- simulation -----------------------------------------------------------------------------------------------------------
+let actors = [];
+let simT = 0, perfMs = 0, perfN = 0;
+function scenario() { return SCEN[ui.mode] || SCEN.run; }
+function reset() {
+  for (const a of actors) a.rig.dispose();
+  const sc = scenario();
+  actors = [makeActor(ui.palette, 1)];
+  for (let i = 0; i < (sc.crowd || 0); i++) actors.push(makeActor('enemy', 11 + i * 7));
+  props(sc.props || '', ui.side);
+  simT = -(sc.warm || 0);
+  perfMs = 0; perfN = 0;
+  applyStep(0);
+}
+function applyStep(dt) {
+  const sc = scenario();
+  for (let i = 0; i < actors.length; i++) {
+    const a = actors[i];
+    sc.run(simT, a, i);
+    a.rig.root.position.copy(a.pos);
+    a.rig.root.rotation.set(0, a.yaw, 0);
+    const t0 = performance.now();
+    a.rig.update(dt, a.st);
+    perfMs += performance.now() - t0; perfN++;
+  }
+}
+function step(n = 1) { for (let k = 0; k < n; k++) { simT += DT; applyStep(DT); } }
+function seek(t) { reset(); const n = Math.round((t + (scenario().warm || 0)) / DT); step(n); }
+
+// ---- camera ---------------------------------------------------------------------------------------------------------------
+const _tgt = new THREE.Vector3(), _off = new THREE.Vector3();
+function updateCamera() {
+  const sc = scenario(), a = actors[0];
+  const c = CAMS[ui.cam] || CAMS[sc.cam] || CAMS.side34;
+  _off.set(c.off[0] * (c.mirror ? ui.side : 1), c.off[1], c.off[2]);
+  if (ui.turntable) _off.applyAxisAngle(THREE.Object3D.DEFAULT_UP, simT * 0.35);
+  _tgt.copy(a.pos); _tgt.y += c.ty;
+  if (sc.cam === 'wide') _tgt.set(0, c.ty, 1.5);
+  camera.position.copy(_tgt).add(_off);
+  camera.lookAt(_tgt);
+  sun.position.copy(_tgt).add(SUN_OFF); sun.target.position.copy(_tgt);
+}
+function resize() {
+  const w = Math.max(1, innerWidth), h = Math.max(1, innerHeight);
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', () => { resize(); if (STATIC) draw(); });
+resize();
+
+// ---- HUD ------------------------------------------------------------------------------------------------------------------
+const elTitle = document.getElementById('title'), elSub = document.getElementById('sub'), elStats = document.getElementById('stats');
+function hud() {
+  const sc = scenario(), a = actors[0], st = a.st, an = a.rig.animator;
+  elTitle.textContent = SHEET ? sc.label : 'character rig · ' + sc.label;
+  const sub = st.mode === 'cover' ? `${st.cover.height} ${st.cover.pose} t ${st.cover.t.toFixed(2)} side ${st.cover.side}`
+    : st.mode === 'climb' ? `${st.climb.pose} t ${st.climb.t.toFixed(2)}` : st.action ? `${st.action.type} t ${st.action.t.toFixed(2)}`
+    : typeof st.modeT === 'number' ? `modeT ${st.modeT.toFixed(2)}` : `${an.speed.toFixed(2)} m/s`;
+  elSub.textContent = `${sc.note} · ${st.mode} ${sub} · t ${simT.toFixed(2)} s`;
+  const info = renderer.info.render;
+  elStats.textContent = `rigs ${actors.length} · update ${(perfMs / Math.max(1, perfN)).toFixed(3)} ms/rig · draw calls ${info.calls} · tris ${info.triangles}\n` +
+    `gait phase ${an.phase.toFixed(2)} · cycle w ${an.cycleW.toFixed(2)} · duty ${an.duty.toFixed(2)} · blend ${an.blendT.toFixed(2)}`;
+}
+function draw() { updateCamera(); renderer.render(scene, camera); hud(); }
+
+// ---- panel ----------------------------------------------------------------------------------------------------------------
+const STATIC = PREFLIGHT || REDUCED;
+const gui = new GUI({ title: 'Character gallery', container: document.getElementById('gal-gui'), width: 270 });
+const modeOpts = {}; for (const n of NAMES) modeOpts[SCEN[n].label] = n;
+gui.add(ui, 'mode', modeOpts).name('mode').onChange(() => { reset(); if (STATIC) draw(); });
+gui.add(ui, 'speed', -1, 7.5, 0.05).name('speed (-1 = scenario)');
+gui.add(ui, 'aimOn').name('aim (where optional)');
+gui.add(ui, 'aimYaw', -1.6, 1.6, 0.01).name('aim yaw (rad)');
+gui.add(ui, 'aimPitch', -1, 1, 0.01).name('aim pitch (rad)');
+gui.add(ui, 'side', { right: 1, left: -1 }).name('cover side').onChange(() => { props(scenario().props || '', ui.side); });
+gui.add(ui, 'actionT', -1, 1, 0.01).name('action / progress t (-1 auto)');
+gui.add(ui, 'palette', ['player', 'enemy']).name('palette').onChange(() => reset());
+gui.add(ui, 'turntable').name('turntable');
+gui.add(ui, 'timeScale', 0.05, 1, 0.05).name('time scale');
+gui.add({ circle: () => { ui.mode = 'circle'; gui.controllersRecursive().forEach((c) => c.updateDisplay()); reset(); } }, 'circle').name('walk a circle');
+gui.add({ restart: () => reset() }, 'restart').name('restart scenario');
+params.buildPanel(GUI, { title: 'anim params', hidden: false });
+if (params.gui) { params.gui.domElement.style.position = 'fixed'; params.gui.domElement.style.left = '0'; params.gui.domElement.style.top = '64px'; params.gui.close(); }
+
+// ---- boot -----------------------------------------------------------------------------------------------------------------
+window.__gal = {
+  scenarios: NAMES.map((n) => ({ name: n, label: SCEN[n].label, sheetT: SCEN[n].sheetT ?? 1 })),
+  seek(t) { seek(t); draw(); return this.info(); },
+  step(n = 1) { step(n); draw(); return this.info(); },
+  load(name, t) { ui.mode = name; seek(t ?? SCEN[name].sheetT ?? 1); draw(); return this.info(); },
+  info() {
+    const a = actors[0], an = a.rig.animator, m = new THREE.Vector3(), lf = new THREE.Vector3(), rf = new THREE.Vector3();
+    a.rig.socket('muzzle').getWorldPosition(m);
+    a.rig.getBoneWorld('left_foot', lf); a.rig.getBoneWorld('right_foot', rf);
+    return { mode: ui.mode, simT: +simT.toFixed(4), animMode: a.st.mode, speed: +an.speed.toFixed(3), phase: +an.phase.toFixed(3),
+      feet: [lf.toArray().map((x) => +x.toFixed(4)), rf.toArray().map((x) => +x.toFixed(4))],
+      planted: an.feet.map((f) => f.planted), muzzle: m.toArray().map((x) => +x.toFixed(3)),
+      msPerRig: +(perfMs / Math.max(1, perfN)).toFixed(4), calls: renderer.info.render.calls };
+  },
+  // Steps the current scenario n times without rendering; returns ms per rig update and the JS heap delta.
+  perf(n = 600) {
+    const h0 = performance.memory ? performance.memory.usedJSHeapSize : 0;
+    const t0 = performance.now(); step(n); const ms = performance.now() - t0;
+    const h1 = performance.memory ? performance.memory.usedJSHeapSize : 0;
+    return { steps: n, rigs: actors.length, msPerStep: +(ms / n).toFixed(4), msPerRigUpdate: +(ms / n / actors.length).toFixed(4), heapDeltaKB: Math.round((h1 - h0) / 1024) };
+  },
+};
+reset();
+if (PREFLIGHT) {
+  const t = QP.has('t') ? num('t', 0) : (SHEET ? (scenario().sheetT ?? 1) : 0);
+  seek(t); draw();
+  document.title = 'PREFLIGHT READY';
+} else if (REDUCED) {
+  seek(scenario().sheetT ?? 1); draw();
+} else {
+  let last = performance.now(), acc = 0;
+  const loop = (now) => {
+    const dt = Math.min(0.1, (now - last) / 1000); last = now;
+    acc += dt * ui.timeScale;
+    let n = 0;
+    while (acc >= DT && n < 8) { step(1); acc -= DT; n++; }
+    if (n === 8) acc = 0;
+    draw();
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+}
+
+</script>
+</body>
+</html>

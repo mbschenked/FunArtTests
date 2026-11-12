@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Cover Room: level test</title>
+<link rel="icon" href="data:,">
+<!--
+  Standalone test page for src/level/room.js + src/level/nav.js (owner A3). Its own minimal renderer (tone map E as in
+  core/render.js, no post), so the level can be judged without the game.
+  Query: ?view=overview|player-start|climb-wall|balcony   camera preset (default overview)
+         ?markup=1   cover edges (cyan, high = blue), climb edges + links and mantle tops (yellow), nav graph (faint),
+                     sample path south gate -> balcony (magenta)
+         ?stub=1     use a stub world instead of core/world.js        ?hud=0  hide the text overlay
+         ?tm=aces    stock ACES instead of tone map E                 ?exposure=1.0   ?dpr=1.41  force the pixel ratio
+  Keys:  WASD move, Q/E down/up, Shift fast, drag to look, 1-4 views, M markup, H overlay.
+  Title becomes "LEVEL READY" after the first frame (tools/shoot.mjs --wait-title); window.__level has checks + bench().
+-->
+<style>
+  :root {
+    --ink: rgba(228, 232, 238, 0.93);
+    --ink-dim: rgba(150, 164, 184, 0.88);
+    --accent: #ffb454;
+    --panel: rgba(9, 12, 17, 0.80);
+    --line: rgba(255, 255, 255, 0.14);
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #06080c; color: var(--ink); font: 11px/1.4 var(--mono); }
+  #gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+  #gl:active { cursor: grabbing; }
+  #fallback {
+    position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center;
+    padding: 24px; text-align: center; line-height: 1.7; color: var(--ink-dim); background: #06080c;
+    letter-spacing: 0.08em; white-space: pre-line; overflow-wrap: anywhere; overflow: auto;
+  }
+  #fallback[hidden] { display: none; }
+  .hud { position: fixed; z-index: 10; pointer-events: none; letter-spacing: 0.12em; text-transform: uppercase;
+         text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 0 7px rgba(0,0,0,0.65); }
+  .tl { top: 12px; left: 14px; }
+  .tl h1 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.24em; }
+  .tl .sub { margin-top: 2px; font-size: 10px; color: var(--ink-dim); }
+  .tl .sub b { color: var(--accent); font-weight: 500; }
+  .tr { top: 12px; right: 14px; text-align: right; font-size: 10px; color: var(--ink-dim); line-height: 1.6; }
+  .tr b { color: var(--ink); font-weight: 500; }
+  .keys { bottom: 10px; left: 0; right: 0; text-align: center; font-size: 10px; letter-spacing: 0.06em; color: var(--ink-dim); text-transform: none; }
+  .legend { top: 12px; left: 50%; transform: translateX(-50%); padding: 3px 9px; font-size: 10px; white-space: nowrap;
+            color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; }
+  .legend[hidden] { display: none; }
+  .legend i { display: inline-block; width: 8px; height: 8px; margin: 0 4px 0 8px; vertical-align: -1px; }
+  .hud-off .hud { display: none; }
+  @media (max-width: 760px) { .tr, .keys { display: none; } .legend { top: 52px; } }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three":         "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "lil-gui":       "https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.min.js"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="gl" aria-label="Cover Room courtyard, level test view"></canvas>
+<div id="fallback" hidden></div>
+<div class="hud tl"><h1>COVER ROOM &middot; LEVEL</h1><div class="sub" id="sub"></div></div>
+<div class="hud legend" id="legend" hidden><i style="background:#34f0ff"></i>low cover<i style="background:#2aa8ff"></i>high cover<i style="background:#ffe14a"></i>climb / mantle<i style="background:#9fb4d0"></i>nav<i style="background:#ff3fd2"></i>path gate &rarr; balcony</div>
+<div class="hud tr" id="stats"></div>
+<div class="hud keys">WASD move &middot; Q/E down/up &middot; Shift fast &middot; drag to look &middot; 1-4 views &middot; M markup &middot; H overlay</div>
+<script type="module">
+import * as THREE from 'three';
+import { Params } from '../src/core/params.js';
+import { Events } from '../src/core/events.js';
+import { mulberry32 } from '../src/core/game.js';
+import { install, buildMarkup, VIEWS } from '../src/level/room.js';
+
+const QP = new URLSearchParams(location.search);
+const fallback = document.getElementById('fallback');
+const fatal = (msg) => { fallback.textContent = msg; fallback.hidden = false; document.title = 'LEVEL ERROR'; };
+window.addEventListener('error', (e) => fatal(`Error: ${e.message}`));
+window.addEventListener('unhandledrejection', (e) => fatal(`Error: ${e.reason && e.reason.stack || e.reason}`));
+if (QP.get('hud') === '0') document.body.classList.add('hud-off');
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// --- tone map E (identical to core/render.js) -------------------------------------------------------------------------
+{
+  const marker = '// Tone map E.';
+  const placeholder = 'vec3 CustomToneMapping( vec3 color ) { return color; }';
+  const chunk = THREE.ShaderChunk.tonemapping_pars_fragment;
+  if (!chunk.includes(marker) && chunk.includes(placeholder)) {
+    THREE.ShaderChunk.tonemapping_pars_fragment = chunk.replace(placeholder, `${marker}
+vec3 CustomToneMapping( vec3 color ) {
+	return saturate( RRTAndODTFit( max( color, vec3( 0.0 ) ) * ( toneMappingExposure / 0.6 ) ) );
+}`);
+  }
+}
+
+// --- renderer ---------------------------------------------------------------------------------------------------------
+const canvas = document.getElementById('gl');
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true });
+} catch (err) { fatal('WebGL could not start in this browser, so the level cannot render.'); throw err; }
+const DPR = () => Number(QP.get('dpr')) || Math.min(window.devicePixelRatio || 1, 2);   // ?dpr= forces the pixel ratio (perf checks)
+renderer.setPixelRatio(DPR());
+renderer.setSize(window.innerWidth, window.innerHeight, false);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = QP.get('tm') === 'aces' ? THREE.ACESFilmicToneMapping : THREE.CustomToneMapping;
+renderer.toneMappingExposure = Number(QP.get('exposure')) || 1.002;   // core/render.js LOOKS.day
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.info.autoReset = false;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.05, 400);
+scene.add(camera);
+
+// --- game stub: the fields room.js reads ------------------------------------------------------------------------------
+const systems = [];
+const game = {
+  scene, camera, params: new Params({ storageKey: null }), events: new Events(), rng: mulberry32(1), world: null,
+  addSystem(s) { systems.push(s); return s; },
+};
+let worldKind = 'stub';
+if (!QP.has('stub')) {
+  try {
+    const { createWorld } = await import('../src/core/world.js');
+    game.world = createWorld({ Vector3: THREE.Vector3, cellSize: 2 });
+    worldKind = 'core/world.js';
+  } catch (err) { console.warn('[level test] core/world.js not usable, using the stub world:', err && err.message); }
+}
+if (!game.world) {
+  const colliders = [];
+  game.world = { colliders, addBox(spec, opts) { const c = { id: colliders.length, ...spec, ...opts }; colliders.push(c); return c; } };
+}
+
+// --- build --------------------------------------------------------------------------------------------------------------
+const level = install(game);
+const tPath = performance.now();
+const goal = level.spawns.enemies.find((e) => e.role === 'overwatch' && e.pos.y > 3) || level.spawns.enemies[0];
+const path = level.nav.findPath(level.spawns.player.pos, goal.pos);
+const pathMs = performance.now() - tPath;
+const pathLen = path ? path.reduce((s, p, i) => s + (i ? p.distanceTo(path[i - 1]) : 0), 0) : 0;
+
+let markup = null;
+const setMarkup = (on) => {
+  if (on && !markup) { markup = buildMarkup(level, { cover: true, climb: true, nav: true, path }); scene.add(markup); }
+  if (markup) markup.visible = on;
+  document.getElementById('legend').hidden = !on;
+};
+setMarkup(QP.get('markup') === '1');
+
+// --- camera: presets + free fly -------------------------------------------------------------------------------------
+const VIEW_NAMES = Object.keys(VIEWS);
+let viewName = VIEWS[QP.get('view')] ? QP.get('view') : 'overview';
+let yaw = 0, pitch = 0;
+const _dir = new THREE.Vector3(), _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
+function setView(name) {
+  const v = VIEWS[name];
+  viewName = name;
+  camera.fov = v.fov || 50;
+  camera.updateProjectionMatrix();
+  camera.position.set(...v.pos);
+  _dir.set(v.target[0] - v.pos[0], v.target[1] - v.pos[1], v.target[2] - v.pos[2]).normalize();
+  yaw = Math.atan2(-_dir.x, -_dir.z);
+  pitch = Math.asin(THREE.MathUtils.clamp(_dir.y, -1, 1));
+  applyLook();
+  dirty = true;
+}
+function applyLook() { camera.rotation.set(pitch, yaw, 0, 'YXZ'); }
+let dirty = true;
+setView(viewName);
+
+const keys = new Set();
+window.addEventListener('keydown', (e) => {
+  if (e.metaKey || e.ctrlKey) return;
+  const k = e.key.toLowerCase();
+  if (k >= '1' && k <= '4' && VIEW_NAMES[+k - 1]) setView(VIEW_NAMES[+k - 1]);
+  else if (k === 'm') { setMarkup(!(markup && markup.visible)); dirty = true; }
+  else if (k === 'h') document.body.classList.toggle('hud-off');
+  keys.add(e.code);
+});
+window.addEventListener('keyup', (e) => keys.delete(e.code));
+window.addEventListener('blur', () => keys.clear());
+let drag = null;
+canvas.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  yaw -= (e.clientX - drag.x) * 0.004;
+  pitch = THREE.MathUtils.clamp(pitch - (e.clientY - drag.y) * 0.004, -1.5, 1.5);
+  drag.x = e.clientX; drag.y = e.clientY;
+  applyLook(); dirty = true;
+});
+canvas.addEventListener('pointerup', () => { drag = null; });
+window.addEventListener('resize', () => {
+  renderer.setPixelRatio(DPR());
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  dirty = true;
+});
+
+// --- checks -------------------------------------------------------------------------------------------------------------
+function check() {
+  const nav = level.nav;
+  const spawnNav = [level.spawns.player, ...level.spawns.enemies].map((s) => {
+    const n = nav.nearest(s.pos);
+    return n ? +Math.hypot(n.x - s.pos.x, n.y - s.pos.y, n.z - s.pos.z).toFixed(2) : null;
+  });
+  const w = game.world;
+  const ground = typeof w.groundAt === 'function'
+    ? [level.spawns.player, ...level.spawns.enemies].map((s) => w.groundAt(s.pos.x, s.pos.z, s.pos.y + 0.5)) : null;
+  const byH = { low: 0, high: 0 }, ends = { corner: 0, wall: 0, open: 0 };
+  for (const c of level.cover) { byH[c.height]++; ends[c.ends.a]++; ends[c.ends.b]++; }
+  const layers = {};
+  for (const n of nav.nodes) layers[n.layer] = (layers[n.layer] || 0) + 1;
+  return {
+    world: worldKind, stats: level.stats, cover: { total: level.cover.length, ...byH, ends },
+    climb: level.climb.edges.map((e) => `${e.id}(${e.kind} y${e.y}) -> ${e.links.map((l) => `${l.to}:${l.dir}`).join(' ')}`),
+    mantle: level.mantle.length, nav: { nodes: nav.nodes.length, links: nav.links.length / 2, layers, droppedPockets: nav.dropped },
+    path: path ? { found: true, points: path.length, length: +pathLen.toFixed(2), endY: path[path.length - 1].y, ms: +pathMs.toFixed(2),
+      maxY: Math.max(...path.map((p) => p.y)), pts: path.map((p) => [+p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2)]) } : { found: false },
+    spawnNavDist: spawnNav, spawnGround: ground,
+    render: { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, programs: renderer.info.programs.length },
+  };
+}
+// GPU+CPU cost per frame: n frames, each forced to completion with a 1-pixel readPixels (gl.finish does not block in
+// Chrome). Includes one GPU round trip per frame, so it is an upper bound on the real cost.
+const _px = new Uint8Array(4);
+function bench(n = 60) {
+  const gl = renderer.getContext();
+  const sync = () => gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, _px);
+  draw(); sync();
+  const t = performance.now();
+  for (let i = 0; i < n; i++) { draw(); sync(); }
+  return +((performance.now() - t) / n).toFixed(2);
+}
+// The same with an empty scene: the round-trip overhead to subtract.
+function benchEmpty(n = 60) {
+  const gl = renderer.getContext(), empty = new THREE.Scene();
+  const sync = () => gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, _px);
+  renderer.render(empty, camera); sync();
+  const t = performance.now();
+  for (let i = 0; i < n; i++) { renderer.render(empty, camera); sync(); }
+  return +((performance.now() - t) / n).toFixed(2);
+}
+window.__level = { level, game, path, check, bench, benchEmpty, renderer, camera, setView };
+
+// --- loop -------------------------------------------------------------------------------------------------------------
+const elSub = document.getElementById('sub'), elStats = document.getElementById('stats');
+let frameMs = 0, last = performance.now(), first = true;
+function draw() {
+  renderer.info.reset();
+  renderer.render(scene, camera);
+}
+function hud() {
+  const s = level.stats;
+  elSub.innerHTML = `view <b>${viewName}</b> &middot; world ${worldKind}${REDUCED ? ' &middot; reduced motion' : ''}`;
+  elStats.innerHTML = `draw calls <b>${renderer.info.render.calls}</b> &middot; tris <b>${(renderer.info.render.triangles / 1000).toFixed(1)}k</b><br>`
+    + `frame <b>${frameMs.toFixed(1)}</b> ms &middot; build <b>${s.buildMs}</b> ms<br>`
+    + `cover <b>${s.cover}</b> &middot; climb <b>${s.climbEdges}</b> &middot; nav <b>${s.navNodes}</b><br>`
+    + `path <b>${path ? pathLen.toFixed(1) + ' m' : 'none'}</b>`;
+}
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.05);
+  frameMs = frameMs * 0.9 + (now - last) * 0.1;
+  last = now;
+  if (keys.size) {
+    const sp = (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 14 : 4.5) * dt;
+    camera.getWorldDirection(_fwd);
+    _right.crossVectors(_fwd, _up).normalize();
+    if (keys.has('KeyW')) camera.position.addScaledVector(_fwd, sp);
+    if (keys.has('KeyS')) camera.position.addScaledVector(_fwd, -sp);
+    if (keys.has('KeyD')) camera.position.addScaledVector(_right, sp);
+    if (keys.has('KeyA')) camera.position.addScaledVector(_right, -sp);
+    if (keys.has('KeyE')) camera.position.y += sp;
+    if (keys.has('KeyQ')) camera.position.y -= sp;
+    dirty = true;
+  }
+  if (!REDUCED) { for (const s of systems) if (s.frame) s.frame(dt, game); dirty = true; }
+  if (dirty) { draw(); hud(); dirty = false; }
+  if (first) { first = false; document.title = 'LEVEL READY'; }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

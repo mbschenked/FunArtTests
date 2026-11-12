@@ -1,0 +1,198 @@
+/* Cover Room HUD (A6). Original art: shapes and drawing are ours, only the behaviour and layout follow the reference
+   game (refs/player-spec.md §5, §7, §8; refs/ai-spec.md §1.2). Built once by createHud(); per frame hud.js writes
+   only transform, opacity and a few custom properties.
+
+   Sizes: the spec measured everything on a 1280x720 frame, so every size here is "px at 720p" times --u, which hud.js
+   sets to (viewport height / 720) x hud.scale. Sizes that are feel numbers come from game.params via hud.js.
+
+   Palette and type live here (art direction, not feel numbers). Tuned to read on a bright sunlit stone scene:
+   warm white ink with a tight dark outline plus a soft dark halo, never a flat white on a light wall. */
+.crhud {
+  --hud-ink:     #fbf8f1;                 /* warm white: reticle, numbers, ticks, icons */
+  --hud-ink-dim: rgba(251, 248, 241, 0.72);
+  --hud-edge:    rgba(18, 14, 10, 0.62);  /* 1 px outline on thin strokes */
+  --hud-halo:    rgba(18, 14, 10, 0.34);  /* soft halo behind text/strokes */
+  --hud-target:  #ff4636;                 /* reticle over an enemy [INFERRED], kill marker, empty magazine */
+  --hud-head:    #ffc23d;                 /* headshot marker [INFERRED] */
+  --aw-white:    #fbf8f1;                 /* awareness: about to notice     (ai-spec §1.2 [DEV] white)  */
+  --aw-yellow:   #ffd23a;                 /* awareness: suspicious / search (ai-spec §1.2 [DEV] yellow) */
+  --aw-orange:   #ff7a1a;                 /* awareness: combat              (ai-spec §1.2 [DEV] orange) */
+  --hud-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* Written by hud.js; these are only first-paint defaults (720p). */
+  --u: 1px;
+  --ret-y: 42%;   --ret-dot: 6px;   --ret-gap: 12px;  --hip-dot: 4px;
+  --hit-len: 7px; --hit-gap: 8.5px; --hit-thick: 2px;
+  --streak-l: 540px; --streak-d: 190px;
+  --aw-size: 26px;
+  --panel-x: 10%; --panel-y: 85%;
+
+  position: fixed; inset: 0; z-index: 40;
+  pointer-events: none; user-select: none; -webkit-user-select: none;
+  overflow: hidden; contain: strict;
+  font-family: var(--hud-font); color: var(--hud-ink);
+  -webkit-font-smoothing: antialiased;
+  transition: opacity 0.18s linear, visibility 0s linear 0s;
+}
+.crhud.crhud-local { position: absolute; }                 /* mounted inside a container instead of the page */
+.crhud.crhud-off   { opacity: 0; visibility: hidden; transition: opacity 0.18s linear, visibility 0s linear 0.18s; }
+.crhud * { box-sizing: border-box; }
+.crhud [data-a="0"] { visibility: hidden; }               /* hud.js sets data-a="0" when a part is fully faded */
+
+/* ---- reticle point: x = 50 %, y = hud.reticle.y (player-spec §8: 42 % from the top [MEASURED]) ---- */
+.crhud-center { position: absolute; left: 50%; top: var(--ret-y); width: 0; height: 0; }
+.crhud-ret, .crhud-arcs, .crhud-hip, .crhud-hit { position: absolute; left: 0; top: 0; width: 0; height: 0; opacity: 0; will-change: opacity, transform; }
+.crhud-dot {
+  position: absolute; border-radius: 50%; background: var(--hud-ink);
+  width: var(--ret-dot); height: var(--ret-dot); left: calc(var(--ret-dot) / -2); top: calc(var(--ret-dot) / -2);
+  box-shadow: 0 0 0 calc(1.25 * var(--u)) var(--hud-edge), 0 0 calc(5 * var(--u)) calc(1 * var(--u)) var(--hud-halo);
+  transition: background-color 0.06s linear;
+}
+.crhud-ret.on-target .crhud-dot, .crhud-hip.on-target .crhud-dot { background: var(--hud-target); }
+
+/* rifle-style ring of four arc ticks; radius = live spread (player-spec §8: rifle reticle [MEASURED F5]) */
+.crhud-arcs .ring {
+  position: absolute; border-radius: 50%;
+  width: calc(2 * var(--ret-gap)); height: calc(2 * var(--ret-gap));
+  left: calc(-1 * var(--ret-gap)); top: calc(-1 * var(--ret-gap));
+  border: calc(2 * var(--u)) solid var(--hud-ink);
+  box-shadow: 0 0 0 calc(1 * var(--u)) var(--hud-edge), inset 0 0 0 calc(1 * var(--u)) var(--hud-edge);
+  -webkit-mask-image: conic-gradient(from -20deg, #000 0deg 40deg, transparent 40deg 90deg, #000 90deg 130deg, transparent 130deg 180deg, #000 180deg 220deg, transparent 220deg 270deg, #000 270deg 310deg, transparent 310deg);
+          mask-image: conic-gradient(from -20deg, #000 0deg 40deg, transparent 40deg 90deg, #000 90deg 130deg, transparent 130deg 180deg, #000 180deg 220deg, transparent 220deg 270deg, #000 270deg 310deg, transparent 310deg);
+  transition: border-color 0.06s linear;
+}
+.crhud-arcs.on-target .ring { border-color: var(--hud-target); }
+
+/* hip reticle [INFERRED, brief; player-spec open question 8]: a small dim dot and a faint ring at the hip spread */
+.crhud-hip .crhud-dot { width: var(--hip-dot); height: var(--hip-dot); left: calc(var(--hip-dot) / -2); top: calc(var(--hip-dot) / -2); opacity: 0.85; }
+.crhud-hip .ring {
+  position: absolute; border-radius: 50%;
+  width: calc(2 * var(--ret-gap)); height: calc(2 * var(--ret-gap));
+  left: calc(-1 * var(--ret-gap)); top: calc(-1 * var(--ret-gap));
+  border: calc(1.5 * var(--u)) solid rgba(251, 248, 241, 0.5);
+  box-shadow: 0 0 0 1px rgba(18, 14, 10, 0.2), inset 0 0 0 1px rgba(18, 14, 10, 0.2);
+}
+
+/* hit marker: four diagonal ticks (player-spec §8: 4-tick X, ~22 px span at 720p [MEASURED F1]) */
+.crhud-hk {
+  position: absolute; left: calc(var(--hit-thick) / -2); top: 0;
+  width: var(--hit-thick); height: var(--hit-len); transform-origin: 50% 0;
+  background: var(--hud-ink); border-radius: 1px;
+  box-shadow: 0 0 0 1px var(--hud-edge), 0 0 calc(5 * var(--u)) 1px var(--hud-halo);
+}
+.crhud-hk:nth-child(1) { transform: rotate(45deg)  translateY(var(--hit-gap)); }
+.crhud-hk:nth-child(2) { transform: rotate(135deg) translateY(var(--hit-gap)); }
+.crhud-hk:nth-child(3) { transform: rotate(225deg) translateY(var(--hit-gap)); }
+.crhud-hk:nth-child(4) { transform: rotate(315deg) translateY(var(--hit-gap)); }
+.crhud-hit.head .crhud-hk { background: var(--hud-head); }
+.crhud-hit.kill .crhud-hk { background: var(--hud-target); height: calc(var(--hit-len) * 1.3); width: calc(var(--hit-thick) + 1px); }
+
+/* ---- damage: dark red streaks pulled in from the screen edge facing the attacker (player-spec §7 [MEASURED]).
+   One pooled element per streak, drawn once as an SVG (ragged band + drips); hud.js places it on the edge and fades it. */
+.crhud-streak {
+  position: absolute; left: 0; top: 0; width: var(--streak-l); height: var(--streak-d);
+  transform-origin: 0 0; opacity: 0; will-change: opacity, transform;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 24%, #000 76%, transparent 100%);
+          mask-image: linear-gradient(90deg, transparent 0%, #000 24%, #000 76%, transparent 100%);
+}
+.crhud-streak svg { display: block; width: 100%; height: 100%; overflow: visible; }
+
+/* ---- enemy awareness: pooled markers placed by transform at the projected head anchor (ai-spec §1.2) ---- */
+.crhud-aw {
+  position: absolute; left: 0; top: 0;
+  width: var(--aw-size); height: calc(var(--aw-size) * 1.32);
+  opacity: 0; will-change: opacity, transform; transform-origin: 50% 100%;
+  filter: drop-shadow(0 0 2px rgba(18, 14, 10, 0.55));
+  --aw-c: var(--aw-white);
+}
+.crhud-aw.yellow { --aw-c: var(--aw-yellow); }
+.crhud-aw.orange { --aw-c: var(--aw-orange); }
+.crhud-aw svg { display: block; width: var(--aw-size); height: var(--aw-size); overflow: visible; }
+.crhud-aw .bg   { fill: rgba(18, 14, 10, 0.30); stroke: rgba(18, 14, 10, 0.45); stroke-width: 4; }
+.crhud-aw .fill { fill: none; stroke: var(--aw-c); stroke-width: 3; stroke-linecap: round; }
+.crhud-aw .core { fill: transparent; }
+.crhud-aw .pin  { fill: var(--aw-c); }
+.crhud-aw.orange .core { fill: var(--aw-c); }             /* combat: solid orange */
+.crhud-aw .glyph {
+  position: absolute; left: 0; top: 0; width: var(--aw-size); height: var(--aw-size);
+  display: flex; align-items: center; justify-content: center;
+  font: 800 calc(var(--aw-size) * 0.62)/1 var(--hud-font); color: #22100a;
+}
+
+/* ---- weapon panel, bottom left (player-spec §8 [MEASURED F1]): icon, one tick per round in the magazine (spent
+   rounds dimmed), the total-rounds number, then the grenade count while any are carried. Layout in 720p px x --u,
+   from the measured boxes: icon x 0.10-0.17 / y 0.81-0.88, ticks x 0.15-0.21 / y 0.87, number at x 0.23. ---- */
+.crhud-panel {
+  position: absolute; left: var(--panel-x); top: var(--panel-y);
+  transform: translateY(-50%);
+  display: flex; align-items: flex-end;
+  opacity: 0; will-change: opacity;
+  line-height: 1; font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 1px rgba(18, 14, 10, 0.70), 0 0 6px rgba(18, 14, 10, 0.45), 0 0 14px rgba(18, 14, 10, 0.25);
+}
+.crhud-panel .gun { display: block; width: calc(90 * var(--u)); height: calc(51 * var(--u)); overflow: visible;
+  filter: drop-shadow(0 0 calc(3 * var(--u)) rgba(18, 14, 10, 0.45)); }
+.crhud-panel .gun .body { fill: var(--hud-ink); stroke: rgba(18, 14, 10, 0.55); stroke-width: 1.2; paint-order: stroke; stroke-linejoin: round; }
+.crhud-panel .gun .cut  { fill: none; stroke: rgba(18, 14, 10, 0.35); stroke-width: 1; }
+.crhud-panel .gun .guard-o { fill: none; stroke: rgba(18, 14, 10, 0.55); stroke-width: 4.4; stroke-linecap: round; }
+.crhud-panel .gun .guard   { fill: none; stroke: var(--hud-ink); stroke-width: 2.4; stroke-linecap: round; }
+.crhud-panel .ticks {
+  display: flex; gap: calc(2.6 * var(--u));
+  margin: 0 0 calc(3 * var(--u)) calc(-26 * var(--u));
+}
+.crhud-panel .tick {
+  width: calc(3.6 * var(--u)); height: calc(13 * var(--u)); border-radius: calc(1 * var(--u));
+  background: var(--hud-ink);
+  box-shadow: 0 0 0 1px rgba(18, 14, 10, 0.5), 0 0 calc(4 * var(--u)) rgba(18, 14, 10, 0.3);
+}
+.crhud-panel .tick.spent { opacity: var(--spent-a, 0.25); }
+.crhud-panel .tick.off   { display: none; }
+.crhud-panel .total {
+  margin: 0 0 calc(1 * var(--u)) calc(14 * var(--u));
+  font-size: calc(27 * var(--u)); font-weight: 650; letter-spacing: -0.01em; min-width: 2ch;
+}
+.crhud-panel.empty .total { color: var(--hud-target); }
+.crhud-panel .gren { display: flex; align-items: flex-end; gap: calc(5 * var(--u)); margin: 0 0 calc(2 * var(--u)) calc(16 * var(--u)); color: var(--hud-ink); }
+.crhud-panel .gren .n { font-size: calc(19 * var(--u)); font-weight: 600; }
+.crhud-panel .gren .icon {                         /* original grenade glyph: a body with a lever */
+  position: relative; width: calc(13 * var(--u)); height: calc(16 * var(--u));
+  border-radius: 45% 45% 50% 50%; background: currentColor; margin-bottom: calc(1 * var(--u));
+  box-shadow: 0 0 0 1px rgba(18, 14, 10, 0.5), 0 0 calc(6 * var(--u)) rgba(18, 14, 10, 0.3);
+}
+.crhud-panel .gren .icon::before {
+  content: ""; position: absolute; left: 30%; top: calc(-5 * var(--u));
+  width: 55%; height: calc(5 * var(--u)); border-radius: 1px 3px 0 0; background: currentColor;
+}
+.crhud-panel .gren.none { display: none; }         /* shown only while grenades are carried [INFERRED, §8] */
+.crhud-panel.grenade-mode .gren .n { font-size: calc(23 * var(--u)); }
+
+/* ---- contextual prompt: bottom centre, or anchored over a world point (pickups, player-spec §8) ---- */
+.crhud-prompt {
+  position: absolute; left: 50%; bottom: 17%;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: calc(9 * var(--u));
+  padding: calc(6 * var(--u)) calc(14 * var(--u));
+  opacity: 0; will-change: opacity; white-space: nowrap;
+  font-size: calc(17 * var(--u)); font-weight: 560; letter-spacing: 0.02em;
+  text-shadow: 0 1px 1px rgba(18, 14, 10, 0.7), 0 0 8px rgba(18, 14, 10, 0.45);
+  background: radial-gradient(closest-side, rgba(18, 14, 10, 0.30), rgba(18, 14, 10, 0));
+}
+.crhud-prompt.anchored { left: 0; top: 0; bottom: auto; transform-origin: 50% 100%; }
+.crhud-prompt .k {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: calc(25 * var(--u)); height: calc(25 * var(--u)); padding: 0 calc(6 * var(--u));
+  border: calc(1.5 * var(--u)) solid var(--hud-ink); border-radius: calc(5 * var(--u));
+  font-size: calc(12.5 * var(--u)); font-weight: 700; letter-spacing: 0.04em;
+  background: rgba(18, 14, 10, 0.28);
+  box-shadow: 0 0 0 1px rgba(18, 14, 10, 0.35), 0 1px 4px rgba(18, 14, 10, 0.35);
+}
+.crhud-prompt .k:empty { display: none; }
+
+/* ---- fallback health look, used only when game.render.setGrade is missing ---- */
+.crhud-grade { position: absolute; inset: 0; }
+.crhud-grade .desat { position: absolute; inset: 0; -webkit-backdrop-filter: saturate(var(--grade-sat, 1)); backdrop-filter: saturate(var(--grade-sat, 1)); }
+.crhud-grade .vig   { position: absolute; inset: 0; opacity: 0; background: radial-gradient(ellipse 75% 70% at 50% 50%, rgba(0,0,0,0) 40%, rgba(6,4,3,0.7) 82%, rgba(6,4,3,0.95) 100%); }
+
+@media (prefers-reduced-motion: reduce) {
+  .crhud, .crhud.crhud-off, .crhud * { transition: none !important; }
+}

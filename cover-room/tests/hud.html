@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Cover Room: HUD test</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../src/hud/hud.css">
+<style>
+  /* Test chrome only (the HUD's own look is in src/hud/hud.css). House style of vfx-studies: mono, dark panels. */
+  :root {
+    --ink:     rgba(228, 232, 238, 0.93);
+    --ink-dim: rgba(150, 164, 184, 0.88);
+    --accent:  #ffb454;
+    --panel:   rgba(9, 12, 17, 0.80);
+    --line:    rgba(255, 255, 255, 0.14);
+    --mono:    ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #06080c; color: var(--ink); font: 11px/1.4 var(--mono); }
+  #gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+  #gl:active { cursor: grabbing; }
+  #fallback { position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center; padding: 24px;
+    text-align: center; line-height: 1.7; color: var(--ink-dim); background: #06080c; white-space: pre-line; overflow-wrap: anywhere; }
+  #fallback[hidden] { display: none; }
+
+  .side { position: fixed; z-index: 60; top: 10px; right: 10px; bottom: 10px; width: 236px;
+    display: flex; flex-direction: column; gap: 6px; overflow: auto; pointer-events: auto; }
+  .side h1 { margin: 0 0 2px; font-size: 12px; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.9); }
+  .grp { padding: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
+    display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .grp > b { width: 100%; font-weight: 500; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-dim); }
+  button, input { font: inherit; color: var(--ink); background: rgba(255,255,255,0.06); border: 1px solid var(--line);
+    border-radius: 5px; min-height: 26px; padding: 3px 7px; }
+  button { cursor: pointer; }
+  button:hover { background: rgba(255,255,255,0.13); }
+  button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: rgba(255,180,84,0.12); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  label.sl { display: flex; align-items: center; gap: 6px; width: 100%; color: var(--ink-dim); }
+  label.sl input[type=range] { flex: 1; min-height: 0; padding: 0; accent-color: var(--accent); }
+  label.sl output { min-width: 4.5ch; text-align: right; color: var(--ink); }
+  label.ck { display: flex; align-items: center; gap: 5px; color: var(--ink-dim); }
+  .status { font-size: 10px; color: var(--ink-dim); white-space: pre; line-height: 1.5; padding: 6px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 7px; }
+  .lil-gui.root { z-index: 61; }
+  .lil-gui.root.cr-params { right: 254px; max-height: calc(100vh - 20px); overflow: auto; }
+  body.preflight .side, body.preflight .lil-gui { display: none !important; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three":         "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "lil-gui":       "https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.min.js"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="gl" aria-label="Sunlit stone courtyard backdrop with four enemy stand-ins"></canvas>
+<div id="fallback" hidden></div>
+
+<div class="side" id="side">
+  <h1>Cover Room / HUD</h1>
+  <div class="grp"><b>Weapon state</b>
+    <button data-act="mode:none" aria-pressed="true">Explore</button>
+    <button data-act="mode:aim" title="hold-to-aim stand-in">Aim</button>
+    <button data-act="mode:grenade">Grenade aim</button>
+    <button data-act="fire" title="F">Fire</button>
+    <button data-act="reload" title="R">Reload</button>
+    <button data-act="throw" title="G">Throw</button>
+    <button data-act="refill">Pick up ammo</button>
+    <label class="ck"><input id="arcs" type="checkbox"> rifle arcs</label>
+    <label class="ck"><input id="forceTarget" type="checkbox"> force on-target</label>
+  </div>
+  <div class="grp"><b>Hit marker</b>
+    <button data-act="hit:body">Body</button>
+    <button data-act="hit:head">Head</button>
+    <button data-act="hit:kill">Kill</button>
+  </div>
+  <div class="grp"><b>Take a hit from</b>
+    <button data-act="dmg:0">Front</button>
+    <button data-act="dmg:-90">Left</button>
+    <button data-act="dmg:90">Right</button>
+    <button data-act="dmg:180">Behind</button>
+    <button data-act="dmg:rnd">Random</button>
+  </div>
+  <div class="grp"><b>Health (luck)</b>
+    <label class="sl">luck <input id="health" type="range" min="0" max="1" step="0.01" value="1"><output id="healthOut">1.00</output></label>
+    <label class="ck"><input id="regen" type="checkbox" checked> regen (1.5 s delay, 120 HP/s)</label>
+  </div>
+  <div class="grp"><b>Enemy awareness</b>
+    <button data-act="aw:notice">Notice</button>
+    <button data-act="aw:combat">Combat</button>
+    <button data-act="aw:search">Search</button>
+    <button data-act="aw:reset">Reset</button>
+  </div>
+  <div class="grp"><b>Prompt</b>
+    <button data-act="prompt:climb">Climb</button>
+    <button data-act="prompt:pickup">Pickup (world)</button>
+    <button data-act="prompt:none">None</button>
+  </div>
+  <div class="grp"><b>View</b>
+    <button data-act="toggle" title="H">HUD on/off</button>
+    <button data-act="panel" title="P">Params</button>
+    <label class="sl">yaw <input id="yaw" type="range" min="-180" max="180" step="1" value="0"><output id="yawOut">0</output></label>
+  </div>
+  <div class="status" id="status"></div>
+</div>
+
+<script type="module">
+// tests/hud.html: the HUD (src/hud/hud.js) over a neutral sunlit-stone backdrop, rendered by the real core/render.js
+// (so the health look goes through render.setGrade), driven the way the game will drive it: a stand-in "driver" system
+// calls setReticle/setAmmo/setGrenades/setHealthLook/awareness every sim step; hits and damage are one-shots.
+// Driver numbers follow refs/player-spec.md (12-round magazine, 60 rounds carried, 4 grenades, enemy pistol hit 10 HP,
+// regen 1.5 s delay then 120 HP/s) and refs/ai-spec.md §1.2 (white / yellow / orange awareness).
+// Stubs for modules not built yet: world.raycast (THREE.Raycaster on the solids), actors with rig.getBoneWorld('head').
+//
+// TEST MODE  ?preflight&state=<name>[&t=<s>][&grade=fallback]
+//   Runs the fixed-step clock to t (default per state), draws one frame, sets document.title = "PREFLIGHT READY"
+//   and exposes window.__hud = {state, label, t, debug}. window.__hudStates lists the states.
+//   &grade=fallback removes render.setGrade so the HUD's own DOM grade is used.
+// Frame budget: one shadowed sun + ~16 meshes (~20 draw calls) through the render.js pipeline; the HUD adds none.
+import * as THREE from 'three';
+import GUI from 'lil-gui';
+import { Game, mulberry32 } from '../src/core/game.js';
+import { createRender } from '../src/core/render.js';
+import { createHud } from '../src/hud/hud.js';
+
+const QP = new URLSearchParams(location.search);
+const PREFLIGHT = QP.has('preflight');
+const fallbackEl = document.getElementById('fallback');
+const fail = (msg) => { fallbackEl.hidden = false; fallbackEl.textContent = 'HUD test failed to start\n' + msg; };
+addEventListener('error', (e) => fail(String(e.message || e.error)));
+addEventListener('unhandledrejection', (e) => fail(String(e.reason)));
+if (PREFLIGHT) document.body.classList.add('preflight');
+
+// ---------------------------------------------------------------- palette (backdrop only)
+const SKY = 0xa8c6e3, FOG = 0xcfd9e2;
+const STONE_FLOOR = [206, 189, 158], STONE_WALL = [221, 207, 180];
+const GROUT_FLOOR = '#8f7d63', GROUT_WALL = '#a3917a';
+const MANNEQUIN_ENEMY = 0x3c4856, MANNEQUIN_PLAYER = 0x7a5236, AMMO_BOX = 0x5d6b47;
+
+// ---------------------------------------------------------------- game, renderer, scene
+const game = new Game({ seed: 7, test: true });            // test: params not persisted, runs repeat
+const canvas = document.getElementById('gl');
+const render = createRender(game, { canvas, static: PREFLIGHT, fov: 55 });
+if (QP.get('grade') === 'fallback') render.setGrade = null;
+const { scene, camera } = render;
+scene.background = new THREE.Color(SKY);
+scene.fog = new THREE.Fog(FOG, 35, 95);
+
+// Light levels keep the lit stone under ~0.7 scene-referred, below the bloom knee (render.js header).
+scene.add(new THREE.HemisphereLight(0xd6e8ff, 0x8a7458, 1.15));
+const sun = new THREE.DirectionalLight(0xfff0d8, 2.8);
+sun.position.set(14, 20, 7);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -26, right: 26, top: 26, bottom: -26, near: 1, far: 70 });
+sun.shadow.bias = -0.0004;
+scene.add(sun);
+
+// Stone texture: flags (floor) or running-bond ashlar (walls), drawn once on a canvas with a seeded rng.
+function stoneTexture(seed, base, grout, rows, cols, bond, repeat) {
+  const rng = mulberry32(seed);
+  const c = document.createElement('canvas');
+  c.width = c.height = 512;
+  const g = c.getContext('2d');
+  g.fillStyle = grout; g.fillRect(0, 0, 512, 512);
+  const rh = 512 / rows;
+  for (let r = 0; r < rows; r++) {
+    let x = bond && r % 2 ? -256 / cols : 0;
+    while (x < 512) {
+      const bw = (512 / cols) * (0.65 + rng() * 0.7);
+      const v = (rng() - 0.5) * 30;
+      g.fillStyle = `rgb(${(base[0] + v) | 0},${(base[1] + v * 0.95) | 0},${(base[2] + v * 0.85) | 0})`;
+      g.fillRect(x + 2, r * rh + 2, bw - 4, rh - 4);
+      x += bw;
+    }
+  }
+  for (let i = 0; i < 5000; i++) {
+    g.fillStyle = rng() < 0.5 ? 'rgba(40,30,20,0.06)' : 'rgba(255,250,240,0.07)';
+    g.fillRect(rng() * 512, rng() * 512, 1 + rng() * 3, 1 + rng() * 3);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(repeat[0], repeat[1]);
+  t.anisotropy = 8;
+  return t;
+}
+const floorMat = new THREE.MeshStandardMaterial({ map: stoneTexture(3, STONE_FLOOR, GROUT_FLOOR, 6, 6, false, [14, 14]), roughness: 0.95 });
+const wallTex = stoneTexture(5, STONE_WALL, GROUT_WALL, 10, 4, true, [1, 1]);
+const solids = [];
+function block(size, pos, rotY = 0) {
+  const tex = wallTex.clone();
+  tex.repeat.set(Math.max(1, Math.round(Math.max(size[0], size[2]) / 2)), Math.max(1, Math.round(size[1] / 1.2)));
+  tex.needsUpdate = true;
+  const m = new THREE.Mesh(new THREE.BoxGeometry(...size), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.92 }));
+  m.position.set(...pos); m.rotation.y = rotY;
+  m.castShadow = m.receiveShadow = true;
+  scene.add(m); solids.push(m);
+  return m;
+}
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(120, 120), floorMat);
+floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true;
+scene.add(floor); solids.push(floor);
+block([34, 5, 1.2], [0, 2.5, -23]);           // back wall
+block([1.2, 5, 30], [-15, 2.5, -8]);          // west wall
+block([3.4, 1.0, 0.55], [-3.6, 0.5, -5.2]);   // low cover wall
+block([1.2, 2.6, 1.2], [6.5, 1.3, -9]);       // pillar (hides E3)
+block([1.2, 1.2, 1.2], [2.6, 0.6, -6.5], 0.4);// crate
+block([1.3, 1.2, 2.4], [-7.5, 0.6, -2.5]);    // mantle block
+const col = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 4.2, 20), new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.9 }));
+col.rotation.set(0, 0.7, Math.PI / 2); col.position.set(-6.5, 0.5, -13); col.castShadow = col.receiveShadow = true;
+scene.add(col); solids.push(col);
+const ammoBox = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.3, 0.32), new THREE.MeshStandardMaterial({ color: AMMO_BOX, roughness: 0.8 }));
+ammoBox.position.set(2.1, 0.15, -3.4); ammoBox.rotation.y = 0.5; ammoBox.castShadow = true;
+scene.add(ammoBox);
+const PICKUP_ANCHOR = new THREE.Vector3(2.1, 0.62, -3.4);
+
+// ---------------------------------------------------------------- actors (stand-ins with the Actor shape)
+const capGeo = new THREE.CapsuleGeometry(0.24, 0.95, 4, 12);
+const headGeo = new THREE.SphereGeometry(0.13, 16, 12);
+function mannequin(color) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.7 });
+  const body = new THREE.Mesh(capGeo, mat); body.position.y = 0.85;
+  const head = new THREE.Mesh(headGeo, mat); head.position.y = 1.62;
+  body.castShadow = head.castShadow = true;
+  g.add(body, head);
+  scene.add(g);
+  return { group: g, head, body };
+}
+function makeActor(id, team, x, z, yaw, color) {
+  const m = mannequin(color);
+  m.group.position.set(x, 0, z); m.group.rotation.y = yaw;
+  return {
+    id, team, pos: m.group.position, vel: new THREE.Vector3(), yaw, height: 1.8, radius: 0.35,
+    health: 100, maxHealth: 100, alive: true, state: {}, mesh: m,
+    rig: { root: m.group, getBoneWorld: (name, out) => (name === 'head' ? m.head.getWorldPosition(out) : null) },
+  };
+}
+const player = makeActor('player', 'player', 0, 0, Math.PI, MANNEQUIN_PLAYER);
+const enemies = [
+  makeActor('E1', 'enemy', -0.6, -12, 0.3, MANNEQUIN_ENEMY),   // just left of the reticle: the aim target
+  makeActor('E2', 'enemy', 3.6, -17, -0.2, MANNEQUIN_ENEMY),   // far right
+  makeActor('E3', 'enemy', 7.4, -11.5, -0.5, MANNEQUIN_ENEMY), // behind the pillar: occluded marker
+  makeActor('E4', 'enemy', -1.5, 7, Math.PI, MANNEQUIN_ENEMY), // behind the camera: off-screen marker
+];
+game.player = player; game.enemies = enemies; game.actors = [player, ...enemies];
+const enemyMeshes = enemies.flatMap((e) => [e.mesh.body, e.mesh.head]);
+
+// world stub: raycast against the static solids (the HUD asks for hitActors: false).
+const raycaster = new THREE.Raycaster();
+const _hit = { point: new THREE.Vector3(), normal: null, dist: 0 };
+game.world = {
+  raycast(origin, dir, maxDist, opts = {}) {
+    raycaster.set(origin, dir); raycaster.far = maxDist;
+    const hits = raycaster.intersectObjects(opts.hitActors === false ? solids : solids.concat(enemyMeshes), false);
+    if (!hits.length) return null;
+    _hit.point.copy(hits[0].point); _hit.dist = hits[0].distance;
+    return _hit;
+  },
+};
+
+// ---------------------------------------------------------------- HUD
+const hud = createHud(game);
+const P = (k) => game.params.get(k);
+
+// ---------------------------------------------------------------- camera: third person, right shoulder
+// The camera aims through the HUD's reticle point (x 0.5, y = hud.reticle.y), not the screen centre.
+let camYaw = 0;                          // rad; 0 looks down -Z
+let lookAtTarget = null;                 // optional world point to put under the reticle
+const OFFSET = new THREE.Vector3(0.8, 1.72, 3.4), AHEAD = new THREE.Vector3(0.8, 1.45, -10);
+const tv = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+const reticleNdc = new THREE.Vector2();
+function reticlePitch() {   // pitch that puts the look-at point at hud.reticle.y instead of the centre
+  const ndcY = (0.5 - P('hud.reticle.y')) * 2;
+  return Math.atan(ndcY * Math.tan((camera.fov * Math.PI) / 360));
+}
+function placeCamera() {
+  tv.copy(OFFSET).applyAxisAngle(up, camYaw).add(player.pos);
+  camera.position.copy(tv);
+  camera.lookAt(lookAtTarget || tv.copy(AHEAD).applyAxisAngle(up, camYaw).add(player.pos));
+  camera.rotateX(-reticlePitch());
+  player.mesh.group.rotation.y = camYaw + Math.PI;
+  camera.updateMatrixWorld();
+  reticleNdc.set(0, (0.5 - P('hud.reticle.y')) * 2);
+}
+function aimAt(actor) {
+  const hp = actor.mesh.head.getWorldPosition(new THREE.Vector3());
+  camYaw = Math.atan2(-(hp.x - player.pos.x), -(hp.z - player.pos.z));
+  lookAtTarget = hp.add(new THREE.Vector3(0, -0.25, 0));   // upper chest
+}
+if (!PREFLIGHT) addEventListener('resize', () => render.resize());
+placeCamera();
+
+// ---------------------------------------------------------------- driver: stands in for weapons / ai / player health
+const MAG = 12, CARRIED = 60, GRENADES_MAX = 4;   // player-spec §5, summary 10
+const demo = {
+  mode: 'none', arcs: false, baseSpread: 0.012, bloom: 0, forceTarget: false, hipPulse: false,
+  mag: MAG, reserve: CARRIED - MAG, grenades: 2, reloadT: -1,
+  hp: 100, regen: true, lastHurt: -99,
+  aware: enemies.map((a) => ({ actor: a, meter: 0, state: 'unaware', rate: 0 })),
+  prompt: null, promptAt: null, schedule: [],
+};
+const reticleArg = { mode: 'none', spread: 0, onTarget: false, style: null };
+function underReticle() {
+  raycaster.setFromCamera(reticleNdc, camera); raycaster.far = 80;
+  const hits = raycaster.intersectObjects(solids.concat(enemyMeshes), false);
+  return hits.length > 0 && enemyMeshes.includes(hits[0].object);
+}
+function fire() {
+  if (demo.reloadT >= 0) return;
+  if (demo.mag <= 0) { reload(); return; }
+  demo.mag--;
+  if (demo.mode !== 'aim') demo.hipPulse = true;
+  demo.bloom = Math.min(0.06, demo.bloom + (demo.mode === 'aim' ? 0.012 : 0.025));   // demo numbers; real ones live in pistol.js
+  if (demo.forceTarget || underReticle()) hud.hitMarker(game.rng() < 0.25 ? 'head' : 'body');
+  if (demo.mag === 0) reload();                      // empty magazine reloads on its own (player-spec summary 4)
+}
+function reload() { if (demo.reloadT < 0 && demo.mag < MAG && demo.reserve > 0) demo.reloadT = 0; }
+function hurtFrom(deg, amount = 10) {
+  // deg: attacker bearing relative to the camera, clockwise; the HUD gets the travel direction (attacker -> player).
+  const a = camYaw - (deg * Math.PI) / 180;
+  const toAttacker = new THREE.Vector3(-Math.sin(a), 0, -Math.cos(a));
+  hud.damage(toAttacker.negate(), Math.min(1, amount / 15));
+  demo.hp = Math.max(0, demo.hp - amount); demo.lastHurt = game.time;
+}
+function awareValue(w) {   // ai-spec §1.2 meter a in [0, 2] -> the fill of the arc being shown
+  if (w.state === 'unaware') return Math.min(1, w.meter);
+  if (w.state === 'combat') return 1;
+  if (w.state === 'search') return w.meter / 2;
+  return Math.max(0, w.meter - 1);
+}
+game.addSystem({
+  name: 'hud-test-driver', order: 20,
+  update(dt, g) {
+    while (demo.schedule.length && demo.schedule[0][0] <= g.time + 1e-9) demo.schedule.shift()[1]();
+    demo.bloom = Math.max(0, demo.bloom - dt * 0.08);
+    reticleArg.mode = demo.hipPulse ? 'hip' : demo.mode;
+    demo.hipPulse = false;
+    reticleArg.spread = demo.baseSpread + demo.bloom;
+    reticleArg.onTarget = demo.mode !== 'none' && (demo.forceTarget || underReticle());
+    reticleArg.style = demo.arcs ? 'arcs' : null;
+    hud.setReticle(reticleArg);
+    if (demo.reloadT >= 0) {
+      demo.reloadT += dt;
+      if (demo.reloadT >= 0.85) {                     // empty reload 0.85 s (player-spec summary 4)
+        const take = Math.min(MAG - demo.mag, demo.reserve);
+        demo.mag += take; demo.reserve -= take; demo.reloadT = -1;
+      }
+    }
+    hud.setAmmo(demo.mag, demo.reserve, demo.mode === 'aim' || demo.reloadT >= 0, MAG);
+    hud.setGrenades(demo.grenades);
+    if (demo.regen && g.time - demo.lastHurt > 1.5) demo.hp = Math.min(100, demo.hp + 120 * dt);   // player-spec §7
+    hud.setHealthLook(demo.hp / 100);
+    for (const w of demo.aware) {
+      if (w.rate) {
+        w.meter = Math.min(2, w.meter + w.rate * dt);
+        if (w.meter >= 2) { w.state = 'combat'; w.rate = 0; }
+        else if (w.meter >= 1 && w.state === 'unaware') w.state = 'suspicious';
+      }
+      hud.awareness(w.actor, awareValue(w), w.state);
+    }
+    hud.prompt(demo.prompt, demo.promptAt);
+  },
+});
+// Camera before the HUD (order 70 < 90, as in the game).
+game.addSystem({ name: 'hud-test-camera', order: 70, frame() { placeCamera(); } });
+
+// ---------------------------------------------------------------- preflight states
+const at = (t, fn) => demo.schedule.push([t, fn]);
+const aware = (i, meter, state, rate = 0) => Object.assign(demo.aware[i], { meter, state, rate });
+const STATES = {
+  'explore':       { t: 0.5,  label: 'exploring: no HUD at all' },
+  'hip':           { t: 0.5,  label: 'hip fire: small dot + spread ring, panel up', setup() { at(0.1, fire); at(0.3, fire); } },
+  'aim':           { t: 0.5,  label: 'aim: dot at 42 % height, panel up', setup() { demo.mode = 'aim'; } },
+  'aim-target':    { t: 0.5,  label: 'aim over an enemy: dot tints', setup() { demo.mode = 'aim'; aimAt(enemies[0]); } },
+  'aim-arcs':      { t: 0.5,  label: 'rifle style: 4 arcs, radius = spread (4 shots)',
+                     setup() { demo.mode = 'aim'; demo.arcs = true; for (const s of [0.1, 0.2, 0.3, 0.4]) at(s, fire); } },
+  'grenade':       { t: 0.5,  label: 'grenade aim: no reticle, count emphasised', setup() { demo.mode = 'grenade'; } },
+  'reload':        { t: 0.45, label: 'empty mag reloading: ticks spent, total 48',
+                     setup() { demo.mode = 'aim'; demo.mag = 1; at(0.1, fire); } },
+  'panel-fade':    { t: 7.3,  label: 'panel half faded: 3 s show + 4 s delay after a hip shot', setup() { at(0.05, fire); } },
+  'hit-body':      { t: 0.45, label: 'hit marker: body', setup() { demo.mode = 'aim'; aimAt(enemies[0]); at(0.4, () => hud.hitMarker('body')); } },
+  'hit-head':      { t: 0.45, label: 'hit marker: head', setup() { demo.mode = 'aim'; aimAt(enemies[0]); at(0.4, () => hud.hitMarker('head')); } },
+  'hit-kill':      { t: 0.45, label: 'hit marker: kill', setup() { demo.mode = 'aim'; aimAt(enemies[0]); at(0.4, () => hud.hitMarker('kill')); } },
+  'damage':        { t: 0.7,  label: 'streaks: left, behind-right, front-right (3 hits, luck 0.7)',
+                     setup() { demo.regen = false; at(0.0, () => hurtFrom(-90)); at(0.3, () => hurtFrom(140)); at(0.55, () => hurtFrom(40)); } },
+  'damage-recover':{ t: 2.1,  label: 'streak fading once regen starts (15 HP hit at 0, regen from 1.5 s)',
+                     setup() { at(0.0, () => hurtFrom(-20, 15)); } },
+  'health-60':     { t: 0.6,  label: 'luck 0.6: first colour loss', setup() { demo.regen = false; demo.hp = 60; } },
+  'health-30':     { t: 0.6,  label: 'luck 0.3: washed out + vignette', setup() { demo.regen = false; demo.hp = 30; } },
+  'health-10':     { t: 0.6,  label: 'luck 0.1: near grey', setup() { demo.regen = false; demo.hp = 10; } },
+  'aware-fill':    { t: 0.5,  label: 'E1 white 0.35, E2 yellow 0.6; E3 occluded, E4 off-screen',
+                     setup() { aware(0, 0.35, 'unaware'); aware(1, 1.6, 'suspicious'); aware(2, 1.5, 'suspicious'); aware(3, 0.5, 'unaware'); } },
+  'aware-combat':  { t: 0.8,  label: 'E1 combat (solid orange), E2 search refill; panel up for the encounter',
+                     setup() { aware(0, 1.8, 'suspicious'); at(0.4, () => aware(0, 2, 'combat')); aware(1, 0.8, 'search'); } },
+  'prompt':        { t: 0.4,  label: 'contextual prompt, bottom centre', setup() { demo.prompt = '[Space] Climb'; } },
+  'prompt-pickup': { t: 0.4,  label: 'pickup prompt anchored over the item',
+                     setup() { demo.prompt = '[E] Pick up'; demo.promptAt = PICKUP_ANCHOR; } },
+  'busy':          { t: 0.45, label: 'combat: on target, head hit, streak, luck 0.45, E2 orange',
+                     setup() { demo.mode = 'aim'; aimAt(enemies[0]); demo.regen = false; demo.hp = 55; aware(1, 2, 'combat');
+                               at(0.1, () => hurtFrom(75)); at(0.4, () => hud.hitMarker('head')); } },
+  'hidden':        { t: 0.45, label: 'busy with toggle(false): overlay hidden, grade stays',
+                     setup() { STATES.busy.setup(); hud.toggle(false); } },
+};
+window.__hudStates = Object.keys(STATES);
+
+const status = document.getElementById('status');
+function showStatus() {
+  const d = hud.debug();
+  status.textContent =
+    `reticle ${d.reticle.mode}  dot ${d.reticle.dot} arcs ${d.reticle.arcs} hip ${d.reticle.hip}${d.reticle.onTarget ? ' TARGET' : ''}\n` +
+    `panel ${d.panel.mag}|${d.panel.total} g${d.panel.grenades} a ${d.panel.alpha} off ${d.panel.offFor}${d.panel.encounter ? ' ENC' : ''}\n` +
+    `luck ${d.health.cur.toFixed(2)}  sat ${d.health.grade.saturation.toFixed(2)} vig ${d.health.grade.vignette.toFixed(2)}\n` +
+    `streaks ${d.streaks.length}  hit ${d.hit ? d.hit.kind : '-'}\n` +
+    d.awareness.map((a) => `${a.id} ${a.state} ${a.value.toFixed(2)} a${a.alpha}${a.onScreen ? '' : ' off'}${a.occluded ? ' occl' : ''}`).join('\n');
+}
+
+if (PREFLIGHT) {
+  const name = QP.get('state') || 'busy';
+  const st = STATES[name];
+  if (!st) throw new Error(`unknown state "${name}"; one of ${Object.keys(STATES).join(', ')}`);
+  if (st.setup) st.setup();
+  demo.schedule.sort((a, b) => a[0] - b[0]);
+  placeCamera();
+  const T = QP.has('t') ? Math.max(0, +QP.get('t')) : st.t;
+  const steps = Math.round(T / game.dt);
+  for (let i = 0; i < steps; i++) game.tick(game.dt);
+  if (steps === 0) game.renderFrame(0);
+  window.__hud = { state: name, label: st.label, t: +game.time.toFixed(4), debug: hud.debug() };
+  document.title = 'PREFLIGHT READY';
+} else {
+  // ---------------------------------------------------------------- interactive controls
+  const press = (sel, on) => document.querySelectorAll(sel).forEach((b) => b.setAttribute('aria-pressed', String(on(b))));
+  const act = (a) => {
+    const i = a.indexOf(':');
+    const k = i < 0 ? a : a.slice(0, i), v = i < 0 ? '' : a.slice(i + 1);
+    if (k === 'mode') { demo.mode = v; lookAtTarget = null; press('[data-act^="mode:"]', (b) => b.dataset.act === a); }
+    else if (k === 'fire') fire();
+    else if (k === 'reload') reload();
+    else if (k === 'throw') { if (demo.grenades > 0) demo.grenades--; }
+    else if (k === 'refill') { demo.reserve = CARRIED - demo.mag; demo.grenades = GRENADES_MAX; }
+    else if (k === 'hit') hud.hitMarker(v);
+    else if (k === 'dmg') hurtFrom(v === 'rnd' ? Math.round(game.rng() * 360 - 180) : +v);
+    else if (k === 'aw') {
+      if (v === 'notice') { aware(0, 0.05, 'unaware', 0.7); aware(1, 0.05, 'unaware', 0.45); aware(2, 0.05, 'unaware', 0.5); aware(3, 0.05, 'unaware', 0.5); }
+      else if (v === 'combat') for (let n = 0; n < 4; n++) aware(n, 2, 'combat');
+      else if (v === 'search') for (let n = 0; n < 4; n++) aware(n, 0.1, 'search', 0.2);
+      else for (let n = 0; n < 4; n++) aware(n, 0, 'unaware');
+    }
+    else if (k === 'prompt') {
+      demo.prompt = v === 'climb' ? '[Space] Climb' : v === 'pickup' ? '[E] Pick up' : null;
+      demo.promptAt = v === 'pickup' ? PICKUP_ANCHOR : null;
+    }
+    else if (k === 'toggle') hud.toggle();
+    else if (k === 'panel') game.params.togglePanel();
+  };
+  document.getElementById('side').addEventListener('click', (e) => { const b = e.target.closest('button[data-act]'); if (b) act(b.dataset.act); });
+  const bind = (id, fn) => { const inp = document.getElementById(id), o = document.getElementById(id + 'Out'); inp.addEventListener('input', () => { fn(+inp.value); if (o) o.textContent = inp.value; }); };
+  bind('health', (v) => { demo.hp = v * 100; demo.lastHurt = game.time; });
+  bind('yaw', (v) => { camYaw = (v * Math.PI) / 180; lookAtTarget = null; });
+  document.getElementById('forceTarget').addEventListener('change', (e) => { demo.forceTarget = e.target.checked; });
+  document.getElementById('arcs').addEventListener('change', (e) => { demo.arcs = e.target.checked; });
+  document.getElementById('regen').addEventListener('change', (e) => { demo.regen = e.target.checked; });
+  addEventListener('keydown', (e) => {
+    if (e.target.closest && e.target.closest('input')) return;
+    const k = e.key.toLowerCase();
+    if (k === 'f') fire(); else if (k === 'r') reload(); else if (k === 'g') act('throw'); else if (k === 'h') hud.toggle();
+    else if (k === 'p') act('panel');
+  });
+  // Drag on the backdrop turns the camera (to watch streaks and awareness markers track).
+  let drag = null;
+  canvas.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, yaw: camYaw }; canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener('pointermove', (e) => { if (drag) { camYaw = drag.yaw - (e.clientX - drag.x) * 0.006; lookAtTarget = null; } });
+  canvas.addEventListener('pointerup', () => { drag = null; });
+
+  game.params.buildPanel(GUI, { title: 'params (hud.*, render.*)', hidden: true });
+  setInterval(showStatus, 250);
+  game.start();
+}
+</script>
+</body>
+</html>

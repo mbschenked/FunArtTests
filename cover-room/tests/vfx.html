@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cover Room: VFX test range</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0d10; color: #e4e8ee; font: 12px/1.45 ui-sans-serif, system-ui, -apple-system, sans-serif; overflow: hidden; }
+  canvas#gl { display: block; position: fixed; inset: 0; width: 100%; height: 100%; }
+  #hud { position: fixed; left: 10px; top: 10px; padding: 8px 10px; background: rgba(10, 12, 16, 0.72); border-radius: 6px; max-width: 460px; pointer-events: none; }
+  #hud b { color: #ffd27a; font-weight: 600; }
+  #hud .k { color: #9aa7b8; }
+  #stats { font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: #c9d2de; margin-top: 4px; white-space: pre; }
+  .bar { position: fixed; left: 10px; bottom: 10px; display: flex; gap: 6px; flex-wrap: wrap; max-width: calc(100% - 20px); }
+  .bar button { background: rgba(18, 22, 28, 0.85); color: #e4e8ee; border: 1px solid #3a4250; border-radius: 5px; padding: 5px 9px; font: inherit; cursor: pointer; }
+  .bar button[aria-pressed="true"] { border-color: #ffd27a; color: #ffd27a; }
+  .bar button kbd { font: 10px ui-monospace, monospace; color: #9aa7b8; margin-right: 4px; }
+  #err { position: fixed; left: 10px; right: 10px; top: 10px; margin: 0; padding: 10px; background: #3a1212; color: #ffd9d9; font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; z-index: 9; }
+  body.hud-off #hud, body.hud-off .bar, body.hud-off .lil-gui.root { display: none; }
+  .lil-gui.root { position: fixed; right: 8px; top: 8px; max-height: calc(100% - 70px); overflow-y: auto; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three":         "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "lil-gui":       "https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.min.js"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="gl" aria-label="VFX test range: a pistol firing at a stone wall, three stand-in enemies, a grenade blast"></canvas>
+<div id="hud" role="status">
+  <div><b>Cover Room VFX</b> <span class="k">muzzle flash · tracer · impacts · grenade</span></div>
+  <div class="k">space fire at the wall · e shoot an enemy · g grenade · b enemy bursts · a auto · k damage look · 1-6 camera · n look · p pause · h hide</div>
+  <div id="stats"></div>
+</div>
+<div class="bar" role="toolbar" aria-label="Controls">
+  <button type="button" id="bFire"><kbd>space</kbd>fire</button>
+  <button type="button" id="bEnemy"><kbd>e</kbd>hit enemy</button>
+  <button type="button" id="bNade"><kbd>g</kbd>grenade</button>
+  <button type="button" id="bBurst" aria-pressed="false"><kbd>b</kbd>enemy bursts</button>
+  <button type="button" id="bAuto" aria-pressed="false"><kbd>a</kbd>auto</button>
+  <button type="button" id="bGrade" aria-pressed="false"><kbd>k</kbd>damage look</button>
+  <button type="button" id="bCam"><kbd>1-6</kbd><span id="camLabel">shoulder</span></button>
+  <button type="button" id="bLook"><kbd>n</kbd><span id="lookLabel">day</span></button>
+</div>
+<pre id="err" hidden></pre>
+<script>
+  // error surface: uncaught errors and rejections are shown on the page (and still reach the console)
+  (function () {
+    var el = document.getElementById('err');
+    function show(m) { el.hidden = false; el.textContent += m + '\n'; }
+    window.addEventListener('error', function (e) { show('Error: ' + e.message + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : '')); });
+    window.addEventListener('unhandledrejection', function (e) { show('Unhandled: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)); });
+  })();
+</script>
+<script type="module">
+// VFX test range for cover-room (A5). Not the game: the lights, the floor, the stand-ins and the camera here are local stubs
+// of what the level / character / camera modules provide. Modes:
+//   live (default)                rAF loop, keys and buttons
+//   ?preflight&fx=<scenario>&t=s  one exact frame on the EXPLICIT VFX clock (age = t - event time), title "PREFLIGHT READY"
+//   ?seq&fx=<scenario>            deterministic 60 fps stepping on the LIVE VFX clock (visible clock, as in the game);
+//                                 __vfxTest.next() advances one 1/60 s step and draws; for the 1x GIF
+//   extras: &cam=shoulder|side|wall|grenade|close &look=day|dusk|night &grade=1 &hud=0 &w= (none)
+// Scenarios (event times in s): shot (player -> wall at 0), hit (player -> enemy at 0), explode (grenade at 0),
+//   burst (3 enemies, 3-round bursts), all (3 shots + a grenade: the showcase GIF), bench (3 enemies bursting, the player
+//   firing, a grenade at 0.5 s).
+import * as THREE from 'three';
+import GUI from 'lil-gui';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { Game } from '../src/core/game.js';
+import { createRender } from '../src/core/render.js';
+import { createVfx } from '../src/vfx/index.js';
+
+const QP = new URLSearchParams(location.search);
+const PREFLIGHT = QP.has('preflight');
+const SEQ = QP.has('seq');
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const STATIC = PREFLIGHT || SEQ || REDUCED;
+if (PREFLIGHT || SEQ || QP.get('hud') === '0') document.body.classList.add('hud-off');
+const DT = 1 / 60;
+
+const game = new Game({ seed: 7 });
+const render = createRender(game, { canvas: document.getElementById('gl'), static: PREFLIGHT || SEQ, look: QP.get('look') || 'day' });
+const { scene, camera } = render;
+
+// --- Lighting stub (the level module owns lights, sky and fog in the game) -----------------------------------------------
+// Values from vfx-studies' LOOKS (azimuth 0 = from +Z, behind the shooter; negative toward +X). Sky and fog stay under 0.7
+// radiance so only emissive effects bloom.
+const LOOK_LIGHTS = {
+  day:   { sky: '#8ea2bc', fog: '#9aa5b2', fogD: 0.012, sun: '#ffe0b0', sunI: 1.5, el: 52, az: -32, fillSky: '#a8b8cf', fillGround: '#6b5a45', fillI: 1.25 },
+  dusk:  { sky: '#3a3f5c', fog: '#6e5766', fogD: 0.015, sun: '#ffb98a', sunI: 4.0, el: 11, az: -78, fillSky: '#7f95c4', fillGround: '#4b3d3a', fillI: 1.6 },
+  night: { sky: '#0d152b', fog: '#232f4e', fogD: 0.014, sun: '#b4c4ea', sunI: 1.2, el: 40, az: 25, fillSky: '#6a7fa8', fillGround: '#1a1620', fillI: 0.95 },
+};
+scene.fog = new THREE.FogExp2(0xffffff, 0.01);
+const sun = new THREE.DirectionalLight(0xffffff, 1);
+const SUN_TARGET = new THREE.Vector3(0, 0.5, -7);
+sun.target.position.copy(SUN_TARGET);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -16, right: 16, top: 16, bottom: -16, near: 20, far: 120 });
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
+scene.add(sun, sun.target);
+const fill = new THREE.HemisphereLight(0xffffff, 0x888888, 1);
+scene.add(fill);
+let lookName = 'day';
+function setLook(name) {
+  const L = LOOK_LIGHTS[name] || LOOK_LIGHTS.day;
+  lookName = LOOK_LIGHTS[name] ? name : 'day';
+  scene.background = new THREE.Color(L.sky);
+  scene.fog.color.set(L.fog); scene.fog.density = L.fogD;
+  const el = THREE.MathUtils.degToRad(L.el), az = THREE.MathUtils.degToRad(L.az);
+  const d = new THREE.Vector3(-Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el));
+  sun.position.copy(d).multiplyScalar(60).add(SUN_TARGET);
+  sun.color.set(L.sun); sun.intensity = L.sunI;
+  fill.color.set(L.fillSky); fill.groundColor.set(L.fillGround); fill.intensity = L.fillI;
+  render.look(lookName);
+  document.getElementById('lookLabel').textContent = lookName;
+}
+setLook(QP.get('look') || 'day');
+
+// --- Range geometry: a stone floor, a stone wall, a low cover wall --------------------------------------------------------
+function stoneTexture(seed, w, h, rows, cols, base) {
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const g = cv.getContext('2d');
+  let s = seed >>> 0; const r = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  g.fillStyle = '#4a4540'; g.fillRect(0, 0, w, h);
+  const ch = h / rows;
+  for (let y = 0; y < rows; y++) {
+    const off = (y % 2) * 0.5;
+    for (let x = -1; x < cols + 1; x++) {
+      const x0 = (x + off) * (w / cols), cw = w / cols;
+      const v = base + (r() - 0.5) * 26;
+      g.fillStyle = `rgb(${v + 3},${v + 1},${v - 3})`;
+      g.fillRect(x0 + 2, y * ch + 2, cw - 4, ch - 4);
+      for (let k = 0; k < 40; k++) { const q = (r() - 0.5) * 30; g.fillStyle = `rgba(${v + q},${v + q - 3},${v + q - 8},0.35)`; g.fillRect(x0 + r() * cw, y * ch + r() * ch, 2 + r() * 8, 2 + r() * 6); }
+    }
+  }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+  return t;
+}
+const floorTex = stoneTexture(3, 512, 512, 6, 5, 124); floorTex.repeat.set(18, 18);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.95 }));
+floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; floor.position.z = -10;
+scene.add(floor);
+const wallTex = stoneTexture(9, 512, 512, 8, 4, 142); wallTex.repeat.set(5, 1.6);
+const boxes = [];   // the raycast stub's colliders: {min, max, material, actor?}
+function addBox(cx, cy, cz, sx, sy, sz, color, material = 'stone') {
+  const tex = wallTex.clone(); tex.needsUpdate = true; tex.repeat.set(Math.max(sx, sz) / 2.6, sy / 1.9);
+  const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), new THREE.MeshStandardMaterial({ map: tex, color, roughness: 0.92 }));
+  m.position.set(cx, cy, cz); m.castShadow = true; m.receiveShadow = true;
+  scene.add(m);
+  boxes.push({ min: new THREE.Vector3(cx - sx / 2, cy - sy / 2, cz - sz / 2), max: new THREE.Vector3(cx + sx / 2, cy + sy / 2, cz + sz / 2), material });
+  return m;
+}
+addBox(0, 1.6, -16, 16, 3.2, 0.7, '#ffffff');          // the back wall
+addBox(-2.6, 0.5, -6, 3.2, 1.0, 0.55, '#f2eee6');      // low cover wall
+addBox(4.6, 1.0, -8.5, 1.1, 2.0, 1.1, '#e8e2d8');      // a pillar
+
+// --- Stand-ins: the player with a pistol, three enemies (the character module provides real rigs) -----------------------
+const FIG = new THREE.MeshStandardMaterial({ color: '#747b86', roughness: 0.8 });
+const ENEMY = new THREE.MeshStandardMaterial({ color: '#7c6a66', roughness: 0.8 });
+const GUN = new THREE.MeshStandardMaterial({ color: '#4d535c', metalness: 0.7, roughness: 0.5 });
+const cap = (a, b, r) => {
+  const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b), d = B.clone().sub(A);
+  const g = new THREE.CapsuleGeometry(r, d.length(), 4, 10);
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.clone().normalize()));
+  g.translate((A.x + B.x) / 2, (A.y + B.y) / 2, (A.z + B.z) / 2);
+  return g;
+};
+function figure(mat, handR, handL) {
+  const head = new THREE.SphereGeometry(0.11, 16, 12).toNonIndexed(); head.translate(0.07, 1.66, 0.1);
+  const parts = [cap([0.05, 0.95, 0.12], [0.05, 1.42, 0.1], 0.17), cap([0.21, 1.42, 0.08], handR, 0.045), cap([-0.12, 1.42, 0.06], handL, 0.045),
+    cap([0.14, 0.9, 0.14], [0.2, 0.08, 0.3], 0.07), cap([-0.04, 0.9, 0.1], [-0.12, 0.08, -0.12], 0.07)].map((g) => g.toNonIndexed());
+  const m = new THREE.Mesh(mergeGeometries([...parts, head], false), mat);
+  m.castShadow = true; m.receiveShadow = true;
+  return m;
+}
+function pistol() {
+  // authored along +Z (barrel), +Y up; the muzzle Object3D sits at the barrel tip with local +Z down the barrel
+  const g = new THREE.Group();
+  const slide = new THREE.BoxGeometry(0.03, 0.034, 0.19).toNonIndexed(); slide.translate(0, 0.012, 0);
+  const frame = new THREE.BoxGeometry(0.028, 0.02, 0.16).toNonIndexed(); frame.translate(0, -0.012, 0.01);
+  const grip = new THREE.BoxGeometry(0.03, 0.11, 0.05).toNonIndexed(); grip.rotateX(-0.25); grip.translate(0, -0.06, -0.06);
+  const body = new THREE.Mesh(mergeGeometries([slide, frame, grip], false), GUN); body.castShadow = true; g.add(body);
+  const muzzle = new THREE.Object3D(); muzzle.name = 'muzzle'; muzzle.position.set(0, 0.008, 0.096); g.add(muzzle);
+  return { group: g, muzzle };
+}
+const player = { id: 'player', team: 'player', pos: new THREE.Vector3(), alive: true };
+{
+  const fig = figure(FIG, [0.15, 1.36, -0.4], [0.13, 1.34, -0.38]);
+  scene.add(fig);
+  const p = pistol(); p.group.position.set(0.15, 1.39, -0.46); p.group.rotation.y = Math.PI;   // +Z -> world -Z (down-range)
+  scene.add(p.group);
+  player.gun = p.group; player.muzzle = p.muzzle;
+  player.rig = { socket: (name) => (name === 'muzzle' ? p.muzzle : null) };
+}
+const enemies = [[-4.4, -12.2], [0.9, -13.2], [4.4, -11.4]].map(([x, z], i) => {
+  const g = new THREE.Group();
+  g.add(figure(ENEMY, [0.15, 1.36, 0.42], [0.13, 1.34, 0.4]));
+  const p = pistol(); p.group.position.set(0.15, 1.39, 0.46); g.add(p.group);   // barrel along +Z, the way the figure faces
+  g.position.set(x, 0, z); g.lookAt(0, 0, 0);                                     // +Z toward the player
+  scene.add(g);
+  const e = { id: 'enemy' + i, team: 'enemy', group: g, gun: p.group, muzzle: p.muzzle, alive: true };
+  e.rig = { socket: (name) => (name === 'muzzle' ? p.muzzle : null) };
+  const c = new THREE.Vector3(x, 0.9, z);
+  boxes.push({ min: c.clone().add(new THREE.Vector3(-0.28, -0.9, -0.28)), max: c.clone().add(new THREE.Vector3(0.28, 0.9, 0.28)), material: 'character', actor: e });
+  e.chest = new THREE.Vector3(x + 0.03, 1.3, z);
+  return e;
+});
+scene.updateMatrixWorld(true);
+
+// --- World stub: raycast against the boxes and the floor, groundAt = the floor (the world module provides these) ----------
+const _inv = new THREE.Vector3();
+function raycast(o, d, maxDist = 200) {
+  let best = null;
+  _inv.set(1 / d.x, 1 / d.y, 1 / d.z);
+  for (const b of boxes) {
+    let t0 = 0, t1 = maxDist, axis = -1, sign = 1;
+    for (let a = 0; a < 3; a++) {
+      const k = 'xyz'[a];
+      let ta = (b.min[k] - o[k]) * _inv[k], tb = (b.max[k] - o[k]) * _inv[k];
+      let s = -1;
+      if (ta > tb) { const q = ta; ta = tb; tb = q; s = 1; }
+      if (ta > t0) { t0 = ta; axis = a; sign = s; }
+      if (tb < t1) t1 = tb;
+      if (t0 > t1) { t0 = Infinity; break; }
+    }
+    if (t0 < Infinity && axis >= 0 && (!best || t0 < best.dist)) {
+      const n = new THREE.Vector3(); n.setComponent(axis, sign);
+      best = { dist: t0, point: o.clone().addScaledVector(d, t0), normal: n, collider: { material: b.material }, actor: b.actor || null, part: b.actor ? 'torso' : undefined };
+    }
+  }
+  if (d.y < 0) { const t = -o.y / d.y; if (t > 0 && t < maxDist && (!best || t < best.dist)) best = { dist: t, point: o.clone().addScaledVector(d, t), normal: new THREE.Vector3(0, 1, 0), collider: { material: 'stone' } }; }
+  return best;
+}
+game.world = { raycast, groundAt: () => 0 };
+
+// --- VFX -----------------------------------------------------------------------------------------------------------------
+const vfx = createVfx(game, { explicitClock: PREFLIGHT || REDUCED });
+
+// --- Shooting (the weapons module emits 'shot' in the game) --------------------------------------------------------------
+const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _t = new THREE.Vector3();
+let shotCount = 0;
+function shoot(shooter, target, spread = 0) {
+  shooter.muzzle.updateWorldMatrix(true, false);
+  const pos = shooter.muzzle.getWorldPosition(new THREE.Vector3());
+  const dir = _t.copy(target).sub(pos).normalize();
+  if (spread > 0) { dir.x += (game.rng() - 0.5) * spread; dir.y += (game.rng() - 0.5) * spread; dir.z += (game.rng() - 0.5) * spread; dir.normalize(); }
+  const hit = raycast(pos, dir, 200);
+  shotCount++;
+  game.events.emit('shot', { shooter, weapon: 'pistol', origin: pos.clone(), dir: dir.clone(), hit, muzzle: { pos: pos.clone(), dir: dir.clone() } });
+}
+const WALL_POINTS = [new THREE.Vector3(0.2, 1.35, -15.6), new THREE.Vector3(-0.9, 1.55, -15.6), new THREE.Vector3(0.9, 1.15, -15.6), new THREE.Vector3(-0.3, 0.95, -15.6)];
+const NADE = new THREE.Vector3(1.6, 0.08, -7.2);
+function playerShot(i = shotCount) { shoot(player, WALL_POINTS[i % WALL_POINTS.length]); }
+function enemyShot(e) {
+  // incoming fire around the player: mostly the floor and the cover wall in front, some over the shoulder (misses)
+  const r = game.rng();
+  const aim = r < 0.5 ? _o.set((game.rng() - 0.5) * 3, 0, -1 - game.rng() * 3) : r < 0.75 ? _o.set(-2.6 + (game.rng() - 0.5) * 2.5, 0.3 + game.rng() * 0.6, -5.7) : _o.set((game.rng() - 0.5) * 3, 1.6 + game.rng() * 1.2, 1.5);
+  shoot(e, aim);
+}
+function grenade(pos = NADE) { game.events.emit('grenade:explode', { pos: pos.clone(), radius: 5, owner: null }); }
+
+// Scenarios: events at times (s). The bursts: each enemy fires 3 rounds 0.1 s apart (600 rpm), bursts 0.75-1.35 s apart.
+function burstEvents(t0, t1, events) {
+  enemies.forEach((e, i) => {
+    let t = t0 + 0.13 * i + 0.05;
+    let k = 0;
+    while (t < t1) { for (let j = 0; j < 3; j++) events.push({ t: t + 0.1 * j, fn: () => enemyShot(e) }); t += 0.75 + 0.6 * ((Math.sin(++k * 12.9898 + i * 78.233) * 43758.5453) % 1 + 1) % 1; }
+  });
+}
+const SCENARIOS = {
+  none: () => [],
+  shot: () => [{ t: 0, fn: () => playerShot(0) }],
+  hit: () => [{ t: 0, fn: () => shoot(player, enemies[1].chest) }],
+  explode: () => [{ t: 0, fn: () => grenade() }],
+  burst: () => { const ev = []; burstEvents(0, 4, ev); return ev; },
+  all: () => [
+    { t: 0.1, fn: () => playerShot(0) }, { t: 0.4, fn: () => playerShot(1) }, { t: 0.7, fn: () => playerShot(2) },
+    { t: 1.1, fn: () => grenade() },
+  ],
+  bench: () => { const ev = []; burstEvents(0, 10, ev); for (let t = 0.2; t < 10; t += 0.4) ev.push({ t, fn: () => playerShot() }); ev.push({ t: 0.5, fn: () => grenade() }); return ev; },
+};
+const FX = SCENARIOS[QP.get('fx')] ? QP.get('fx') : (PREFLIGHT || SEQ ? 'shot' : 'none');
+let schedule = SCENARIOS[FX]().sort((a, b) => a.t - b.t);
+let schedIdx = 0;
+
+// --- Live controls and the scripted events (order 30, where the weapons system runs) -------------------------------------
+const ui = { auto: false, burst: false, grade: false, autoNext: 0, burstEv: [] };
+const pending = [];
+game.addSystem({
+  name: 'test-weapons', order: 30,
+  update(dt, g) {
+    while (schedIdx < schedule.length && schedule[schedIdx].t <= g.time + 1e-9) schedule[schedIdx++].fn();
+    while (pending.length) pending.shift()();
+    if (ui.auto && g.time >= ui.autoNext) { playerShot(); ui.autoNext = g.time + 0.3; }
+    if (ui.burst) {
+      if (!ui.burstEv.length) { burstEvents(g.time, g.time + 6, ui.burstEv); ui.burstEv.sort((a, b) => b.t - a.t); }
+      while (ui.burstEv.length && ui.burstEv[ui.burstEv.length - 1].t <= g.time) ui.burstEv.pop().fn();
+    }
+  },
+});
+
+// --- Camera stub with a simple shake response to 'camshake' (the camera module owns this in the game) --------------------
+const CAMS = {
+  shoulder: { pos: [0.98, 1.72, 1.65], target: [-0.12, 1.3, -10], fov: 50 },
+  side:     { pos: [4.6, 1.7, -2.4], target: [-0.6, 1.25, -8.0], fov: 55 },
+  wall:     { pos: [-1.9, 1.45, -12.9], target: [-0.1, 1.25, -15.7], fov: 45 },
+  grenade:  { pos: [7.5, 3.4, 3.0], target: [1.4, 1.6, -7.5], fov: 55 },
+  close:    { pos: [0.62, 1.56, 0.5], target: [0.06, 1.38, -1.9], fov: 40 },
+  enemy:    { pos: [2.7, 1.6, -10.4], target: [0.9, 1.2, -13.2], fov: 45 },
+};
+const CAM_ORDER = Object.keys(CAMS);
+let camName = CAMS[QP.get('cam')] ? QP.get('cam') : 'shoulder';
+const shake = { t: -1e9, strength: 0, pos: new THREE.Vector3() };
+game.events.on('camshake', (p) => { shake.t = game.time; shake.strength = p.strength; shake.pos.copy(p.pos); });
+const _tg = new THREE.Vector3();
+game.addSystem({
+  name: 'test-camera', order: 70,
+  frame() {
+    const c = CAMS[camName];
+    camera.position.set(...c.pos);
+    if (camera.fov !== c.fov) { camera.fov = c.fov; camera.updateProjectionMatrix(); }
+    const age = game.time + Math.min(game._acc || 0, DT) - shake.t;
+    if (age >= 0 && age < 1.2 && QP.get('shake') !== '0') {
+      const a = shake.strength * Math.exp(-age / 0.22) / (1 + camera.position.distanceTo(shake.pos) / 8) * 0.045;
+      const w = age * 60;
+      camera.position.x += a * Math.sin(w * 1.9 + 1.3); camera.position.y += a * Math.sin(w * 2.3 + 0.4);
+      _tg.set(...c.target); _tg.x += a * 6 * Math.sin(w * 1.7 + 2.1); _tg.y += a * 6 * Math.sin(w * 2.1);
+      camera.lookAt(_tg);
+    } else camera.lookAt(_tg.set(...c.target));
+    camera.updateMatrixWorld();
+  },
+});
+function setCam(name) { camName = CAMS[name] ? name : camName; document.getElementById('camLabel').textContent = camName; }
+setCam(camName);
+
+function setGrade(on) {
+  ui.grade = on;
+  render.setGrade(on ? { saturation: 0.25, vignette: 0.65, contrast: 1.06, tint: [1.0, 0.97, 0.95] } : { saturation: 1, vignette: 0, contrast: 1, tint: [1, 1, 1] });
+  document.getElementById('bGrade').setAttribute('aria-pressed', String(on));
+}
+if (QP.get('grade') === '1') setGrade(true);
+
+// --- Frame driving ----------------------------------------------------------------------------------------------------------
+function drawFrame() { for (const s of game.systems) if (s.frame) s.frame(0, game); render.draw(); }
+// explicit clock: replay the scenario's events up to T at their exact times, then draw the instant T
+function drawAt(T) {
+  while (schedIdx < schedule.length && schedule[schedIdx].t <= T + 1e-9) { game.time = schedule[schedIdx].t; schedule[schedIdx++].fn(); }
+  game.time = T; game._acc = 0;
+  drawFrame();
+}
+// live clock, deterministic: one 1/60 s sim step, then draw (what a 60 Hz display shows)
+function next() { game.step(); game._acc = 0; drawFrame(); return { frame: game.frame, time: +game.time.toFixed(5), calls: render.drawCalls }; }
+
+// Benchmark: `frames` deterministic 60 fps steps of a scenario; returns ms per full frame (CPU + GPU, synced with readPixels
+// at both ends as the range's benchmark) and the CPU-side ms per frame (JS: sim step, VFX placement, draw submission).
+function bench({ frames = 240, scenario = 'bench', from = 0 } = {}) {
+  vfx.clear(); game.time = 0; game.frame = 0; game._acc = 0;
+  schedule = SCENARIOS[scenario]().sort((a, b) => a.t - b.t); schedIdx = 0;
+  while (game.frame < from) game.step();
+  const gl = render.renderer.getContext(), px = new Uint8Array(4);
+  drawFrame(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  let cpu = 0, calls = 0, maxCalls = 0, maxParticles = 0;
+  const t0 = performance.now();
+  for (let i = 0; i < frames; i++) {
+    const c0 = performance.now();
+    game.step(); drawFrame();
+    cpu += performance.now() - c0;
+    calls += render.drawCalls; maxCalls = Math.max(maxCalls, render.drawCalls);
+    if (i % 20 === 0) maxParticles = Math.max(maxParticles, vfx.shared.particles.count(vfx.clock.t));
+  }
+  gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  const ms = (performance.now() - t0) / frames;
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  return { scenario, frames, msPerFrame: +ms.toFixed(3), cpuMsPerFrame: +(cpu / frames).toFixed(3), avgDrawCalls: +(calls / frames).toFixed(1), maxDrawCalls: maxCalls,
+    maxLiveParticles: maxParticles, buffer: render.stats().buffer, gpu: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : 'n/a' };
+}
+
+window.__vfxTest = {
+  game, render, vfx, next, drawAt, bench, setCam, setLook, setGrade,
+  get time() { return game.time; },
+  state: () => ({ time: game.time, frame: game.frame, scenario: FX, cam: camName, look: lookName, drawCalls: render.drawCalls, vfx: vfx.state() }),
+  hideHud() { document.body.classList.add('hud-off'); },
+};
+
+// --- Panel (A1 builds the game's panel from game.params; this is a local one for the test page) ---------------------------
+if (!PREFLIGHT && !SEQ) {
+  const gui = new GUI({ title: 'VFX params' });
+  gui.close();
+  const mirror = {}, folders = {}, ctls = {};
+  for (const [key, d] of game.params.defs) {
+    const parts = key.split('.');
+    const fk = parts.slice(0, Math.min(3, parts.length - 1)).join('.');
+    if (!folders[fk]) { folders[fk] = gui.addFolder(fk); folders[fk].close(); }
+    mirror[key] = d.value;
+    let c;
+    if (d.options) c = folders[fk].add(mirror, key, d.options);
+    else if (d.color) c = folders[fk].addColor(mirror, key);
+    else if (typeof d.value === 'number') c = folders[fk].add(mirror, key, d.min ?? 0, d.max ?? Math.max(1, d.value * 4), d.step ?? 0.01);
+    else c = folders[fk].add(mirror, key);
+    c.name(parts.slice(Math.min(3, parts.length - 1)).join('.') + (d.label ? ' · ' + d.label : ''));
+    c.onChange((v) => game.params.set(key, v));
+    game.params.onChange(key, (v) => { mirror[key] = v; c.updateDisplay(); });
+    ctls[key] = c;
+  }
+  gui.add({ copy: () => { const t = JSON.stringify(game.params.changed()); navigator.clipboard?.writeText(t).catch(() => {}); console.log(t); } }, 'copy').name('Copy settings (changed values)');
+}
+
+// --- Keys and buttons --------------------------------------------------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const press = (btn, on) => btn.setAttribute('aria-pressed', String(on));
+const act = {
+  fire: () => pending.push(() => playerShot()),
+  enemy: () => pending.push(() => shoot(player, enemies[shotCount % 3].chest)),
+  nade: () => pending.push(() => grenade()),
+  burst: () => { ui.burst = !ui.burst; ui.burstEv.length = 0; press($('bBurst'), ui.burst); },
+  auto: () => { ui.auto = !ui.auto; ui.autoNext = game.time; press($('bAuto'), ui.auto); },
+  grade: () => setGrade(!ui.grade),
+  cam: () => setCam(CAM_ORDER[(CAM_ORDER.indexOf(camName) + 1) % CAM_ORDER.length]),
+  look: () => setLook({ day: 'dusk', dusk: 'night', night: 'day' }[lookName]),
+};
+$('bFire').onclick = act.fire; $('bEnemy').onclick = act.enemy; $('bNade').onclick = act.nade; $('bBurst').onclick = act.burst;
+$('bAuto').onclick = act.auto; $('bGrade').onclick = act.grade; $('bCam').onclick = act.cam; $('bLook').onclick = act.look;
+render.canvas.addEventListener('click', act.fire);
+addEventListener('keydown', (e) => {
+  if (e.target.closest && e.target.closest('input, textarea, select, .lil-gui')) return;
+  const k = e.key.toLowerCase();
+  if (k === ' ' || k === 'f') { e.preventDefault(); act.fire(); }
+  else if (k === 'e') act.enemy();
+  else if (k === 'g') act.nade();
+  else if (k === 'b') act.burst();
+  else if (k === 'a') act.auto();
+  else if (k === 'k') act.grade();
+  else if (k === 'n') act.look();
+  else if (k === 'p') { game.paused = !game.paused; }
+  else if (k === 'h') document.body.classList.toggle('hud-off');
+  else if (k >= '1' && k <= '6') setCam(CAM_ORDER[+k - 1]);
+});
+
+// --- Start ---------------------------------------------------------------------------------------------------------------------
+if (PREFLIGHT) {
+  const T = Number.isFinite(parseFloat(QP.get('t'))) ? parseFloat(QP.get('t')) : 0.02;
+  drawAt(T);
+  document.title = 'PREFLIGHT READY';
+} else if (SEQ) {
+  drawFrame();
+  document.title = 'SEQ READY';
+} else if (REDUCED) {
+  // reduced motion: one still frame of a shot, no loop (keys still fire and redraw one frame)
+  schedule = SCENARIOS.shot(); schedIdx = 0; drawAt(0.02);
+  addEventListener('keydown', () => { while (pending.length) pending.shift()(); drawAt(game.time + 0.02); });
+} else {
+  let fpsEma = 16.7, last = performance.now();
+  game.addSystem({
+    name: 'test-hud', order: 95,
+    frame() {
+      const now = performance.now(); fpsEma += ((now - last) - fpsEma) * 0.05; last = now;
+      if (game.frame % 10 === 0) $('stats').textContent = `${(1000 / fpsEma).toFixed(0)} fps · ${fpsEma.toFixed(1)} ms · draw calls ${render.drawCalls} · tris ${render.triangles}\nlights ${vfx.shared.lights.used}/4 · particles ${vfx.shared.particles.count(vfx.clock.t)} · buffer ${render.stats().buffer.join('x')}`;
+    },
+  });
+  game.start();
+}
+</script>
+</body>
+</html>

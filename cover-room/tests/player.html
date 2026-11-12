@@ -1,0 +1,686 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Cover Room: player test</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../src/hud/hud.css">
+<script type="importmap">
+{
+  "imports": {
+    "three":         "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "lil-gui":       "https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.min.js"
+  }
+}
+</script>
+<style>
+  :root {
+    --ink: rgba(228, 232, 238, 0.93); --ink-dim: rgba(150, 164, 184, 0.88); --accent: #ffb454; --on: #7fd18b;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #06080c; color: var(--ink); font: 11px/1.4 var(--mono); }
+  #gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
+  #fallback {
+    position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center;
+    padding: 24px; text-align: center; line-height: 1.7; color: var(--ink-dim); background: #06080c;
+    letter-spacing: 0.08em; white-space: pre-line; overflow-wrap: anywhere; overflow: auto;
+  }
+  #fallback[hidden] { display: none; }
+  #state {
+    position: fixed; top: 10px; left: 10px; z-index: 12; min-width: 250px; padding: 8px 10px;
+    background: rgba(9, 12, 17, 0.72); border: 1px solid rgba(255,255,255,0.12); border-radius: 4px; pointer-events: none;
+  }
+  #state h1 { margin: 0 0 4px; font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent); }
+  #state table { border-collapse: collapse; }
+  #state td { padding: 0 6px 0 0; white-space: nowrap; }
+  #state td.k { color: var(--ink-dim); }
+  #state .help { color: var(--ink-dim); margin-top: 6px; max-width: 300px; white-space: normal; }
+  #label {
+    position: fixed; left: 50%; top: 10px; transform: translateX(-50%); z-index: 12; pointer-events: none;
+    padding: 4px 10px; border-radius: 3px; background: rgba(9,12,17,0.72); color: var(--accent);
+    letter-spacing: 0.16em; text-transform: uppercase; font-weight: 600;
+  }
+  #label:empty { display: none; }
+  .lil-gui.cr-params { --font-family: var(--mono); z-index: 20; }
+  .lil-gui .cr-changed > .name { color: var(--accent); }
+</style>
+</head>
+<body>
+<canvas id="gl" role="img" aria-label="Player test: the Cover Room courtyard with the player mannequin, driven by keyboard, mouse or pad"></canvas>
+<div id="state"><h1>Player test</h1><table id="rows"></table>
+  <div class="help">Click to capture the mouse. WASD move, mouse look, RMB aim, LMB fire, Shift cover/roll, Space jump
+  (swap shoulder while aiming), R reload, G grenade, C / Ctrl walk. ` tuning, P pause, . step, [ ] slow-mo.
+  ?script=roll|run|turn|cover|popaim|covermove|pillar|grenade|mantle|vault|coverframe|jump|climb|drop|damage|all</div></div>
+<div id="label"></div>
+<div id="fallback" role="status">Loading Three.js r160 from cdn.jsdelivr.net. If this message stays, the CDN, import-map support or WebGL2 is unavailable.</div>
+
+<script>
+(function () {
+  var shown = false;
+  function show(kind, detail, where) {
+    var el = document.getElementById('fallback');
+    if (shown || !el || el.hasAttribute('data-fatal')) return;
+    shown = true; el.hidden = false; el.setAttribute('role', 'alert');
+    el.textContent = 'The player test stopped on an uncaught ' + kind + '.\n' + detail + (where ? '\n' + where : '');
+  }
+  window.addEventListener('error', function (e) {
+    if (/ResizeObserver loop/.test(String(e.message))) return;
+    var err = e.error;
+    show('error', err && err.message ? (err.name || 'Error') + ': ' + err.message : String(e.message || 'unknown error'),
+      e.filename ? e.filename.replace(location.origin, '') + ':' + e.lineno : '');
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason; show('promise rejection', r && r.message ? (r.name || 'Error') + ': ' + r.message : String(r), '');
+  });
+})();
+</script>
+
+<script type="module">
+// Player test (B1): controller + camera + cover + health in the real room with the real modules where they exist,
+// stubs where they don't (or when named in ?stub=render,room,hud,vfx,character,climb,weapons).
+//   ?test            headless: no pointer lock, no game.start(); tools/play.mjs steps it. window.__ready/__game/__measure.
+//   ?script=name     runs a scripted input timeline in-page (inject() API), in real time live or per sim step headless.
+//   window.__player = {actor, marks, report(), framing(), scripts}
+import * as THREE from 'three';
+import GUI from 'lil-gui';
+import { Game, ORDER } from '../src/core/game.js';
+import { Input, installDebugKeys } from '../src/core/input.js';
+import { installMeasure } from '../src/debug/measure.js';
+import { createWorld } from '../src/core/world.js';
+import { createPlayer } from '../src/player/controller.js';
+import { install as installCamera } from '../src/player/camera.js';
+
+const QP = new URLSearchParams(location.search);
+const TEST = QP.has('test');
+const STUB = new Set((QP.get('stub') || '').split(',').map((s) => s.trim()).filter(Boolean));
+const SCRIPT = QP.get('script');
+const canvas = document.getElementById('gl');
+const PI = Math.PI;
+
+// --- which module files exist (python http.server directory listings; elsewhere every module is tried) -------------
+async function listDir(url) {
+  try {
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok || !(r.headers.get('content-type') || '').includes('text/html')) return null;
+    return new Set([...(await r.text()).matchAll(/href="([^"?#]+)"/g)].map((m) => decodeURIComponent(m[1])));
+  } catch { return null; }
+}
+const FILES = new Set();
+let listed = true;
+for (const d of ['core', 'level', 'character', 'player', 'weapons', 'vfx', 'hud']) {
+  const s = await listDir(`../src/${d}/`);
+  if (!s) { listed = false; break; }
+  for (const f of s) FILES.add(`${d}/${f}`);
+}
+const used = {};
+async function load(path, name) {
+  if (STUB.has(name)) { used[name] = 'stub (?stub)'; return null; }
+  if (listed && !FILES.has(path)) { used[name] = 'stub (missing)'; return null; }
+  try { const m = await import(`../src/${path}`); used[name] = 'real'; return m; }
+  catch (err) { console.warn(`[player test] ${path} failed to load, using a stub:`, err); used[name] = 'stub (load failed)'; return null; }
+}
+async function tryInstall(name, fn) {
+  try { return await fn(); }
+  catch (err) { console.warn(`[player test] ${name} failed to install, using a stub:`, err); used[name] = 'stub (install failed)'; return null; }
+}
+
+const game = new Game({ seed: 1, test: TEST, storageKey: 'cover-room-params-player-test-v1' });
+game.Vector3 = THREE.Vector3;
+game.input = game.addSystem(new Input(game, { canvas, pointerLock: !TEST }));
+installMeasure(game);
+
+// --- render ------------------------------------------------------------------------------------------------------------
+const renderM = await load('core/render.js', 'render');
+if (!renderM || !(await tryInstall('render', () => renderM.createRender(game, { canvas, static: TEST })))) {
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: TEST });
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  const scene = new THREE.Scene(); scene.background = new THREE.Color(0x8fa6c2);
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 300);
+  const resize = () => { renderer.setSize(innerWidth, innerHeight, false); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); };
+  resize(); addEventListener('resize', resize);
+  game.render = { renderer, scene, camera, draw: () => renderer.render(scene, camera), resize, setGrade() {}, addPass() {}, look() {} };
+  game.scene = scene; game.camera = camera;
+}
+
+// --- world + level -------------------------------------------------------------------------------------------------------
+game.world = createWorld({ Vector3: THREE.Vector3, cellSize: 2 });
+game.addSystem({ name: 'world.hitboxes', order: ORDER.animation + 5, update: () => game.world.updateHitboxes() });
+const roomM = await load('level/room.js', 'room');
+if (!roomM || !(await tryInstall('room', () => roomM.install(game)))) buildCourse(game);
+
+// --- HUD, VFX ------------------------------------------------------------------------------------------------------------
+const hudM = await load('hud/hud.js', 'hud');
+if (!hudM || !(await tryInstall('hud', () => hudM.createHud(game)))) game.hud = stubHud();
+const vfxM = await load('vfx/index.js', 'vfx');
+if (vfxM) await tryInstall('vfx', () => vfxM.createVfx(game));
+
+// --- character + animation -------------------------------------------------------------------------------------------------
+const charM = await load('character/index.js', 'character');
+const animM = charM ? await load('character/animator.js', 'animator') : null;
+let createCharacter = charM && charM.createCharacter;
+if (createCharacter && animM) await tryInstall('animator', () => animM.install(game));
+else { createCharacter = stubCharacter; installStubAnimation(game); used.character = used.character || 'stub'; }
+
+// --- the player (B1) + camera ------------------------------------------------------------------------------------------------
+const player = createPlayer(game, { createCharacter });
+const rig = installCamera(game);
+rig.actor = player; rig.yaw = player.yaw; rig.snap();
+
+// --- climbing (B3) and weapons (B2) ---------------------------------------------------------------------------------------
+const climbM = await load('player/climb.js', 'climb');
+if (!climbM || !(await tryInstall('climb', () => climbM.install(game)))) installStubClimb(game, player);
+const weaponsM = await load('weapons/index.js', 'weapons');
+if (!weaponsM || !(await tryInstall('weapons', () => weaponsM.install(game)))) installStubWeapons(game, player);
+if (!player.weapon && game.weapons && game.weapons.create) player.weapon = game.weapons.create(player, 'pistol');
+
+// =====================================================================================================================
+// Scripts: in-page timelines over input.inject(). Each step waits (dt seconds, or until a condition, max 4 s), then acts.
+// =====================================================================================================================
+const marks = [];          // {name, t, x, y, z, mode, cover, hp}
+const shotPlan = [];       // {name, t}
+const snap = (name, extra) => {
+  const e = { name, t: +game.time.toFixed(4), x: +player.pos.x.toFixed(3), y: +player.pos.y.toFixed(3), z: +player.pos.z.toFixed(3),
+    yaw: +player.yaw.toFixed(3), mode: player.ctrl.mode, cover: player.state.cover, gait: player.ctrl.gait, hp: +(player.ctrl.health.hp).toFixed(1),
+    speed: +Math.hypot(player.vel.x, player.vel.z).toFixed(3), cam: rig.profile, blend: +rig.blend.toFixed(3), ...extra };
+  marks.push(e); return e;
+};
+const STEP = 1 / 60;
+const W = (s) => ({ wait: s });
+const U = (fn, max = 4) => ({ until: fn, max });
+const I = (inj) => ({ inject: inj });
+const M = (name, extra) => ({ mark: name, extra });
+const SHOT = (name) => ({ shot: name });
+const DO = (fn) => ({ do: fn });
+const LABEL = (text) => ({ label: text });
+const place = (x, z, yaw, camYaw = yaw, pitchDeg = -12) => ({ do: () => {
+  game.input.inject({});
+  if (player.ctrl.grenadeAiming && game.grenades && game.grenades.cancel) game.grenades.cancel(player);
+  player.ctrl.grenadeAiming = false;
+  const y = game.world.groundAt(x, z, 50) ?? 0;
+  player.pos.set(x, y, z); player.vel.set(0, 0, 0); player.yaw = yaw;
+  player.ctrl.health.reset(); player.alive = true;
+  player.ctrl.setMode('ground', { speed: 0 });
+  game.world.moveCapsule(player, new THREE.Vector3(0, -0.01, 0), { stepHeight: 0.5 });
+  player.cameraProfile = 'explore';
+  rig.yaw = camYaw; rig.pitch = pitchDeg * PI / 180; rig.setSide(1); rig.snap();
+  if (player.weapon && player.weapon.state && player.weapon.addAmmo) player.weapon.addAmmo(60);
+} });
+const press = (inj, keep = {}) => [I({ ...keep, ...inj }), W(2 * STEP), I(keep)];
+const coverState = () => player.state.cover;
+
+const SEGMENTS = {
+  roll: [
+    LABEL('explore framing'), place(0, 5.2, PI), W(0.6), SHOT('explore'), DO(() => snap('explore:framing', framing())),
+    LABEL('roll'), place(0, 10.0, PI), W(0.4), M('roll:start'),
+    ...press({ cover: true }), W(0.33), SHOT('roll-dive'),
+    U(() => player.ctrl.mode === 'ground'), M('roll:end'), W(0.3),
+    M('rollR:start'), ...press({ cover: true, move: [1, 0] }, { move: [1, 0] }), W(0.2), SHOT('roll-right'),
+    U(() => player.ctrl.mode === 'ground'), M('rollR:end'), I({}), W(0.4),
+  ],
+  run: [
+    LABEL('run / walk / aim walk'), place(-6, 9.6, -PI / 2, -PI / 2), W(0.3), M('run:start'), I({ move: [0, 1] }),
+    W(0.25), M('run:0.25'), W(0.35), M('run:0.6'), SHOT('run'), I({}), W(0.5), M('stop:end'),
+    place(-6, 9.6, -PI / 2, -PI / 2), W(0.2), I({ move: [0, 1], walk: true }), W(0.6), M('walk:0.6'), I({}), W(0.4),
+    I({ aim: true }), W(0.3), DO(() => snap('aimstand:framing', framing())), I({ aim: true, move: [1, 0] }), W(0.6), M('aimwalk:0.6'), SHOT('aim-walk'), I({}), W(0.4),
+  ],
+  turn: [
+    LABEL('run plant-turn'), place(-6, 9.6, -PI / 2, -PI / 2), W(0.2), I({ move: [0, 1] }), W(0.8), M('turn:press'),
+    I({ move: [0, -1] }), W(0.12), SHOT('turn180'), U(() => player.ctrl.gait !== 'turn180'), M('turn:end'), W(0.4), I({}), W(0.3),
+  ],
+  cover: [
+    LABEL('run-in cover slide (low)'), place(3.6, 10.6, PI), W(0.3), I({ move: [0, 1] }),
+    U(() => player.pos.z < 9.05), M('cover:press'), ...press({ cover: true }, { move: [0, 1] }), I({}), W(0.1), SHOT('cover-slide'),
+    U(() => coverState() === 'in'), M('cover:in'), W(0.5), SHOT('cover-low'),
+  ],
+  popaim: [
+    LABEL('pop-up aim + fire + blind fire'), M('aim:press'), I({ aim: true }), W(0.05), M('fire:early'), ...press({ fire: true }, { aim: true }),
+    W(0.35), SHOT('cover-popup-aim'), DO(() => snap('aim:framing', framing())), W(0.3), M('aim:release'), I({}), W(0.45), SHOT('cover-down'),
+    M('blind:press'), ...press({ fire: true }), W(0.12), SHOT('cover-blind'), W(0.6),
+  ],
+  covermove: [
+    LABEL('move along cover to the edge'), M('cmove:start'), I({ move: [1, 0] }), W(0.5), M('cmove:0.5'), SHOT('cover-move'),
+    U(() => coverState() === 'edge'), M('cover:edge'), W(0.1), SHOT('cover-edge'),
+    U(() => coverState() !== 'edge' || player.ctrl.mode !== 'cover'), M('cover:pushon'), W(0.2), SHOT('cover-around'),
+    U(() => coverState() === 'in' || player.ctrl.mode !== 'cover'), M('cover:after-edge'), I({}), W(0.4),
+  ],
+  pillar: [
+    LABEL('high cover: edge, lean aim, corner'), place(5.4, 0.7, PI), W(0.3), M('pillar:press'), ...press({ cover: true }),
+    U(() => coverState() === 'in'), M('pillar:in'), W(0.3), SHOT('cover-high'),
+    I({ move: [1, 0] }), U(() => coverState() === 'edge'), M('pillar:edge'), I({}), W(0.3),
+    M('lean:press'), I({ aim: true }), W(0.4), SHOT('cover-lean-aim'), DO(() => snap('lean:framing', framing())), I({}), W(0.4),
+    M('corner:push'), I({ move: [1, 0] }), U(() => coverState() === 'corner'), M('corner:start'), W(0.15), SHOT('cover-corner'),
+    U(() => coverState() === 'in'), M('corner:end'), I({}), W(0.4), ...press({ cover: true }), W(0.4), M('pillar:left'),
+  ],
+  grenade: [
+    LABEL('grenade: hold (own framing), release'), place(-3, 5.5, PI), W(0.3), M('grenade:press'), I({ grenade: true }), W(0.45),
+    SHOT('grenade-aim'), M('grenade:hold'), I({}), W(0.5), SHOT('grenade-throw'), M('grenade:thrown'), W(2.8),
+  ],
+  mantle: [
+    LABEL('mantle 1.2 m'), place(-3.4, 9.0, PI), W(0.3), M('mantle:press'), ...press({ jump: true }), W(0.25), SHOT('mantle'),
+    U(() => player.ctrl.mode === 'ground'), M('mantle:end'), W(0.4),
+  ],
+  vault: [
+    LABEL('vault low wall at a run'), place(7.8, 6.6, PI), W(0.3), I({ move: [0, 1] }), U(() => player.pos.z < 3.95),
+    M('vault:press'), ...press({ jump: true }, { move: [0, 1] }), W(0.22), SHOT('vault'),
+    U(() => player.ctrl.mode === 'ground'), M('vault:end'), W(0.2), I({}), W(0.4),
+  ],
+  coverframe: [
+    LABEL('low cover framing (open space behind)'), place(7.8, 4.0, PI), W(0.3), ...press({ cover: true }),
+    U(() => coverState() === 'in'), W(0.8), SHOT('cover-low-framing'), DO(() => snap('cover:framing', framing())),
+    LABEL('cover to cover (stick away + cover), push away to leave'), I({ move: [-1, 0] }), U(() => coverState() === 'edge'), I({}), W(0.2),
+    M('swap:press'), ...press({ cover: true, move: [0, -1] }, { move: [0, -1] }), I({}), W(0.15), SHOT('cover-swap'),
+    U(() => coverState() === 'in'), M('swap:in'), W(0.4), M('away:start'), I({ move: [0, 1] }),   // lowS:N faces north = camera forward
+    U(() => player.ctrl.mode !== 'cover'), M('away:left'), I({}), W(0.3),
+  ],
+  jump: [
+    LABEL('jump: standing, running'), place(-3.0, 4.8, PI), W(0.3), M('jump:press'), ...press({ jump: true }), W(0.29), SHOT('jump-apex'),
+    U(() => player.ctrl.mode === 'ground'), M('jump:land'), W(0.5),
+    place(-6, 9.6, -PI / 2, -PI / 2), W(0.2), I({ move: [0, 1] }), W(0.6), M('rjump:press'), ...press({ jump: true }, { move: [0, 1] }),
+    U(() => player.ctrl.mode === 'air' && player.ctrl.modes.air.phase !== 'load'), M('rjump:takeoff'),
+    U(() => player.ctrl.mode === 'ground'), M('rjump:land'), I({}), W(0.5),
+  ],
+  climb: [
+    LABEL('jump to grab (climb module)'), place(-8.2, -6.9, PI), W(0.3), M('climb:press'), ...press({ jump: true }), W(0.6),
+    M('climb:hang'), SHOT('climb'), W(0.5), I({ cover: true }), W(2 * STEP), I({}), W(0.8), M('climb:after-drop'),
+  ],
+  drop: [
+    LABEL('drop to hang from the balcony, drop, hard landing'), place(-7.5, -8.9, 0), W(0.3), I({ move: [0, 0.35] }),
+    U(() => player.pos.z > -8.45 || player.ctrl.mode !== 'ground', 3), M('drop:press'), ...press({ cover: true }), W(0.6), M('drop:hang'), SHOT('drop-hang'),
+    W(0.4), M('drop:let-go'), I({ cover: true }), U(() => player.ctrl.mode === 'ground', 4), M('drop:landed'), I({}), W(0.1), SHOT('hard-land'), W(0.8),
+  ],
+  damage: [
+    LABEL('damage, regen, death, restart'), place(0, 9.0, PI), W(0.3),
+    DO(() => hit(25)), W(0.2), DO(() => hit(25)), W(0.2), DO(() => hit(25)), M('dmg:last'), W(0.15), SHOT('damage'),
+    U(() => player.ctrl.health.hp >= 99.999, 6), M('dmg:full'), W(0.3),
+    DO(() => { for (let i = 0; i < 4; i++) hit(30); }), M('death'), W(1.0), SHOT('dead'),
+    W(1.4), M('restart:press'), ...press({ reload: true }), U(() => player.ctrl.mode === 'ground'), M('restart:done'), W(0.4), SHOT('respawn'),
+  ],
+};
+SEGMENTS.all = [...SEGMENTS.roll, ...SEGMENTS.run, ...SEGMENTS.turn, ...SEGMENTS.cover, ...SEGMENTS.popaim, ...SEGMENTS.covermove,
+  ...SEGMENTS.pillar, ...SEGMENTS.grenade, ...SEGMENTS.mantle, ...SEGMENTS.vault, ...SEGMENTS.coverframe, ...SEGMENTS.jump, ...SEGMENTS.climb, ...SEGMENTS.drop, ...SEGMENTS.damage, LABEL('done')];
+SEGMENTS.popaim = [...SEGMENTS.cover, ...SEGMENTS.popaim];
+SEGMENTS.covermove = [...SEGMENTS.cover, ...SEGMENTS.covermove];
+
+const dmgSrc = { pos: new THREE.Vector3(0, 1.5, -2), team: 'enemy', id: 'test-shooter' };
+const dmgEvt = { target: player, amount: 0, source: dmgSrc, part: 'torso', dir: new THREE.Vector3(), kind: 'bullet' };
+function hit(n) {
+  dmgEvt.amount = n; dmgEvt.dir.subVectors(player.pos, dmgSrc.pos).normalize();
+  game.events.emit('damage', dmgEvt);
+}
+
+const labelEl = document.getElementById('label');
+const runner = {
+  name: 'script', order: -1, list: null, i: 0, t: 0, done: false,
+  start(name) { this.list = SEGMENTS[name] || null; this.i = 0; this.t = 0; this.done = !this.list; if (!this.list) console.warn('[player test] unknown script', name); },
+  update(dt) {
+    if (!this.list || this.done) return;
+    for (let guard = 0; guard < 64; guard++) {
+      const s = this.list[this.i];
+      if (!s) { this.done = true; marks.push({ name: 'script:done', t: +game.time.toFixed(4) }); game.input.inject(null); return; }
+      if (s.wait !== undefined) {
+        if (this.t < s.wait - 1e-9) { this.t += dt; return; }
+      } else if (s.until) {
+        if (!s.until() && this.t < s.max) { this.t += dt; return; }
+        if (this.t >= s.max) console.warn(`[player test] step ${this.i} timed out`);
+      } else if (s.inject !== undefined) game.input.inject(s.inject);
+      else if (s.mark) snap(s.mark, s.extra);
+      else if (s.shot) shotPlan.push({ name: s.shot, t: +game.time.toFixed(4), step: game.frame });
+      else if (s.do) s.do();
+      else if (s.label !== undefined) { labelEl.textContent = s.label; marks.push({ name: 'label:' + s.label, t: +game.time.toFixed(4) }); }
+      this.i++; this.t = 0;
+    }
+  },
+};
+game.addSystem(runner);
+
+// Screen-space checks: reticle point, character framing (feet..head), head x.
+const _v = new THREE.Vector3(), _ray = { origin: new THREE.Vector3(), dir: new THREE.Vector3() };
+function project(p) { _v.copy(p).project(game.camera); return { x: +(0.5 + _v.x / 2).toFixed(4), y: +(0.5 - _v.y / 2).toFixed(4) }; }
+function framing() {
+  game.camera.updateMatrixWorld();
+  rig.aimRay(_ray);
+  const far = _ray.origin.clone().addScaledVector(_ray.dir, 30);
+  const ret = project(far);
+  const head = player.rig && player.rig.getBoneWorld ? player.rig.getBoneWorld('head', new THREE.Vector3()) : player.pos.clone().setY(player.pos.y + 1.65);
+  const feet = project(player.pos), top = project(head.clone().setY(head.y + 0.12));
+  return { reticleX: ret.x, reticleY: ret.y, headX: project(head).x, headY: project(head).y, charFrac: +(feet.y - top.y).toFixed(4),
+    fov: +game.camera.fov.toFixed(2), profile: rig.profile, side: rig.side };
+}
+
+// =====================================================================================================================
+// Report: measured vs refs/player-spec.md / climb-spec.md (expected values from the specs, not from this code).
+// =====================================================================================================================
+function report() {
+  const L = __measure.log();
+  const mk = (n) => marks.find((m) => m.name === n);
+  const after = (t0, pred) => L.find((e) => e.time >= t0 - 0.004 && pred(e));   // marks are rounded to 1e-4 s
+  const rows = [];
+  const row = (what, ours, spec, tag, tol, note = '') => rows.push({ what, ours: ours == null ? null : +(+ours).toFixed(3), spec, tag,
+    ok: ours == null ? false : tol == null ? null : Math.abs(ours - spec) <= tol, note });
+  const d2 = (a, b) => (a && b ? Math.hypot(b.x - a.x, b.z - a.z) : null);
+  const tsp = (a, b) => (a && b ? b.t - a.t : null);
+  // roll
+  const r0 = mk('roll:start'), r1 = mk('roll:end');
+  const rollIn = r0 && after(r0.t, (e) => e.sys === 'move' && e.to === 'roll');
+  const rollOut = rollIn && after(rollIn.time + 0.01, (e) => e.sys === 'move' && e.from === 'roll');
+  row('roll: press -> control back (s)', rollIn && rollOut ? rollOut.time - rollIn.time : null, 0.90, 'PS §2 entryPlant 0.10 + controlBackT 0.80 [MEASURED, MP]', 1.5 / 60);
+  row('roll: input -> roll state (s)', rollIn ? rollIn.time - r0.t : null, 0, 'design anti-goal: within one sim step', 1.5 / 60);
+  row('roll: distance (m)', d2(r0, r1), 2.2, 'PS §2 roll.distance (+ plant carry) [MEASURED, MP, low]', 0.35);
+  // run
+  const rs = mk('run:start');
+  row('run: speed at 0.6 s (m/s)', mk('run:0.6') && mk('run:0.6').speed, 4.8, 'PS §2 run.speed [INFERRED]', 0.1);
+  row('run: speed at 0.25 s (m/s)', mk('run:0.25') && mk('run:0.25').speed, 4.5, 'PS §2 accel 18 m/s² -> ~0.27 s to full [INFERRED]', 0.6);
+  row('walk speed (m/s)', mk('walk:0.6') && mk('walk:0.6').speed, 1.6, 'PS §2 walk.speed [INFERRED]', 0.1);
+  row('aim walk speed (m/s)', mk('aimwalk:0.6') && mk('aimwalk:0.6').speed, 1.4, 'PS §2 aimWalk.speed [INFERRED]', 0.1);
+  const t0 = mk('turn:press'), t1 = mk('turn:end');
+  row('run plant-turn 180 (s)', tsp(t0, t1), 0.30, 'PS §2 runTurn180Time [INFERRED]', 2.5 / 60);
+  // cover enter
+  const cp = mk('cover:press'), ci = mk('cover:in');
+  const cEnter = cp && after(cp.t, (e) => e.sys === 'cover' && e.to === 'enter');
+  const cIn = cp && after(cp.t, (e) => e.sys === 'cover' && e.to === 'in');
+  const cDist = cp && ci ? Math.hypot(ci.x - cp.x, ci.z - cp.z) : null;
+  const expEnter = cDist != null ? Math.min(0.45, Math.max(0.2, cDist / 6)) : null;
+  row('cover: press -> enter state (s)', cEnter ? cEnter.time - cp.t : null, 0, 'one sim step', 1.5 / 60);
+  row('cover: slide-in duration (s)', cEnter && cIn ? cIn.time - cEnter.time : null, expEnter, `PS §4 clamp(dist ${cDist && cDist.toFixed(2)} m / 6, 0.20, 0.45) [INFERRED]`, 1.5 / 60);
+  // pop-up aim
+  const ap = mk('aim:press'), ar = mk('aim:release'), fe = mk('fire:early');
+  const aimSettled = ap && after(ap.t, (e) => e.sys === 'cameraBlend' && e.to === 'aim');
+  row('cover -> aim camera framing (s)', aimSettled ? aimSettled.time - ap.t : null, 0.14, 'PS §3/§4 camera.aim.inTime, cover.popAim.inTime [MEASURED F1 (yt-workaround)]', 1.5 / 60);
+  const firstShot = fe && after(fe.t, (e) => e.type === 'shot' && e.actor === 'player');
+  row('pop-up: aim press -> first shot (s), fire pressed at +0.05', firstShot ? firstShot.time - ap.t : null, 0.13, 'PS §4 popAim.fireReadyT [MEASURED upper bound (yt-workaround)]', 1.5 / 60);
+  const outSettled = ar && after(ar.t, (e) => e.sys === 'cameraBlend' && e.to === 'cover');
+  row('aim -> cover camera (s)', outSettled ? outSettled.time - ar.t : null, 0.17, 'PS §3 camera.aim.outTime to cover [MEASURED F1 (yt-workaround)]', 1.5 / 60);
+  const fr = mk('aim:framing');
+  if (fr) {
+    row('aim: reticle ray screen y (frac from top)', fr.reticleY, 0.42, 'PS §3/§8 reticle (0.5, 0.42) [MEASURED F1 (yt-workaround)]', 0.004);
+    row('pop-up aim: head screen x', fr.headX, 0.82, 'PS §3 aim framing head x ≈ 0.82 [MEASURED F1 (yt-workaround)]', 0.06);
+    const fs = mk('aimstand:framing');
+    if (fs) row('standing aim: head screen x', fs.headX, 0.82, 'PS §3 aim framing head x ≈ 0.82 [MEASURED F1 (yt-workaround)]', 0.06);
+    row('aim vfov ratio (explore / aim)', 50 / fr.fov, 1.35, 'PS §3 FOV narrowing 1.3–1.4 [MEASURED, low]', 0.06);
+  }
+  const bp = mk('blind:press');
+  const bShot = bp && after(bp.t, (e) => e.type === 'shot' && e.actor === 'player');
+  row('blind fire: press -> shot (s)', bShot ? bShot.time - bp.t : null, 0.08, 'cover.blindFire.readyT [INFERRED]', 1.5 / 60);
+  // cover move
+  const cm0 = mk('cmove:start'), cm1 = mk('cmove:0.5');
+  row('cover move speed (m/s, 0.5 s in)', cm1 ? cm1.speed : null, 1.8, 'PS §4 cover.moveSpeed [INFERRED]', 0.15);
+  row('cover: reached the edge (edge state)', mk('cover:edge') ? 1 : 0, 1, 'PS §4 stop at edges, peek', 0);
+  // pillar
+  const lp = mk('lean:press');
+  const leanSet = lp && after(lp.t, (e) => e.sys === 'cameraBlend' && e.to === 'aim');
+  row('high cover lean -> aim framing (s)', leanSet ? leanSet.time - lp.t : null, 0.14, 'PS §4 popAim.inTime [MEASURED F1 (yt-workaround)]', 1.5 / 60);
+  const lf = mk('lean:framing');
+  if (lf) row('lean: reticle ray screen y', lf.reticleY, 0.42, 'PS §3 [MEASURED F1 (yt-workaround)]', 0.004);
+  const cs = mk('corner:start'), ce = mk('corner:end');
+  row('corner wrap (s)', tsp(cs, ce), 0.35, 'cover.cornerTime [INFERRED]', 1.5 / 60);
+  const gp = mk('grenade:press'), gh = mk('grenade:hold');
+  const gSet = gp && after(gp.t, (e) => e.sys === 'cameraBlend' && e.to === 'grenade');
+  row('grenade hold -> its camera framing (s)', gSet ? gSet.time - gp.t : null, 0.14, 'PS §3 aim in-time [MEASURED F1 (yt-workaround)]; framing [ASSUMED] wider', 1.5 / 60);
+  const gThrow = gh && after(gh.t, (e) => e.type === 'grenade:throw');
+  row('grenade release -> thrown (s)', gThrow ? gThrow.time - gh.t : null, 0.25, 'PS §6 grenade.throwReleaseT [INFERRED] (B2)', 1.5 / 60);
+  const cf = mk('cover:framing');
+  if (cf) {
+    row('low cover: crouched character height / screen height', cf.charFrac, 0.22, 'PS §3 cover 0.22 [MEASURED F1 (yt-workaround)]', 0.05);
+    row('low cover: character screen x', cf.headX, 0.575, 'PS §3 cover x 0.55–0.60 [MEASURED F1 (yt-workaround)]', 0.05);
+  }
+  const sp = mk('swap:press'), si = mk('swap:in');
+  const swapEnter = sp && after(sp.t, (e) => e.sys === 'cover' && e.to === 'enter');
+  row('cover-to-cover swap taken (stick away + cover)', swapEnter && si && si.mode === 'cover' ? 1 : 0, 1, '[ASSUMED] cheap swap; U4 has no swap button (PS §4)', 0,
+    si ? `moved ${d2(sp, si).toFixed(2)} m in ${(si.t - sp.t).toFixed(2)} s` : '');
+  const aw = mk('away:start'), al = mk('away:left');
+  row('push away from the wall -> leave cover (s)', tsp(aw, al), 0.25, 'PS §4 cover.leaveHoldTime [INFERRED]', 1.5 / 60);
+  const ef = mk('explore:framing');
+  if (ef) {
+    row('explore: character height / screen height', ef.charFrac, 0.43, 'PS §3 explore 0.38–0.50 [MEASURED F1 (yt-workaround)]', 0.07);
+    row('explore: character screen x', ef.headX, 0.5, 'PS §3 explore x 0.46–0.50 [MEASURED F1 (yt-workaround)]', 0.05);
+  }
+  // mantle / vault / jump
+  const mp = mk('mantle:press'), me = mk('mantle:end');
+  const mIn = mp && after(mp.t, (e) => e.sys === 'move' && e.to === 'mantle');
+  const mOut = mIn && after(mIn.time + 0.01, (e) => e.sys === 'move' && e.from === 'mantle');
+  row('mantle 1.2 m: duration (s)', mIn && mOut ? mOut.time - mIn.time : null, 0.6, 'player.mantle.time [INFERRED]; CS §3 climb-up 0.65 s to crouch [MEASURED]', 1.5 / 60);
+  row('mantle: end height (m)', me ? me.y : null, 1.2, 'mantle block top (room LAYOUT)', 0.03);
+  const vp = mk('vault:press'), ve = mk('vault:end');
+  const vIn = vp && after(vp.t, (e) => e.sys === 'mantle' && e.to === 'vault');
+  row('vault taken (kind vault)', vIn ? 1 : 0, 1, 'CS §2 vault: running, ≤1.1 m, thin', 0);
+  row('vault: landed beyond the wall (m past far face)', ve ? 2.325 - ve.z : null, 0.7, 'lowE far face z 2.325', 0.4);
+  const jp = mk('jump:press');
+  const jRise = jp && after(jp.t, (e) => e.sys === 'air' && e.to === 'rise');
+  const jLand = jp && after(jp.t, (e) => e.sys === 'move' && e.from === 'air' && e.to === 'ground');
+  row('jump: crouch-load (s)', jRise ? jRise.time - jp.t : null, 0.10, 'CS §4 takeoff crouch-load 0.10–0.15 [MEASURED rough]', 1.5 / 60);
+  row('jump: airtime, flat (s)', jRise && jLand ? jLand.time - jRise.time : null, 0.42, 'CS §4 g 18, apex 0.4 -> 0.42 s [INFERRED]; gap jump 0.38 s [MEASURED]', 2.5 / 60);
+  const rj = mk('rjump:takeoff'), rl = mk('rjump:land');
+  row('running jump: takeoff -> landing distance (m)', d2(rj, rl), 2.0, 'CS §4 running long-jump ≈2.0 [INFERRED] (run 4.8 m/s [INFERRED])', 0.3);
+  // climb routing
+  const cl = mk('climb:press');
+  const cGrab = cl && after(cl.t, (e) => e.sys === 'move' && e.to === 'climb');
+  row('jump at the ledge -> climb mode (s)', cGrab ? cGrab.time - cl.t : null, 0, 'routes into game.climb (B3) on the jump press', 1.5 / 60);
+  const dp = mk('drop:press');
+  const dGrab = dp && after(dp.t, (e) => e.sys === 'move' && e.to === 'climb');
+  row('cover at the balcony top edge -> drop to hang (s)', dGrab ? dGrab.time - dp.t : null, 0, 'CS §2 TOP -> DROP_TO_HANG via game.climb.canGrab({dropFromTop})', 1.5 / 60);
+  const dlg = mk('drop:let-go');
+  const hard = dlg && after(dlg.t, (e) => e.sys === 'gait' && (e.to === 'hardLand' || e.to === 'land'));
+  row('drop from the hang (~3.4 m fall) -> hard landing', hard && hard.to === 'hardLand' ? 1 : 0, 1, 'CS §4 hard land 2–6 m [INFERRED]', 0);
+  const hlEnd = hard && after(hard.time + 0.01, (e) => e.sys === 'gait' && e.from === 'hardLand');
+  row('hard landing recovery (s)', hard && hlEnd ? hlEnd.time - hard.time : null, 0.5, 'CS §4 hard land 0.5 s [INFERRED], pose [MEASURED]', 1.5 / 60);
+  // health
+  const dl = mk('dmg:last'), df = mk('dmg:full');
+  row('regen: last hit -> full (s), 75 hp lost', tsp(dl, df), 2.3, 'PS §7 F1 ≈2.3 s [MEASURED low (yt-workaround)]; params 1.5 + 75/120', 0.25);
+  const de = mk('death');
+  const deadMode = de && after(de.t, (e) => e.sys === 'move' && e.to === 'dead');
+  row('lethal damage -> dead mode', deadMode ? 1 : 0, 1, 'PS §7', 0);
+  const rd = mk('restart:done');
+  row('restart with R after the fade', rd && rd.mode === 'ground' ? 1 : 0, 1, 'PS §7 deathFade 1.5 + quick restart', 0);
+  return rows;
+}
+
+window.__player = { actor: player, rig, marks, shotPlan, report, framing, used, runner, SEGMENTS: Object.keys(SEGMENTS) };
+
+// =====================================================================================================================
+// Readout
+// =====================================================================================================================
+const rowsEl = document.getElementById('rows');
+const cells = {};
+for (const k of ['mode', 'state', 'speed', 'camera', 'hp', 'weapon', 'modules']) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td class="k">${k}</td><td></td>`;
+  rowsEl.appendChild(tr); cells[k] = tr.lastChild;
+}
+game.addSystem({
+  name: 'readout', order: ORDER.hud + 1,
+  frame() {
+    const c = player.ctrl;
+    cells.mode.textContent = `${c.mode}${c.mode === 'ground' ? ' / ' + c.gait : ''}${c.grenadeAiming ? ' +grenade' : ''}`;
+    cells.state.textContent = c.mode === 'cover' ? `cover: ${player.state.cover}` : c.mode === 'climb' && game.climb && game.climb.state ? `climb: ${game.climb.state(player)}` : '';
+    cells.speed.textContent = `${Math.hypot(player.vel.x, player.vel.z).toFixed(2)} m/s  y ${player.pos.y.toFixed(2)}`;
+    cells.camera.textContent = `${rig.profile} ${(rig.blend * 100).toFixed(0)}%  fov ${rig.fov.toFixed(1)}  side ${rig.side}`;
+    cells.hp.textContent = `${c.health.hp.toFixed(0)} / ${player.maxHealth}`;
+    const ws = player.weapon && player.weapon.state;
+    cells.weapon.textContent = ws ? `${ws.mag}/${ws.reserve}${ws.reloading ? ' reloading' : ''}  ${c.caps.fireMode}` : 'none';
+    cells.modules.textContent = Object.entries(used).filter(([, v]) => v !== 'real').map(([k]) => k).join(', ') || 'all real';
+  },
+});
+
+game.params.buildPanel(GUI, { title: 'player test tuning', hidden: TEST });
+installDebugKeys(game, { badge: !TEST });
+if (SCRIPT) runner.start(SCRIPT);
+console.info('[player test] modules:', JSON.stringify(used));
+document.getElementById('fallback').hidden = true;
+game.renderFrame(0);
+window.__ready = true;
+if (!TEST) game.start();
+
+// =====================================================================================================================
+// Stubs (used only when the real module is missing, fails, or is named in ?stub=)
+// =====================================================================================================================
+function stubHud() {
+  const noop = () => {};
+  return { setReticle: noop, setAmmo: noop, setGrenades: noop, setCombat: noop, hitMarker: noop, damage: noop,
+    setHealthLook: (l) => game.render.setGrade && game.render.setGrade({ saturation: 0.05 + 0.95 * l, vignette: (1 - l) * 0.45 }),
+    awareness: noop, prompt: noop, toggle: noop };
+}
+
+// Box course: low wall, high pillar, 1.2 m mantle block, low wall to vault, a 2.1 m ledge wall. Same coordinates as
+// the room pieces the scripts use, so the scripts run on either.
+function buildCourse(g) {
+  const scene = g.scene, world = g.world;
+  scene.add(new THREE.HemisphereLight(0xdfe8f5, 0x5a4e3d, 1.4));
+  const sun = new THREE.DirectionalLight(0xfff1dc, 2.2); sun.position.set(-6, 12, 4); scene.add(sun);
+  const mat = new THREE.MeshStandardMaterial({ color: 0xa89878, roughness: 0.9 });
+  const add = (cx, cy, cz, sx, sy, sz, tags) => {
+    world.addBox({ center: [cx, cy, cz], size: [sx, sy, sz] }, { tags });
+    const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat); m.position.set(cx, cy, cz); scene.add(m);
+  };
+  add(0, -0.5, 0, 40, 1, 40, ['floor']);
+  const grid = new THREE.GridHelper(40, 40, 0x8a8a86, 0x6a6a68); grid.position.y = 0.002; scene.add(grid);
+  add(3.6, 0.5, 7.0, 3.6, 1.0, 0.55, ['cover-low']);     // lowS
+  add(5.4, 1.2, -1.4, 1.1, 2.4, 1.1, ['cover-high']);    // pierE
+  add(-3.4, 0.6, 7.6, 2.2, 1.2, 1.3, ['mantle']);        // mantle block
+  add(7.8, 0.5, 2.6, 3.8, 1.0, 0.55, ['cover-low']);     // lowE
+  add(-7.5, 3.0, -9.5, 6, 6.0, 3.0, ['climbable']);      // rampart: face z -8, walkable top 6.0 (room balcony gap)
+  add(-7.5, 2.03, -7.92, 6, 0.14, 0.16, ['climbable']);  // ledge stone, grip line y 2.1 at z -7.84 (room L1)
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  const low = (id, x0, x1, z, nz) => ({ id, a: V(nz > 0 ? x0 : x1, 0, z), b: V(nz > 0 ? x1 : x0, 0, z), normal: V(0, 0, nz), height: 'low', top: 1.0, ends: { a: 'corner', b: 'corner' } });
+  g.level = {
+    spawns: { player: { pos: V(0, 0, 10.4), yaw: PI }, enemies: [] },
+    cover: [
+      low('lowS:S', 1.8, 5.4, 7.275, 1), low('lowS:N', 1.8, 5.4, 6.725, -1), low('lowE:S', 5.9, 9.7, 2.875, 1),
+      { id: 'pierE:S', a: V(4.85, 0, -0.85), b: V(5.95, 0, -0.85), normal: V(0, 0, 1), height: 'high', top: 2.4, ends: { a: 'corner', b: 'corner' } },
+      { id: 'pierE:E', a: V(5.95, 0, -0.85), b: V(5.95, 0, -1.95), normal: V(1, 0, 0), height: 'high', top: 2.4, ends: { a: 'corner', b: 'corner' } },
+      { id: 'pierE:W', a: V(4.85, 0, -1.95), b: V(4.85, 0, -0.85), normal: V(-1, 0, 0), height: 'high', top: 2.4, ends: { a: 'corner', b: 'corner' } },
+    ],
+    climb: { edges: [
+      { id: 'L1', kind: 'ledge', pts: [[-10.4, 2.1, -7.84], [-4.6, 2.1, -7.84]], normal: [0, 0, 1] },
+      { id: 'TOP', kind: 'top', pts: [[-10.4, 6.0, -8.0], [-4.6, 6.0, -8.0]], normal: [0, 0, 1] },
+    ] },
+    bounds: { min: V(-20, 0, -20), max: V(20, 10, 20) },
+  };
+}
+
+// Stub mannequin: segmented boxes posed from the animState (enough to read the state in screenshots).
+function stubCharacter(g, { palette = 'player' } = {}) {
+  const root = new THREE.Group();
+  const col = palette === 'player' ? 0x3f8f8a : 0xb59a6a;
+  const mBody = new THREE.MeshStandardMaterial({ color: col, roughness: 0.7 });
+  const mDark = new THREE.MeshStandardMaterial({ color: 0x2b2f36, roughness: 0.8 });
+  const body = new THREE.Group(); root.add(body);
+  const box = (sx, sy, sz, m, parent, x, y, z) => { const o = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), m); o.position.set(x, y, z); parent.add(o); return o; };
+  const hips = new THREE.Group(); hips.position.y = 0.95; body.add(hips);
+  const torso = box(0.42, 0.62, 0.24, mBody, hips, 0, 0.36, 0);
+  const head = box(0.22, 0.26, 0.24, mDark, hips, 0, 0.82, 0.02);
+  const legL = new THREE.Group(), legR = new THREE.Group(); legL.position.set(0.11, 0, 0); legR.position.set(-0.11, 0, 0); hips.add(legL, legR);
+  box(0.15, 0.92, 0.17, mDark, legL, 0, -0.46, 0); box(0.15, 0.92, 0.17, mDark, legR, 0, -0.46, 0);
+  const armR = new THREE.Group(); armR.position.set(-0.27, 0.6, 0); hips.add(armR);
+  const armL = new THREE.Group(); armL.position.set(0.27, 0.6, 0); hips.add(armL);
+  box(0.11, 0.62, 0.11, mBody, armR, 0, -0.31, 0); box(0.11, 0.62, 0.11, mBody, armL, 0, -0.31, 0);
+  const gun = box(0.05, 0.1, 0.24, mDark, armR, 0, -0.62, 0.08);
+  const sockets = { muzzle: new THREE.Object3D(), head: new THREE.Object3D(), hand_r: new THREE.Object3D(), hand_l: new THREE.Object3D(), grenade_hand: new THREE.Object3D() };
+  gun.add(sockets.muzzle); sockets.muzzle.position.set(0, 0, 0.14); head.add(sockets.head); armR.add(sockets.hand_r); armL.add(sockets.hand_l); armL.add(sockets.grenade_hand);
+  let phase = 0;
+  const rigObj = {
+    root, bones: { head, pelvis: hips }, socket: (n) => sockets[n] || null,
+    getBoneWorld(n, out) { const b = n === 'head' ? head : hips; return b.getWorldPosition(out); },
+    update(dt, s) {
+      body.rotation.set(0, 0, 0); body.position.set(0, 0, 0); hips.position.y = 0.95; torso.rotation.set(0, 0, 0);
+      armR.rotation.set(0, 0, 0); armL.rotation.set(0, 0, 0); legL.rotation.set(0, 0, 0); legR.rotation.set(0, 0, 0); hips.rotation.set(0, 0, 0);
+      const crouch = s.mode === 'cover' ? (s.cover.height === 'low' && s.cover.pose !== 'popup' ? 1 : 0) : (s.crouch || 0);
+      phase += dt * (1.2 + (s.speed || 0) * 0.55) * Math.PI * 2 * ((s.speed || 0) > 0.1 ? 1 : 0);
+      const sw = Math.sin(phase) * Math.min(1, (s.speed || 0) / 3) * 0.7;
+      legL.rotation.x = sw; legR.rotation.x = -sw; armL.rotation.x = -sw * 0.6; armR.rotation.x = sw * 0.6;
+      hips.position.y = 0.95 - 0.38 * crouch; legL.rotation.x -= 0.9 * crouch; legR.rotation.x -= 0.9 * crouch; hips.rotation.x = 0.35 * crouch;
+      if (s.aim && s.aim.weight > 0) { armR.rotation.x = -Math.PI / 2 - s.aim.pitch * s.aim.weight; armR.rotation.y = s.aim.yaw * s.aim.weight; armL.rotation.x = armR.rotation.x * 0.9; hips.rotation.y = s.aim.yaw * 0.5 * s.aim.weight; }
+      if (s.mode === 'roll') { const u = s.modeT || 0; body.position.y = 0.5 * Math.sin(Math.PI * Math.min(1, u * 1.2)) * 0 ; hips.position.y = 0.5; body.rotation.x = Math.PI * 2 * Math.min(1, u / 0.94); legL.rotation.x = legR.rotation.x = -1.6; }
+      if (s.mode === 'jump' || s.mode === 'fall') { legL.rotation.x = -0.9; legR.rotation.x = -0.3; armL.rotation.z = 0.6; armR.rotation.z = -0.6; }
+      if (s.mode === 'mantle') { const u = s.modeT || 0; armL.rotation.x = armR.rotation.x = -Math.PI * (0.8 - 0.6 * u); hips.rotation.x = 0.5 * Math.sin(Math.PI * u); legL.rotation.x = -1.2 * Math.sin(Math.PI * u); }
+      if (s.mode === 'cover') {
+        if (s.cover.pose === 'lean') hips.rotation.z = -0.25 * (s.cover.side || 1) * (s.cover.t || 0);
+        if (s.cover.pose === 'blind') { armR.rotation.x = -Math.PI * 0.9; }
+      }
+      if (s.mode === 'climb') { armL.rotation.x = armR.rotation.x = -Math.PI; }
+      if (s.mode === 'death') { const k = Math.min(1, (s.death.t || 0) / 0.6); body.rotation.x = -Math.PI / 2 * k; body.position.y = 0.15 * k; }
+      root.updateMatrixWorld(true);
+    },
+  };
+  g.scene.add(root);
+  return rigObj;
+}
+
+function installStubAnimation(g) {
+  g.addSystem({ name: 'animation', order: ORDER.animation, update(dt) {
+    for (const a of g.actors) { if (!a.rig) continue; a.rig.root.position.copy(a.pos); a.rig.root.rotation.set(0, a.yaw, 0); a.rig.update(dt, a.anim); }
+  } });
+}
+
+// Stub climbing: grab a 'top' edge 1.6–3.5 m above the feet within 1 m, hang 0.4 m below it, climb up on stick up,
+// drop on cover. Enough to prove the routing (B3 replaces it).
+function installStubClimb(g, actor) {
+  const edges = (g.level.climb && g.level.climb.edges) || [];
+  const grab = { edge: null, y: 0, nx: 0, nz: 1, x: 0, z: 0 };
+  g.climb = {
+    canGrab(a, { fromAir } = {}) {
+      for (const e of edges) {
+        const p0 = e.pts[0], p1 = e.pts[e.pts.length - 1], y = p0[1], h = y - a.pos.y;
+        if (h < 1.6 || h > 3.5 || (fromAir && a.vel.y > 0)) continue;
+        const nx = e.normal[0], nz = e.normal[2];
+        const t = Math.max(0, Math.min(1, ((a.pos.x - p0[0]) * (p1[0] - p0[0]) + (a.pos.z - p0[2]) * (p1[2] - p0[2])) / ((p1[0] - p0[0]) ** 2 + (p1[2] - p0[2]) ** 2)));
+        const x = p0[0] + (p1[0] - p0[0]) * t, z = p0[2] + (p1[2] - p0[2]) * t;
+        if (Math.hypot(a.pos.x - x, a.pos.z - z) > 1.0) continue;
+        Object.assign(grab, { edge: e, y, nx, nz, x, z });
+        return grab;
+      }
+      return null;
+    },
+    state: () => stubMode.sub,
+  };
+  const stubMode = {
+    sub: 'none', t: 0,
+    enter(from, ctx) { const gr = ctx.grab; this.g = { ...gr }; this.sub = 'hang'; this.t = 0; actor.pos.set(gr.x + gr.nx * 0.3, gr.y - 2.0, gr.z + gr.nz * 0.3); actor.yaw = Math.atan2(-gr.nx, -gr.nz); actor.vel.set(0, 0, 0); actor.anim.mode = 'climb'; actor.cameraProfile = 'climb'; g.events.emit('state', { actor, sys: 'climb', from: 'none', to: 'hang', t: g.time }); },
+    update(dt) {
+      this.t += dt; actor.anim.mode = 'climb'; actor.cameraProfile = 'climb';
+      if (actor.ctrl.pressed('cover')) { actor.ctrl.setMode('air', {}); return true; }
+      if (g.input.axis('move').y > 0.5 && this.t > 0.3) { actor.pos.set(this.g.x - this.g.nx * 0.45, this.g.y, this.g.z - this.g.nz * 0.45); g.world.moveCapsule(actor, new THREE.Vector3(0, -0.01, 0)); actor.ctrl.setMode('ground'); }
+      return true;
+    },
+    exit() { g.events.emit('state', { actor, sys: 'climb', from: this.sub, to: 'none', t: g.time }); this.sub = 'none'; },
+  };
+  actor.ctrl.registerMode('climb', stubMode);
+}
+
+// Stub pistol + grenades with the B2 contract shape (no VFX; emits 'shot').
+function installStubWeapons(g, actor) {
+  const ray = { origin: new THREE.Vector3(), dir: new THREE.Vector3() };
+  const shotEv = { shooter: actor, weapon: null, origin: ray.origin, dir: ray.dir, hit: null, muzzle: { pos: new THREE.Vector3(), dir: ray.dir } };
+  const st = { mag: 12, reserve: 28, reloading: false, cooldown: 0, lastShotT: -1e9, sinceShot: 99, reloadT: 0, reloadDur: 0.85, trigger: false, reloadDuck: { active: false, hold: 0.067, down: 0.17, t: 0 } };
+  let pending = 0, frame = -1;
+  const w = {
+    state: st,
+    setTrigger(d) { if (d && !st.trigger) pending = 0.1; st.trigger = !!d; },
+    setAim() {}, setBlind() {},
+    reload() { if (st.reloading || st.mag >= 12 || st.reserve <= 0) return false; st.reloading = true; st.reloadT = 0; st.reloadDuck.active = actor.state.cover === 'popAim' || actor.state.cover === 'lean'; return true; },
+    cancelReload() { st.reloading = false; },
+    addAmmo(n) { st.reserve = Math.min(48, st.reserve + n); },
+    update(dt) {
+      if (g.frame === frame) return; frame = g.frame;
+      st.sinceShot += dt;
+      if (st.reloading) { st.reloadT += dt; if (st.reloadT >= st.reloadDur) { const n = Math.min(12 - st.mag, st.reserve); st.mag += n; st.reserve -= n; st.reloading = false; st.reloadDuck.active = false; } }
+      if (pending > 0) {
+        if (!st.reloading && st.mag > 0 && st.sinceShot >= 0.2) {
+          g.cameraRig.aimRay(ray); st.mag--; st.sinceShot = 0; st.lastShotT = g.time; pending = 0;
+          g.events.emit('shot', shotEv); g.cameraRig.kick(0.22, 0.1);
+          if (st.mag === 0) w.reload();
+        } else pending -= dt;
+      }
+    },
+  };
+  actor.weapon = w;
+  let aiming = false;
+  g.grenades = { beginAim() { aiming = true; return true; }, updateAim() {}, release() { aiming = false; return true; }, cancel() { aiming = false; },
+    isAiming: () => aiming, stateOf: () => ({ phase: aiming ? 'aiming' : 'none', t: 0 }), lookScale: () => (aiming ? 0.6 : 1), live: [] };
+}
+</script>
+</body>
+</html>

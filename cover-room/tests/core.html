@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Cover Room: core test</title>
+<link rel="icon" href="data:,">
+<script type="importmap">
+{
+  "imports": {
+    "three":         "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "lil-gui":       "https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.min.js"
+  }
+}
+</script>
+<style>
+  :root {
+    --ink: rgba(228, 232, 238, 0.93); --ink-dim: rgba(150, 164, 184, 0.88); --accent: #ffb454;
+    --on: #7fd18b; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #06080c; color: var(--ink); font: 11px/1.4 var(--mono); }
+  #gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
+  #fallback {
+    position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center;
+    padding: 24px; text-align: center; line-height: 1.7; color: var(--ink-dim); background: #06080c;
+    letter-spacing: 0.08em; white-space: pre-line; overflow-wrap: anywhere; overflow: auto;
+  }
+  #fallback[hidden] { display: none; }
+  #state {
+    position: fixed; top: 12px; left: 12px; z-index: 10; width: 330px; padding: 10px 12px;
+    background: rgba(9, 12, 17, 0.82); border: 1px solid rgba(255,255,255,0.12); border-radius: 4px;
+    pointer-events: none;
+  }
+  #state h1 { margin: 0 0 6px; font-size: 12px; letter-spacing: 0.2em; text-transform: uppercase; }
+  #state .sub { color: var(--ink-dim); margin-bottom: 8px; }
+  #state table { border-collapse: collapse; width: 100%; }
+  #state td { padding: 1px 4px; white-space: nowrap; }
+  #state td.k { color: var(--ink-dim); }
+  #state tr.on td.k { color: var(--on); }
+  #state .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #333a44; vertical-align: -1px; }
+  #state tr.on .dot { background: var(--on); }
+  #state hr { border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 6px 0; }
+  #log { color: var(--ink-dim); white-space: pre; max-height: 140px; overflow: hidden; }
+  .lil-gui.cr-params { --font-family: var(--mono); z-index: 20; }
+  .lil-gui .cr-changed > .name { color: var(--accent); }
+</style>
+</head>
+<body>
+<canvas id="gl" role="img" aria-label="Core test: a capsule on a grid floor, moved by the move action"></canvas>
+<div id="state">
+  <h1>Core test</h1>
+  <div class="sub">input · params · measure. Click the floor to capture the mouse. WASD/LS move, mouse/RS turn.
+  ` panel · P pause · . step · [ ] slow-mo</div>
+  <table id="actions"></table>
+  <hr>
+  <table id="axes"></table>
+  <hr>
+  <div id="log"></div>
+</div>
+<div id="fallback" role="status">Loading Three.js r160 from cdn.jsdelivr.net. If this message stays, the CDN, import-map support or WebGL2 is unavailable.</div>
+
+<script>
+(function () {
+  var shown = false;
+  function show(kind, detail, where) {
+    var el = document.getElementById('fallback');
+    if (shown || !el || el.hasAttribute('data-fatal')) return;
+    shown = true; el.hidden = false; el.setAttribute('role', 'alert');
+    el.textContent = 'The core test stopped on an uncaught ' + kind + '.\n' + detail + (where ? '\n' + where : '');
+  }
+  window.addEventListener('error', function (e) {
+    if (/ResizeObserver loop/.test(String(e.message))) return;
+    var err = e.error;
+    show('error', err && err.message ? (err.name || 'Error') + ': ' + err.message : String(e.message || 'unknown error'),
+      e.filename ? e.filename.replace(location.origin, '') + ':' + e.lineno : '');
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason; show('promise rejection', r && r.message ? (r.name || 'Error') + ': ' + r.message : String(r), '');
+  });
+})();
+</script>
+
+<script type="module">
+// Proves core/input.js, core/params.js and debug/measure.js together, without any other module.
+//   ?test   no pointer lock, no game.start(); tools/play.mjs steps it. window.__ready / __game / __measure / __core.
+// The capsule is a stand-in actor: `move` drives it in its own frame at test.capsule.runSpeed (walkSpeed while `walk`
+// is held), lookDelta().yaw turns it, and it emits `state` {sys: 'move', idle | walk | run} like a real controller would.
+import * as THREE from 'three';
+import GUI from 'lil-gui';
+import { Game, ORDER } from '../src/core/game.js';
+import { Input, BUTTONS, installDebugKeys } from '../src/core/input.js';
+import { installMeasure } from '../src/debug/measure.js';
+
+const QP = new URLSearchParams(location.search);
+const TEST = QP.has('test');
+const canvas = document.getElementById('gl');
+const game = new Game({ seed: 1, test: TEST, storageKey: 'cover-room-params-core-test-v1' });
+const input = game.input = game.addSystem(new Input(game, { canvas, pointerLock: !TEST }));
+installMeasure(game);
+
+const P = game.params;
+P.define('test.capsule.runSpeed', 4.0, { min: 0, max: 10, step: 0.1, label: 'run m/s' });
+P.define('test.capsule.walkSpeed', 1.5, { min: 0, max: 5, step: 0.1, label: 'walk m/s' });
+P.define('test.capsule.color', '#d9a441', { label: 'colour' });
+P.define('test.capsule.trail', true, { label: 'trail' });
+P.define('test.view.follow', true, { label: 'camera follows' });
+P.define('test.view.fov', 50, { min: 20, max: 90, step: 1, label: 'fov' });
+
+// --- scene ---------------------------------------------------------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: TEST });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x151a21);
+const camera = new THREE.PerspectiveCamera(P.get('test.view.fov'), 1, 0.05, 200);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshStandardMaterial({ color: 0x55585c, roughness: 1 }));
+floor.rotation.x = -Math.PI / 2;
+const grid = new THREE.GridHelper(40, 40, 0x9aa0a8, 0x6a6e74);
+grid.position.y = 0.002;
+const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+sun.position.set(5, 10, -3);
+scene.add(floor, grid, sun, new THREE.HemisphereLight(0xdfe8f5, 0x30302c, 1.3));
+// origin marker: +Z arrow (forward at yaw 0)
+scene.add(new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0.01, 0), 1.5, 0x5fa8ff, 0.3, 0.15));
+
+const capMat = new THREE.MeshStandardMaterial({ color: P.get('test.capsule.color'), roughness: 0.6 });
+P.onChange('test.capsule.color', (v) => capMat.color.set(v));
+const rig = new THREE.Group();
+const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.35, 1.1, 6, 16), capMat);   // radius 0.35, height 1.8 (contract)
+body.position.y = 0.9;
+const nose = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.3), new THREE.MeshStandardMaterial({ color: 0x222222 }));
+nose.position.set(0, 1.55, 0.38);
+rig.add(body, nose);
+scene.add(rig);
+
+const TRAIL_MAX = 2000;
+const trailPos = new Float32Array(TRAIL_MAX * 3);
+const trailGeo = new THREE.BufferGeometry();
+trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
+trailGeo.setDrawRange(0, 0);
+const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color: 0xffb454 }));
+scene.add(trail);
+let trailN = 0;
+
+const resize = () => {
+  const w = Math.max(1, innerWidth), h = Math.max(1, innerHeight);
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+};
+resize();
+addEventListener('resize', resize);
+game.render = { renderer, scene, camera, draw: () => renderer.render(scene, camera), resize };
+game.scene = scene; game.camera = camera;
+
+// --- stand-in actor (a 'player' system) ------------------------------------------------------------------------------
+const actor = { id: 'capsule', team: 'player', pos: new THREE.Vector3(), vel: new THREE.Vector3(), yaw: 0, height: 1.8, radius: 0.35, state: { move: 'idle' } };
+const edges = { pressed: {}, released: {} };
+for (const a of BUTTONS) { edges.pressed[a] = 0; edges.released[a] = 0; }
+const stateEvt = { actor, sys: 'move', from: '', to: '', t: 0 };
+
+game.addSystem({
+  name: 'capsule', order: ORDER.player,
+  update(dt) {
+    for (const a of BUTTONS) {
+      if (input.pressed(a)) edges.pressed[a]++;
+      if (input.released(a)) edges.released[a]++;
+    }
+    actor.yaw += input.lookDelta().yaw;
+    const m = input.axis('move');
+    const walking = input.down('walk');
+    const speed = walking ? P.get('test.capsule.walkSpeed') : P.get('test.capsule.runSpeed');
+    // forward = +Z rotated by yaw; right = forward x up = (-cos yaw, 0, sin yaw)
+    const s = Math.sin(actor.yaw), c = Math.cos(actor.yaw);
+    actor.vel.set((s * m.y - c * m.x) * speed, 0, (c * m.y + s * m.x) * speed);
+    actor.pos.addScaledVector(actor.vel, dt);
+    const next = m.x || m.y ? (walking ? 'walk' : 'run') : 'idle';
+    if (next !== actor.state.move) {
+      stateEvt.from = actor.state.move; stateEvt.to = next; stateEvt.t = game.time;
+      actor.state.move = next;
+      game.events.emit('state', stateEvt);
+    }
+    if (P.get('test.capsule.trail') && trailN < TRAIL_MAX && (m.x || m.y)) {
+      trailPos[trailN * 3] = actor.pos.x; trailPos[trailN * 3 + 1] = 0.03; trailPos[trailN * 3 + 2] = actor.pos.z;
+      trailN++;
+    }
+  },
+  frame() {
+    rig.position.copy(actor.pos);
+    rig.rotation.y = actor.yaw;
+    trailGeo.attributes.position.needsUpdate = true;
+    trailGeo.setDrawRange(0, trailN);
+    trail.visible = P.get('test.capsule.trail');
+    if (camera.fov !== P.get('test.view.fov')) { camera.fov = P.get('test.view.fov'); camera.updateProjectionMatrix(); }
+    const f = P.get('test.view.follow');
+    camera.position.set(f ? actor.pos.x + 5 : 5, 7, (f ? actor.pos.z : 0) - 8);
+    camera.lookAt(f ? actor.pos.x : 0, 0.5, (f ? actor.pos.z : 0) + 1.5);
+  },
+});
+
+// --- state readout (a 'hud' frame system) ------------------------------------------------------------------------------
+const actionsEl = document.getElementById('actions'), axesEl = document.getElementById('axes'), logEl = document.getElementById('log');
+const rows = {};
+for (const a of BUTTONS) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td class="k"><span class="dot"></span> ${a}</td><td class="h"></td><td class="e"></td>`;
+  actionsEl.appendChild(tr);
+  rows[a] = { tr, h: tr.querySelector('.h'), e: tr.querySelector('.e') };
+}
+const ax = {};
+for (const k of ['move', 'look', 'lookDelta', 'device', 'capsule', 'sim', 'inject']) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td class="k">${k}</td><td class="v"></td>`;
+  axesEl.appendChild(tr);
+  ax[k] = tr.querySelector('.v');
+}
+const f2 = (v) => (v >= 0 ? ' ' : '') + v.toFixed(2);
+game.addSystem({
+  name: 'readout', order: ORDER.hud,
+  frame() {
+    for (const a of BUTTONS) {
+      const r = rows[a];
+      r.tr.classList.toggle('on', input.down(a));
+      r.h.textContent = input.down(a) ? input.heldTime(a).toFixed(2) + ' s' : '';
+      r.e.textContent = `↓${edges.pressed[a]} ↑${edges.released[a]}`;
+    }
+    const m = input.axis('move'), l = input.axis('look'), d = input.lookDelta();
+    ax.move.textContent = `${f2(m.x)} ${f2(m.y)}`;
+    ax.look.textContent = `${f2(l.x)} ${f2(l.y)}`;
+    ax.lookDelta.textContent = `yaw ${(d.yaw * 180 / Math.PI).toFixed(3)}°  pitch ${(d.pitch * 180 / Math.PI).toFixed(3)}°`;
+    ax.device.textContent = input.device;
+    ax.capsule.textContent = `x ${f2(actor.pos.x)} z ${f2(actor.pos.z)} yaw ${(actor.yaw * 180 / Math.PI).toFixed(1)}° ${actor.state.move}`;
+    ax.sim.textContent = `t ${game.time.toFixed(3)} s  #${game.frame}${game.paused ? '  PAUSED' : ''}  x${game.timeScale}`;
+    ax.inject.textContent = input.injecting ? 'active' : 'off';
+    const log = __measure.recorder.entries;
+    let txt = '';
+    for (let i = Math.max(0, log.length - 9); i < log.length; i++) {
+      const e = log[i];
+      txt += `${e.time.toFixed(3).padStart(8)}  ${e.type === 'state' ? `${e.sys}: ${e.from} → ${e.to}` : e.type === 'input' ? `${e.action} ${e.edge}` : e.type}\n`;
+    }
+    logEl.textContent = txt || 'measure log: (empty)';
+  },
+});
+
+game.params.buildPanel(GUI, { title: 'core test tuning' });
+game.params.addPreset('slow walker', { 'test.capsule.runSpeed': 2, 'test.capsule.color': '#5fa8ff' });
+installDebugKeys(game);
+window.__core = { actor, edges, P, input };
+document.getElementById('fallback').hidden = true;
+game.renderFrame(0);
+window.__ready = true;
+if (!TEST) game.start();
+</script>
+</body>
+</html>

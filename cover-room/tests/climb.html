@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Cover Room: climb test</title>
+<link rel="icon" href="data:,">
+<!--
+  Climb test wall (B3). Standalone: a test wall built to refs/climb-spec.md's layout, a stub ground/air controller that
+  calls game.climb.canGrab the way player/controller.js does, a procedural mannequin driven only by actor.anim.climb,
+  and a camera that follows actor.cameraProfile.
+  Query flags:
+    ?test           headless: no rAF loop (tools/play.mjs steps __game), params not persisted, panel hidden
+    ?script=NAME    deterministic input timeline: main | lunge | room. Logs every climb transition with its sim time;
+                    __climbScript.report() compares the durations with the spec (markdown in .markdown)
+    ?room           the real room (src/level/room.js) and its climb markup instead of the test wall (script=room implies it)
+    ?set=k:v,...    param overrides (climb.debug:true shows the move target)
+  Keys (live): WASD move, Space jump/lunge, Q drop / drop-to-hang, RMB hold = hang-aim, drag = orbit, ` panel, P pause, [ ] slow-mo
+-->
+<script type="importmap">
+{
+  "imports": {
+    "three":         "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "lil-gui":       "https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.min.js"
+  }
+}
+</script>
+<style>
+  :root {
+    --ink: rgba(228, 232, 238, 0.93); --ink-dim: rgba(150, 164, 184, 0.88); --accent: #ffb454; --on: #7fd18b;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e13; color: var(--ink); font: 11px/1.45 var(--mono); }
+  #gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  #panel {
+    position: fixed; top: 12px; left: 12px; z-index: 10; width: min(360px, calc(100vw - 24px)); padding: 10px 12px;
+    background: rgba(9, 12, 17, 0.78); border: 1px solid rgba(255,255,255,0.12); border-radius: 4px; pointer-events: none;
+  }
+  #panel h1 { margin: 0 0 4px; font-size: 12px; letter-spacing: 0.2em; text-transform: uppercase; }
+  #panel .sub { color: var(--ink-dim); margin-bottom: 6px; }
+  #st { white-space: pre; }
+  #st b { color: var(--accent); font-weight: 600; }
+  #log { margin: 6px 0 0; color: var(--ink-dim); white-space: pre; max-height: 210px; overflow: hidden; font: inherit; }
+  #fallback { position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; padding: 24px;
+    text-align: center; color: var(--ink-dim); background: #0b0e13; white-space: pre-line; }
+  #fallback[hidden] { display: none; }
+  .lil-gui.cr-params { --font-family: var(--mono); z-index: 20; }
+  .lil-gui .cr-changed > .name { color: var(--accent); }
+</style>
+</head>
+<body>
+<canvas id="gl" role="img" aria-label="Climb test: a mannequin on a stone wall with ledges, holds and a bar"></canvas>
+<div id="panel">
+  <h1>Climb test</h1>
+  <div class="sub">WASD move · Space jump/lunge · Q drop · RMB hang-aim · drag orbit · ` tuning</div>
+  <div id="st"></div>
+  <pre id="log"></pre>
+</div>
+<div id="fallback" hidden>Loading…</div>
+<script type="module">
+import * as THREE from 'three';
+import GUI from 'lil-gui';
+import { Game, ORDER } from '../src/core/game.js';
+import { Input, installDebugKeys } from '../src/core/input.js';
+import { createWorld } from '../src/core/world.js';
+import { installMeasure } from '../src/debug/measure.js';
+import { install as installClimb } from '../src/player/climb.js';
+
+const QP = new URLSearchParams(location.search);
+const TEST = QP.has('test');
+const SCRIPT = QP.get('script');
+const USE_ROOM = QP.has('room') || SCRIPT === 'room';
+const canvas = document.getElementById('gl');
+const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+const DEG = Math.PI / 180;
+const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+const wrapPi = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+
+// ---------------------------------------------------------------------------------------------------- game + render
+const game = new Game({ seed: 1, test: TEST });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fb3c8);
+scene.fog = new THREE.Fog(0x9fb3c8, 30, 70);
+const camera = new THREE.PerspectiveCamera(55, 1, 0.05, 200);
+game.scene = scene; game.camera = camera;
+game.render = {
+  renderer, scene, camera, composer: null,
+  resize() {
+    const w = Math.max(1, window.innerWidth), h = Math.max(1, window.innerHeight);
+    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  },
+  draw() { renderer.render(scene, camera); },
+  setGrade() {}, addPass() {}, look() {},
+};
+game.render.resize();
+window.addEventListener('resize', () => game.render.resize());
+game.input = game.addSystem(new Input(game, { canvas, pointerLock: false }));
+installMeasure(game);
+game.world = createWorld({ Vector3: THREE.Vector3, cellSize: 2 });
+
+// ---------------------------------------------------------------------------------------------------- test wall
+// Wall face z = 0, climber on +z (normal +Z). Low block x 0.5..5 (top 4.05), high block x -6..0.5 (top 6.0).
+// Edges follow climb-spec "Authoring rules": first ledge 2.2 (jump-grab), static reaches ~0.4-0.85 m, nothing
+// 3.25-4.0 m above the floor (dead zone), one lunge-only gap (4.65 -> 6.0), a 1.6 m side pair at 2.8, an outer corner
+// on L1, a free-hang bar at 3.0, a 1.2 m mantle block and a 0.9 m vault wall.
+const PRO = 0.12;                     // ledges/holds stand this far out of the wall; the grip line is their outer top edge
+const TEST_WALL = {
+  edges: [
+    { id: 'L1',  kind: 'ledge', pts: [[-4.5, 2.2, PRO], [5 + PRO, 2.2, PRO], [5 + PRO, 2.2, -2.5]], normal: [0, 0, 1] },
+    // column A (script 'main'): low block, right of the step
+    { id: 'A1',  kind: 'hold', pts: [[1.12, 2.8, PRO], [1.38, 2.8, PRO]], normal: [0, 0, 1] },
+    { id: 'A2',  kind: 'hold', pts: [[1.12, 3.2, PRO], [1.38, 3.2, PRO]], normal: [0, 0, 1] },
+    { id: 'TLO', kind: 'top',  pts: [[0.5, 4.05, 0], [5, 4.05, 0]], normal: [0, 0, 1] },
+    // route B (script 'lunge'): high block
+    { id: 'B1',  kind: 'hold', pts: [[-2.13, 2.8, PRO], [-1.87, 2.8, PRO]], normal: [0, 0, 1] },
+    { id: 'S1',  kind: 'hold', pts: [[-3.73, 2.8, PRO], [-3.47, 2.8, PRO]], normal: [0, 0, 1], size: 'small' },
+    { id: 'B2',  kind: 'hold', pts: [[-2.13, 3.2, PRO], [-1.87, 3.2, PRO]], normal: [0, 0, 1] },
+    { id: 'B3',  kind: 'ledge', pts: [[-3.0, 4.05, PRO], [-1.0, 4.05, PRO]], normal: [0, 0, 1] },
+    { id: 'B4',  kind: 'hold', pts: [[-2.13, 4.65, PRO], [-1.87, 4.65, PRO]], normal: [0, 0, 1] },
+    { id: 'THI', kind: 'top',  pts: [[-6, 6.0, 0], [0.5, 6.0, 0]], normal: [0, 0, 1] },
+    { id: 'BAR', kind: 'bar',  pts: [[-5.8, 3.0, 0.45], [-4.8, 3.0, 0.45]], normal: [0, 0, 1] },
+  ],
+};
+
+const mats = {
+  stone: new THREE.MeshStandardMaterial({ color: 0xa69a88, roughness: 0.92 }),
+  stone2: new THREE.MeshStandardMaterial({ color: 0x8f8576, roughness: 0.95 }),
+  ledge: new THREE.MeshStandardMaterial({ color: 0xc9bea9, roughness: 0.85 }),
+  floor: new THREE.MeshStandardMaterial({ color: 0x77736b, roughness: 0.97 }),
+  bar: new THREE.MeshStandardMaterial({ color: 0x5b5f63, roughness: 0.5, metalness: 0.6 }),
+};
+function box(cx, cy, cz, sx, sy, sz, mat, tags = [], yaw = 0, collide = true) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat);
+  m.position.set(cx, cy, cz); m.rotation.y = yaw; m.castShadow = true; m.receiveShadow = true;
+  scene.add(m);
+  if (collide) game.world.addBox({ center: [cx, cy, cz], size: [sx, sy, sz], yaw }, { tags, owner: 'test' });
+  return m;
+}
+function buildTestWall() {
+  box(0, -0.5, 4, 40, 1, 24, mats.floor, ['floor']);
+  const grid = new THREE.GridHelper(40, 40, 0x8d887e, 0x6b675f); grid.position.set(0, 0.003, 4); grid.scale.z = 24 / 40; scene.add(grid);
+  box(-2.75, 3.0, -1.5, 6.5, 6.0, 3, mats.stone, ['wall']);
+  box(2.75, 2.025, -1.5, 4.5, 4.05, 3, mats.stone2, ['wall']);
+  // stones under every ledge/hold edge, from the same data the controller reads
+  for (const e of TEST_WALL.edges) {
+    if (e.kind === 'top') continue;
+    for (let i = 0; i + 1 < e.pts.length; i++) {
+      const a = e.pts[i], b = e.pts[i + 1];
+      const dx = b[0] - a[0], dz = b[2] - a[2], len = Math.hypot(dx, dz), ux = dx / len, uz = dz / len;
+      const nx = -uz, nz = ux;                                    // the climber's side (data convention)
+      if (e.kind === 'bar') {
+        const m = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, len, 12), mats.bar);
+        m.rotation.z = Math.PI / 2; m.position.set((a[0] + b[0]) / 2, a[1] - 0.035, (a[2] + b[2]) / 2); m.castShadow = true;
+        scene.add(m);
+        for (const t of [0.1, 0.9]) box(a[0] + dx * t, a[1] - 0.035, a[2] / 2, 0.05, 0.05, a[2], mats.bar, [], 0, false);
+        continue;
+      }
+      const P = PRO, T = e.kind === 'hold' ? 0.12 : 0.14;
+      box((a[0] + b[0]) / 2 - nx * P / 2, a[1] - T / 2, (a[2] + b[2]) / 2 - nz * P / 2, len + (i ? P : 0), T, P, mats.ledge,
+        ['climbable'], Math.atan2(-uz, ux));
+    }
+  }
+  box(-3, 0.6, 4.5, 2, 1.2, 1, mats.stone, ['mantle']);        // 1.2 m mantle block
+  box(3, 0.45, 4.5, 2.5, 0.9, 0.3, mats.stone2, ['vault']);    // 0.9 m thin wall
+  game.level = { climb: TEST_WALL, spawns: { player: { pos: [0, 0, 0.75], yaw: Math.PI } } };
+}
+
+function addLights(target) {
+  scene.add(new THREE.HemisphereLight(0xdfe8f5, 0x5a5146, 1.1));
+  const sun = new THREE.DirectionalLight(0xfff0d8, 2.4);
+  sun.position.set(target.x + 7, 14, target.z + 9); sun.target.position.copy(target);
+  sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
+  Object.assign(sun.shadow.camera, { left: -12, right: 12, top: 12, bottom: -6, near: 1, far: 50 });
+  sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.02;
+  scene.add(sun, sun.target);
+}
+
+let roomOK = false;
+if (USE_ROOM) {
+  try {
+    const mod = await import('../src/level/room.js');
+    mod.install(game);
+    roomOK = true;
+    game.level.spawns = { ...(game.level.spawns || {}), player: { pos: [-7.4, 0, -7.15], yaw: Math.PI } };
+  } catch (err) {
+    console.warn('[climb test] room.js not usable, using the test wall:', err && err.message);
+  }
+}
+if (!roomOK) { buildTestWall(); addLights(V(-0.5, 2, 0)); }
+
+// ---------------------------------------------------------------------------------------------------- player + stub controller
+// Stand-in for player/controller.js (B1): the same ctrl shape and the same calls into game.climb. Ground/air numbers
+// are the climb-spec §4 inferred defaults (jump gravity 18, apex 0.4, fall gravity 12 after 0.3 s) - test stubs only.
+const sp = game.level.spawns.player;
+const actor = {
+  id: 'player', team: 'player', pos: V(...sp.pos), vel: V(), yaw: sp.yaw, height: 1.8, radius: 0.35,
+  health: 100, maxHealth: 100, alive: true, state: { move: 'ground' },
+  anim: { mode: 'locomotion', speed: 0, aim: { on: false, yaw: 0, pitch: 0, weight: 0 } },
+  cameraProfile: null,
+};
+game.player = actor; game.actors.push(actor);
+const modes = {};
+const ctrl = {
+  mode: 'ground', modes, modeT: 0,
+  stick: { x: 0, z: 0, mag: 0, dx: 0, dz: 1 }, camYaw: 0,
+  caps: { allowFire: false, fireReady: false, allowReload: false, allowGrenade: false, fireMode: 'none' },
+  registerMode(name, impl) { modes[name] = impl; return impl; },
+  setMode(name, ctx) {
+    const from = ctrl.mode;
+    if (modes[from] && modes[from].exit) modes[from].exit(name);
+    ctrl.mode = name; ctrl.modeT = 0; ctrl._changed = true; actor.state.move = name;
+    game.events.emit('state', { actor, sys: 'move', from, to: name, t: game.time });
+    if (modes[name] && modes[name].enter) modes[name].enter(from, ctx || null);
+    return true;
+  },
+};
+actor.ctrl = ctrl;
+const mv = V();
+const ground = {
+  enter() { actor.anim.mode = 'locomotion'; },
+  update(dt) {
+    const inp = game.input, st = ctrl.stick;
+    if (inp.pressed('jump')) {
+      const g = game.climb.canGrab(actor, { fromAir: false, intentDir: st.mag > 0.2 ? { x: st.dx, z: st.dz } : null });
+      if (g) return !ctrl.setMode('climb', { grab: g });
+      actor.vel.y = Math.sqrt(2 * 18 * 0.4);
+      return !ctrl.setMode('air', { jump: true });
+    }
+    if (inp.pressed('cover')) {
+      const g = game.climb.canGrab(actor, { dropFromTop: true });
+      if (g) return !ctrl.setMode('climb', { grab: g });
+    }
+    const speed = inp.down('walk') ? 1.4 : 3.6;
+    actor.vel.x = st.x * speed; actor.vel.z = st.z * speed;
+    if (st.mag > 0.1) actor.yaw = wrapPi(actor.yaw + clamp(wrapPi(Math.atan2(st.dx, st.dz) - actor.yaw), -12 * dt, 12 * dt));
+    const res = game.world.moveCapsule(actor, mv.set(actor.vel.x * dt, 0, actor.vel.z * dt));
+    actor.anim.mode = 'locomotion'; actor.anim.speed = Math.hypot(actor.vel.x, actor.vel.z);
+    if (!res.grounded) { actor.vel.y = 0; ctrl.setMode('air', { walkOff: true }); }
+    return true;
+  },
+};
+const air = {
+  fallT: 0,
+  enter() { this.fallT = 0; actor.anim.mode = 'fall'; },
+  update(dt) {
+    const st = ctrl.stick;
+    if (actor.vel.y <= 0) {
+      const g = game.climb.canGrab(actor, { fromAir: true, intentDir: st.mag > 0.2 ? { x: st.dx, z: st.dz } : null });
+      if (g) return !ctrl.setMode('climb', { grab: g });
+      this.fallT += dt;
+    }
+    actor.vel.y -= (this.fallT > 0.3 ? 12 : 18) * dt;
+    const res = game.world.moveCapsule(actor, mv.set(actor.vel.x * dt, actor.vel.y * dt, actor.vel.z * dt));
+    if (res.grounded && actor.vel.y <= 0) { actor.vel.set(0, 0, 0); ctrl.setMode('ground'); }
+    return true;
+  },
+};
+ctrl.registerMode('ground', ground);
+ctrl.registerMode('air', air);
+const climbSys = installClimb(game);
+climbSys.attach(actor);                                           // registers 'climb' on ctrl (also done lazily)
+
+game.addSystem({
+  name: 'player-stub', order: ORDER.player,
+  update(dt) {
+    const m = game.input.axis('move');
+    const cy = ctrl.camYaw, sy = Math.sin(cy), cc = Math.cos(cy), st = ctrl.stick;
+    st.x = sy * m.y - cc * m.x; st.z = cc * m.y + sy * m.x;        // same mapping as player/controller.js
+    st.mag = Math.min(1, Math.hypot(m.x, m.y));
+    if (st.mag > 1e-6) { const l = Math.hypot(st.x, st.z); st.dx = st.x / l; st.dz = st.z / l; }
+    const c = ctrl.caps; c.allowFire = c.fireReady = c.allowReload = false; c.fireMode = 'none';
+    for (let i = 0; i < 3; i++) {
+      ctrl._changed = false;
+      const moved = modes[ctrl.mode].update(dt);
+      if (!ctrl._changed || moved) break;
+    }
+    ctrl.modeT += dt;
+  },
+});
+
+// ---------------------------------------------------------------------------------------------------- mannequin
+// A stand-in body posed only from actor.pos/yaw and actor.anim.climb (the animator contract), so the screenshots show
+// what B3 hands to A4: hand targets, foot targets, swing, pose.
+const MAN = (() => {
+  const skin = new THREE.MeshStandardMaterial({ color: 0x3d7a74, roughness: 0.7 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x2c3036, roughness: 0.8 });
+  const hand = new THREE.MeshStandardMaterial({ color: 0xd9b48f, roughness: 0.6 });
+  const g = new THREE.Group(); scene.add(g);
+  const cyl = new THREE.CylinderGeometry(1, 1, 1, 10);
+  const sph = new THREE.SphereGeometry(1, 14, 10);
+  const seg = (r, mat) => { const m = new THREE.Mesh(cyl, mat); m.userData.r = r; m.castShadow = true; g.add(m); return m; };
+  const ball = (r, mat) => { const m = new THREE.Mesh(sph, mat); m.scale.setScalar(r); m.castShadow = true; g.add(m); return m; };
+  const parts = {
+    torso: seg(0.15, skin), neck: seg(0.05, hand), head: ball(0.12, hand), pelvis: ball(0.14, dark),
+    uaL: seg(0.05, skin), faL: seg(0.042, skin), uaR: seg(0.05, skin), faR: seg(0.042, skin),
+    thL: seg(0.075, dark), shL: seg(0.06, dark), thR: seg(0.075, dark), shR: seg(0.06, dark),
+    hL: ball(0.05, hand), hR: ball(0.05, hand), fL: ball(0.06, dark), fR: ball(0.06, dark),
+    gun: new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.1, 0.22), new THREE.MeshStandardMaterial({ color: 0x1c1d20, roughness: 0.4, metalness: 0.5 })),
+  };
+  parts.gun.castShadow = true; g.add(parts.gun);
+  const UP = V(0, 1, 0), tq = new THREE.Quaternion(), tv = V(), tw = V();
+  const J = { pelvis: V(), chest: V(), neck: V(), head: V(), sL: V(), sR: V(), eL: V(), eR: V(), hL: V(), hR: V(), hipL: V(), hipR: V(), kL: V(), kR: V(), fL: V(), fR: V() };
+  const n = V(), r = V(), f = V(), dir = V(), mid = V(), pole = V();
+  function place(m, a, b) {
+    tv.subVectors(b, a); const L = tv.length();
+    m.position.addVectors(a, b).multiplyScalar(0.5);
+    m.scale.set(m.userData.r, Math.max(L, 1e-3), m.userData.r);
+    m.quaternion.setFromUnitVectors(UP, L > 1e-6 ? tv.divideScalar(L) : UP);
+  }
+  // two-bone IK, equal-ish lengths: the joint bends toward the pole direction
+  function ik(out, a, b, l1, l2, poleDir) {
+    tv.subVectors(b, a); const d = Math.min(Math.max(tv.length(), 1e-4), l1 + l2 - 1e-4);
+    const x = (l1 * l1 - l2 * l2 + d * d) / (2 * d), h = Math.sqrt(Math.max(0, l1 * l1 - x * x));
+    tv.normalize();
+    tw.copy(poleDir).addScaledVector(tv, -poleDir.dot(tv));        // pole minus its component along the limb
+    if (tw.lengthSq() < 1e-8) tw.set(0, 0, 1);
+    tw.normalize();
+    return out.copy(a).addScaledVector(tv, x).addScaledVector(tw, h);
+  }
+  function update() {
+    const cl = actor.anim.climb, onWall = cl && cl.active;
+    const p = actor.pos;
+    f.set(Math.sin(actor.yaw), 0, Math.cos(actor.yaw));
+    r.set(-Math.cos(actor.yaw), 0, Math.sin(actor.yaw));               // character right (forward +Z -> right -X)
+    if (onWall) {
+      n.copy(cl.normal); if (n.lengthSq() < 0.5) n.copy(f).negate();
+      r.set(n.z, 0, -n.x);
+      J.hL.copy(cl.handL); J.hR.copy(cl.handR);
+      J.pelvis.copy(p).addScaledVector(UP, 0.95).addScaledVector(r, cl.swing.x).addScaledVector(n, cl.swing.z);
+      const climbing = cl.pose === 'climbup';
+      mid.addVectors(J.hL, J.hR).multiplyScalar(0.5);
+      if (cl.pose === 'hangAim') dir.copy(UP).addScaledVector(n, -0.12).normalize();
+      else if (climbing) dir.copy(UP).addScaledVector(n, -0.9 * Math.sin(Math.PI * Math.min(1, cl.t / 0.8))).normalize();   // press over the lip
+      else { dir.subVectors(mid, J.pelvis).normalize(); if (dir.y < 0.6) { dir.y = 0.6; dir.normalize(); } }   // torso never points down
+      J.chest.copy(J.pelvis).addScaledVector(dir, 0.5);
+      J.neck.copy(J.chest).addScaledVector(dir, 0.1);
+      J.head.copy(J.neck).addScaledVector(dir, 0.13).addScaledVector(n, cl.pose === 'hangAim' ? -0.02 : 0.07);
+      J.sL.copy(J.chest).addScaledVector(r, -0.19); J.sR.copy(J.chest).addScaledVector(r, 0.19);
+      J.fL.copy(cl.footL); J.fR.copy(cl.footR);
+      if (climbing && cl.t > 0.6) { J.fL.copy(p).addScaledVector(r, -0.12); J.fR.copy(p).addScaledVector(r, 0.12); }
+      J.hipL.copy(J.pelvis).addScaledVector(r, -0.1); J.hipR.copy(J.pelvis).addScaledVector(r, 0.1);
+      pole.copy(n).addScaledVector(UP, -0.6).normalize();
+      ik(J.eL, J.sL, J.hL, 0.31, 0.31, pole); ik(J.eR, J.sR, J.hR, 0.31, 0.31, pole);
+      pole.copy(n).negate().addScaledVector(UP, 0.2).normalize();
+      ik(J.kL, J.hipL, J.fL, 0.46, 0.46, pole); ik(J.kR, J.hipR, J.fR, 0.46, 0.46, pole);
+      parts.gun.visible = cl.pose === 'hangAim' && cl.aim > 0.4;
+      if (parts.gun.visible) {
+        parts.gun.position.copy(J.hR); parts.gun.rotation.set(0, actor.yaw + (cl.aimYaw || 0), 0);
+      }
+    } else {
+      const air = ctrl.mode === 'air';
+      J.pelvis.copy(p).addScaledVector(UP, 0.95);
+      J.chest.copy(J.pelvis).addScaledVector(UP, 0.5); J.neck.copy(J.chest).addScaledVector(UP, 0.1); J.head.copy(J.neck).addScaledVector(UP, 0.13);
+      J.sL.copy(J.chest).addScaledVector(r, -0.19); J.sR.copy(J.chest).addScaledVector(r, 0.19);
+      const ph = game.time * 9, sw = Math.min(1, (actor.anim.speed || 0) / 3.6);
+      J.hL.copy(J.sL).addScaledVector(UP, air ? 0.45 : -0.58).addScaledVector(f, (air ? 0.2 : 0.05) + 0.25 * sw * Math.sin(ph));
+      J.hR.copy(J.sR).addScaledVector(UP, air ? 0.45 : -0.58).addScaledVector(f, (air ? 0.2 : 0.05) - 0.25 * sw * Math.sin(ph));
+      J.hipL.copy(J.pelvis).addScaledVector(r, -0.1); J.hipR.copy(J.pelvis).addScaledVector(r, 0.1);
+      J.fL.copy(p).addScaledVector(r, -0.12).addScaledVector(f, -0.3 * sw * Math.sin(ph)); J.fL.y = p.y + 0.06 + (air ? 0.25 : 0.12 * sw * Math.max(0, Math.cos(ph)));
+      J.fR.copy(p).addScaledVector(r, 0.12).addScaledVector(f, 0.3 * sw * Math.sin(ph)); J.fR.y = p.y + 0.06 + (air ? 0.25 : 0.12 * sw * Math.max(0, -Math.cos(ph)));
+      pole.copy(f).negate().addScaledVector(UP, -0.3).normalize();
+      ik(J.eL, J.sL, J.hL, 0.31, 0.31, pole); ik(J.eR, J.sR, J.hR, 0.31, 0.31, pole);
+      ik(J.kL, J.hipL, J.fL, 0.46, 0.46, f); ik(J.kR, J.hipR, J.fR, 0.46, 0.46, f);
+      parts.gun.visible = false;
+    }
+    place(parts.torso, J.pelvis, J.chest); place(parts.neck, J.chest, J.neck);
+    parts.head.position.copy(J.head); parts.pelvis.position.copy(J.pelvis);
+    place(parts.uaL, J.sL, J.eL); place(parts.faL, J.eL, J.hL); place(parts.uaR, J.sR, J.eR); place(parts.faR, J.eR, J.hR);
+    place(parts.thL, J.hipL, J.kL); place(parts.shL, J.kL, J.fL); place(parts.thR, J.hipR, J.kR); place(parts.shR, J.kR, J.fR);
+    parts.hL.position.copy(J.hL); parts.hR.position.copy(J.hR); parts.fL.position.copy(J.fL); parts.fR.position.copy(J.fR);
+  }
+  return { update, group: g };
+})();
+
+// ---------------------------------------------------------------------------------------------------- camera (follows actor.cameraProfile)
+// Test rig only (B1 owns the real one). climb: ~5 m back on the wall normal (spec §6), look target = hand midpoint
+// led 0.6 m toward the last move; hangAim: OTS 0.45 right / 0.2 above the head / 1.0 back (spec §5). Blends:
+// climb in 0.5 / out 0.4, hangAim in 0.2 / out 0.3. Runs in the sim step so headless shots are deterministic.
+const CAM = { yawOff: 24 * DEG, pitch: 10 * DEG, dist: 5.0, profile: null, tau: 0.2, pos: V(0, 3, 9), look: V(0, 1.5, 0), init: false,
+  dragYaw: 0, dragPitch: 0 };
+const camWant = V(), lookWant = V(), cn = V(), cr = V();
+function camUpdate(dt) {
+  const cl = actor.anim.climb, prof = actor.cameraProfile || 'explore';
+  if (prof !== CAM.profile) {
+    const from = CAM.profile;
+    CAM.tau = (prof === 'hangAim' ? 0.2 : from === 'hangAim' ? 0.3 : prof === 'climb' ? 0.5 : 0.4) / 3;
+    CAM.profile = prof;
+  }
+  const yawOff = CAM.yawOff + CAM.dragYaw, pitch = CAM.pitch + CAM.dragPitch;
+  if (prof === 'climb' && cl) {
+    cn.copy(cl.normal); if (cn.lengthSq() < 0.5) cn.set(-Math.sin(actor.yaw), 0, -Math.cos(actor.yaw));
+    lookWant.addVectors(cl.handL, cl.handR).multiplyScalar(0.5).addScaledVector(game.player.climbCam.moveDir, 0.6);
+    lookWant.y -= 0.7;
+    const baseYaw = Math.atan2(cn.x, cn.z) + yawOff;
+    camWant.set(Math.sin(baseYaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(baseYaw) * Math.cos(pitch)).multiplyScalar(CAM.dist).add(lookWant);
+  } else if (prof === 'hangAim' && cl) {
+    cn.copy(cl.normal); cr.set(cn.z, 0, -cn.x);
+    const head = lookWant.copy(actor.pos); head.y += 1.6 + 0.2;
+    camWant.copy(head).addScaledVector(cr, 0.45).addScaledVector(cn, 1.0);
+    lookWant.copy(camWant).addScaledVector(cn, -6).addScaledVector(cr, -0.4); lookWant.y += 0.5;
+  } else {
+    const fy = actor.yaw + Math.PI + CAM.dragYaw + 18 * DEG;
+    lookWant.copy(actor.pos); lookWant.y += 1.4;
+    camWant.set(Math.sin(fy) * Math.cos(pitch + 6 * DEG), Math.sin(pitch + 6 * DEG), Math.cos(fy) * Math.cos(pitch + 6 * DEG)).multiplyScalar(4.2).add(lookWant);
+  }
+  const k = CAM.init ? 1 - Math.exp(-dt / Math.max(1e-3, CAM.tau)) : 1;
+  CAM.pos.lerp(camWant, k); CAM.look.lerp(lookWant, k); CAM.init = true;
+  camera.position.copy(CAM.pos); camera.lookAt(CAM.look); camera.updateMatrixWorld();
+  ctrl.camYaw = Math.atan2(CAM.look.x - CAM.pos.x, CAM.look.z - CAM.pos.z);
+}
+if (!TEST) {
+  let drag = null;
+  canvas.addEventListener('pointerdown', (e) => { if (e.button === 0) drag = { x: e.clientX, y: e.clientY }; });
+  window.addEventListener('pointerup', () => { drag = null; });
+  window.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    CAM.dragYaw -= (e.clientX - drag.x) * 0.005; CAM.dragPitch = clamp(CAM.dragPitch + (e.clientY - drag.y) * 0.004, -0.4, 1.0);
+    drag.x = e.clientX; drag.y = e.clientY;
+  });
+}
+game.addSystem({ name: 'pose+camera', order: ORDER.animation, lateUpdate(dt) { MAN.update(); camUpdate(dt); } });
+
+// ---------------------------------------------------------------------------------------------------- scripts
+// Deterministic input timelines (sim seconds). Each entry replaces the injected input (null = release).
+const SCRIPTS = {
+  // jump-grab -> shimmy right 1 s -> reach up x3 -> climb up (test wall, column A)
+  main: { start: { pos: [0, 0, 0.75], yaw: Math.PI }, end: 5.6, steps: [
+    [0.5, { jump: true }], [0.6, null],
+    [1.4, { move: [1, 0] }], [2.4, null],
+    [2.9, { move: [0, 1] }], [4.6, null],
+  ] },
+  // route B: jump-grab -> reach -> side lunge left (1.6 m) and back -> reaches -> arm-extend + lunge to the top ->
+  // climb up -> drop-to-hang -> hang-aim over the lip -> drop -> catch the hold below (test wall, high block)
+  lunge: { start: { pos: [-2, 0, 0.75], yaw: Math.PI }, end: 10.8, steps: [
+    [0.3, { jump: true }], [0.4, null],
+    [1.0, { move: [0, 1] }], [1.2, null],
+    [1.7, { move: [-1, 0] }], [1.9, { move: [-1, 0], jump: true }], [2.0, { move: [-1, 0] }], [2.2, null],
+    [2.8, { move: [1, 0] }], [3.0, { move: [1, 0], jump: true }], [3.1, { move: [1, 0] }], [3.3, null],
+    [3.8, { move: [0, 1] }], [5.6, { move: [0, 1], jump: true }], [5.7, { move: [0, 1] }], [6.4, null],
+    [7.8, { cover: true }], [7.9, null],
+    [8.4, { aim: true }], [9.2, null],
+    [9.8, { cover: true }], [9.9, null],
+  ] },
+  // the real room's markup (room.js, A3, layout of 11 Nov 22:10): jump-grab L1 -> reach H1 -> lunge H3 (H2 is off the
+  // up-stick cone) -> reach H4 -> arm-extend + lunge TOP -> climb up
+  room: { start: { pos: [-7.4, 0, -7.15], yaw: Math.PI }, end: 5.6, steps: [
+    [0.3, { jump: true }], [0.4, null],
+    [1.0, { move: [0, 1] }], [1.8, { move: [0, 1], jump: true }], [1.9, { move: [0, 1] }],
+    [3.3, { move: [0, 1], jump: true }], [3.4, { move: [0, 1] }], [4.3, null],
+  ] },
+};
+
+// Spec values, copied from refs/climb-spec.md (independent of the code's params). tag WA = workaround footage.
+const SPEC = {
+  jumpGrab3m:   { v: 0.45, lo: 0.40, hi: 0.50, src: '§2 takeoff→hands set, 3 m edge', tag: '[INFERRED]' },
+  hopCatch:     { v: 0.20, lo: 0.167, hi: 0.233, src: '§2 h2K 50.87–51.07 s (low hop)', tag: '[MEASURED]' },
+  shimmy:       { v: 1.3, lo: 0.91, hi: 1.69, src: '§3 kuieMoIemgc 6.2–7.6 s, ±30%', tag: '[MEASURED-WA]' },
+  reachCycle:   { v: 0.43, lo: 0.38, hi: 0.48, src: '§1 h2K 15.95–17.70 s at ≈0.6 m gain, ±0.05', tag: '[MEASURED]' },
+  aimEnter:     { v: 0.18, lo: 0.15, hi: 0.20, src: '§5 kuieMoIemgc 10.27–10.43 s', tag: '[MEASURED-WA]' },
+  aimExit:      { v: 0.30, lo: 0.267, hi: 0.333, src: '§5 kuieMoIemgc 4.53–4.83 s, ±0.033', tag: '[MEASURED-WA]' },
+  climbCrouch:  { v: 0.65, lo: 0.60, hi: 0.70, src: '§3 h2K 52.40–53.05 s, ±0.05', tag: '[MEASURED]' },
+  climbStand:   { v: 1.0, lo: 0.9, hi: 1.2, src: '§3 h2K + pillar 17.7–18.9 s', tag: '[MEASURED]' },
+  lungeAir:     { v: 0.40, lo: 0.35, hi: 0.45, src: '§3 lunge airtime 1–2 m', tag: '[INFERRED]' },
+  lungeLoad:    { v: 0.10, lo: 0.10, hi: 0.10, src: '§3 anticipation', tag: '[INFERRED]' },
+  catchLag:     { v: 0.12, lo: 0.10, hi: 0.15, src: '§7 second-hand catch lag', tag: '[INFERRED]' },
+  dropToHang:   { v: 0.30, lo: 0.267, hi: 0.333, src: '§2 proxy = hang-aim exit (kuie)', tag: '[MEASURED-WA proxy]' },
+  latency:      { v: 0, lo: 0, hi: 1 / 60 + 1e-6, src: 'design.md anti-goal: input→motion within one sim step', tag: '[DEV rule]' },
+};
+
+const RUN = { name: SCRIPT && SCRIPTS[SCRIPT] ? SCRIPT : null, i: 0, startFrame: 0, done: false, samples: [], reachDist: [], grabH: [], lungeDist: [], trans: [], reachSmall: [] };
+if (RUN.name) {
+  const s = SCRIPTS[RUN.name];
+  actor.pos.set(...s.start.pos); actor.yaw = s.start.yaw;
+}
+game.addSystem({
+  name: 'script', order: -1,                                       // before input latches this step
+  update(dt, g) {
+    if (!RUN.name || RUN.done) return;
+    const s = SCRIPTS[RUN.name], k = g.frame - RUN.startFrame;
+    while (RUN.i < s.steps.length && Math.round(s.steps[RUN.i][0] / g.dt) <= k) { g.input.inject(s.steps[RUN.i][1]); RUN.i++; }
+    if (k >= Math.round(s.end / g.dt)) { RUN.done = true; g.input.inject(null); showReport(); }
+  },
+  lateUpdate(dt, g) {
+    if (!RUN.name || RUN.done) return;
+    const m = g.climb.modeFor(actor);
+    RUN.samples.push([+g.time.toFixed(5), m.sub, +actor.pos.x.toFixed(5), +m.vel.toFixed(5)]);
+  },
+});
+// extra facts at transitions (reach distance, jump-grab edge height, lunge distance)
+game.events.on('state', (e) => {
+  if (e.sys !== 'climb' || e.actor !== actor) return;
+  const m = game.climb.modeFor(actor);
+  if (e.to === 'reach') { RUN.reachDist.push(+m.toDist.toFixed(3)); RUN.reachSmall.push(m.toEdge && m.toEdge.size === 'small'); }
+  if (e.to === 'lunge' || e.to === 'jumpBack') RUN.lungeDist.push(+m.toDist.toFixed(3));
+  if (e.to === 'jumpGrab') RUN.grabH.push(+(m.edge.y - actor.pos.y).toFixed(3));
+  RUN.trans.push({ t: +game.time.toFixed(4), from: e.from, to: e.to, edge: e.to === 'none' ? null : (m.edge ? m.edge.id : null) });
+  logLine(`${game.time.toFixed(3).padStart(7)}  ${String(e.from).padEnd(12)} → ${e.to}${e.to !== 'none' && m.edge ? ` [${m.edge.id}]` : ''}`);
+});
+
+const r3 = (v) => (v == null || Number.isNaN(v) ? null : +v.toFixed(3));
+function report() {
+  const M = window.__measure, P = game.params;
+  const span = (a, b) => M.span('climb', a, b);
+  const gap = (a, b) => M.gap(a, b);
+  const rows = [];
+  const add = (name, ours, spec, note = '') => {
+    const list = Array.isArray(ours) ? ours : [ours];
+    const ok = spec && list.length && list.every((x) => x != null && x >= spec.lo - 1e-6 && x <= spec.hi + 1e-6);
+    rows.push({ name, ours: list.map(r3), spec: spec ? spec.v : null, range: spec ? [r3(spec.lo), r3(spec.hi)] : null,
+      src: spec ? spec.src : '', tag: spec ? spec.tag : '', pass: spec ? !!ok : null, note });
+  };
+  const jg = span('jumpGrab');
+  if (jg.length) {
+    const load = P.get('climb.jumpGrab.load');
+    const air = jg.map((x) => x - load);
+    RUN.grabH.forEach((h, i) => {
+      const spec = Math.abs(h - 3.0) < 0.05 ? SPEC.jumpGrab3m : null;
+      add(`jump-grab takeoff→hands set, ${h} m edge (state ${r3(jg[i])} s incl. ${load} s load)`, air[i], spec,
+        spec ? '' : `no spec value at ${h} m: interpolated between 0.20 s [MEASURED hop] and 0.45 s @3 m [INFERRED]`);
+    });
+    add('input latency: jump press → jumpGrab', gap({ type: 'input', action: 'jump', edge: 'press' }, { sys: 'climb', to: 'jumpGrab' }), SPEC.latency);
+  }
+  // shimmy: steady-state speed from per-step samples where |vel| is at its top speed
+  const sh = RUN.samples.filter((s) => s[1] === 'shimmy' || s[1] === 'corner');
+  if (sh.length > 2) {
+    const vmax = Math.max(...sh.map((s) => Math.abs(s[3])));
+    const steady = RUN.samples.filter((s) => Math.abs(Math.abs(s[3]) - vmax) < 1e-6);
+    if (steady.length > 10) {
+      const a = steady[0], b = steady[steady.length - 1];
+      add(`shimmy speed, steady (m/s, ${r3(b[0] - a[0])} s window)`, (b[2] - a[2]) / (b[0] - a[0]), SPEC.shimmy);
+    }
+    const shs = span('shimmy');
+    add('shimmy state (stick held 1.0 s + stop)', shs, null, 'accel 0.15 s / stop 0.1 s [INFERRED]');
+  }
+  const rc = span('reach');
+  if (rc.length) {
+    const at06 = rc.filter((_, i) => Math.abs(RUN.reachDist[i] - 0.6) < 0.05 && !RUN.reachSmall[i]);
+    if (at06.length) add('reach cycle at a ≈0.6 m gain', at06, SPEC.reachCycle);
+    const small = rc.filter((_, i) => RUN.reachSmall[i]);
+    if (small.length) add(`reaches onto 'small' holds (gains ${RUN.reachDist.filter((_, i) => RUN.reachSmall[i]).join(', ')} m)`, small, null,
+      'no spec value: the 0.43 s cycle × 1/0.7 small-hold scale (§1 [INFERRED])');
+    add(`all reaches (gains ${RUN.reachDist.join(', ')} m)`, rc, null, 'duration scales with sqrt(gain/0.6) clamped 0.8–1.3 [INFERRED]');
+    const starts = M.log({ type: 'state', sys: 'climb' }).filter((e) => e.to === 'reach').map((e) => e.time);
+    const cad = starts.slice(1).map((t, i) => t - starts[i]).filter((d) => d < 0.7);
+    if (cad.length) add('reach cadence, stick held (start→next start)', cad, null, 'no idle step between chained reaches');
+  }
+  const ae = span('hangAimEnter'), ax = span('hangAimExit');
+  if (ae.length) {
+    add('hang-aim enter (aim press → aim pose)', ae, SPEC.aimEnter);
+    add('input latency: aim press → hangAimEnter', gap({ type: 'input', action: 'aim', edge: 'press' }, { sys: 'climb', to: 'hangAimEnter' }), SPEC.latency);
+  }
+  if (ax.length) add('hang-aim exit (release → hanging)', ax, SPEC.aimExit);
+  const cu = span('climbUp');
+  if (cu.length) {
+    add('climb-up: hands on lip → crouched on top', cu, SPEC.climbCrouch);
+    const log = M.log({ type: 'state', sys: 'climb' });
+    const st = [];
+    log.forEach((e, i) => { if (e.to === 'climbUp') { const end = log.slice(i).find((x) => x.to === 'none'); if (end) st.push(end.time - e.time); } });
+    add('climb-up: hands on lip → standing, control back', st, SPEC.climbStand);
+  }
+  const lg = span('lunge');
+  if (lg.length) {
+    const load = P.get('climb.lunge.load');
+    add(`lunge airtime (dist ${RUN.lungeDist.join(', ')} m)`, lg.map((x) => x - load), SPEC.lungeAir);
+    add('lunge load', [load], SPEC.lungeLoad);
+    const lc = [];
+    const lg2 = M.log({ type: 'state', sys: 'climb' });
+    lg2.forEach((e, i) => { if (e.to === 'catch' && e.from === 'lunge') { const nx = lg2[i + 1]; if (nx && nx.from === 'catch') lc.push(nx.time - e.time); } });
+    add('lunge second-hand catch', lc, SPEC.catchLag);
+  }
+  const dth = span('dropToHang');
+  if (dth.length) add('drop-to-hang (top → hanging)', dth, SPEC.dropToHang);
+  const fallCatch = gap({ type: 'state', sys: 'climb', to: 'drop' }, { type: 'state', sys: 'climb', to: 'catch' });
+  if (fallCatch.length) add('drop → catch on the edge below (fall time)', fallCatch, null, 'falls under the stub air mode (g 18 → 12)');
+  const transitions = RUN.trans.slice();
+  return { script: RUN.name, room: roomOK, rows, transitions, markdown: toMarkdown(rows) };
+}
+function toMarkdown(rows) {
+  const out = ['| transition | ours (s) | spec (s) | spec range | source | tag | within |', '|---|---|---|---|---|---|---|'];
+  for (const r of rows) {
+    out.push(`| ${r.name} | ${r.ours.join(', ')} | ${r.spec ?? '—'} | ${r.range ? r.range.join('–') : '—'} | ${r.src || r.note} | ${r.tag || ''} | ${r.pass == null ? '—' : r.pass ? 'yes' : '**no**'} |`);
+  }
+  return out.join('\n');
+}
+window.__climbScript = { get name() { return RUN.name; }, get done() { return RUN.done; }, report, samples: RUN.samples };
+
+// ---------------------------------------------------------------------------------------------------- overlay
+const elSt = document.getElementById('st'), elLog = document.getElementById('log');
+const lines = [];
+function logLine(s) { lines.push(s); if (lines.length > 14) lines.shift(); elLog.textContent = lines.join('\n'); }
+function showReport() {
+  const r = report();
+  console.info('[climb test] script done\n' + r.markdown);
+  logLine(`script '${r.script}' done: ${r.rows.filter((x) => x.pass === true).length}/${r.rows.filter((x) => x.pass != null).length} within spec`);
+}
+game.addSystem({
+  name: 'overlay', order: ORDER.hud,
+  frame() {
+    const m = game.climb.modeFor(actor), cl = actor.anim.climb;
+    elSt.innerHTML = `mode <b>${ctrl.mode}</b>  climb <b>${m.sub}</b>${m.edge && m.sub !== 'none' ? `  edge ${m.edge.id} s=${m.s.toFixed(2)}` : ''}\n`
+      + `pos ${actor.pos.x.toFixed(2)} ${actor.pos.y.toFixed(2)} ${actor.pos.z.toFixed(2)}  yaw ${(actor.yaw / DEG).toFixed(0)}°\n`
+      + `camera ${actor.cameraProfile || 'explore'}  hangAim ${actor.hangAim ? 'on' : 'off'}  pose ${cl ? cl.pose : '-'}\n`
+      + `${RUN.name ? `script ${RUN.name} ${RUN.done ? '(done)' : ''}  t ${game.time.toFixed(2)}` : (roomOK ? 'room.js markup' : 'test wall')}`;
+  },
+});
+
+// ---------------------------------------------------------------------------------------------------- boot
+game.params.buildPanel(GUI, { title: 'Climb tuning', hidden: TEST });
+installDebugKeys(game, { badge: !TEST });
+for (const i of climbSys.data.issues || []) logLine(`authoring: ${i.id} ${i.h} m in ${i.rule}`);
+document.getElementById('fallback').hidden = true;
+MAN.update(); camUpdate(1);                                      // pose + frame the first render without stepping the sim
+game.renderFrame(0);
+// wait for the lazily imported edge highlight so the first screenshot has it
+for (let i = 0; i < 40 && !climbSys.highlight && game.params.get('climb.highlight'); i++) { await new Promise((r) => setTimeout(r, 50)); game.renderFrame(0); }
+window.__ready = true;
+if (!TEST) game.start();
+</script>
+</body>
+</html>
