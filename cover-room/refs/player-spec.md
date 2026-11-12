@@ -376,8 +376,7 @@ hp <= 0 → Death: play death clip (or ragdoll fallback, [DEV M] ragdoll only fo
 | name | value | unit | source | confidence |
 |---|---|---|---|---|
 | player.maxHp | 100 | HP | – | [INFERRED] |
-| enemy pistol hit on player | 10 | HP | about 10 hits from full (enemy accuracy is ramped by the AI) | [INFERRED] |
-| enemy rifle hit on player | 7 | HP / bullet | – | [INFERRED] |
+| enemy hit on player (rifle and pistol) | 10 | HP | 10 hits from full kill the player; any hit stops regen until regenDelay passes | Max, 12 Nov |
 | player.regenDelay | 1.5 | s | F1 recovery ≈2.3 s after the last hit, total | [MEASURED low → split INFERRED] |
 | player.regenRate | 120 | HP/s (full in ~0.8 s) | as above | [INFERRED] |
 | fx.damage.minSat | 0.05 | – | near-greyscale at low luck (F6/F7) | [MEASURED, MP] |

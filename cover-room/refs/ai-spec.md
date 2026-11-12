@@ -549,14 +549,14 @@ onHit(npc, dmg, zone):
 | pistol vs Medium class | 17 | hp/shot | R | [DEV] (UC2) |
 | shots to down a human (example) | 3 | shots | D | [DEV] (TLOU) |
 | grunt health (room prototype) | 100 | hp | – | [INFERRED] |
-| player pistol body damage vs grunt | 34 | hp | R | [INFERRED] reuse of UC2 |
+| player pistol body damage vs grunt | 28 (UC2 reuse was 34) | hp | player-spec §5; Max confirmed 28, 12 Nov | [MEASURED low] |
 | headshot multiplier (unarmored) | ×3 (one-shot kill) | × | – | [INFERRED] |
 | limb multiplier | ×0.75 | × | – | [INFERRED] |
 | flinch duration torso/arm | 0.35 / 0.3 | s | – | [INFERRED] |
 | leg stumble | 0.8 | s | – | [INFERRED] |
 | stagger (2 hits within 1 s) | 1.0 | s | – | [INFERRED] |
 | panic fallback HP threshold | 35 | % | – | [INFERRED] |
-| enemy rifle damage to player | 8–10 per hit (≈10–12 hits to kill from full) | hp | – | [INFERRED] (UC2 AR did 5; U4 feels deadlier) |
+| enemy rifle damage to player | 10 per hit (10 hits kill from full) | hp | Max, 12 Nov | (was [INFERRED] 8–10; UC2 AR did 5) |
 
 ---
 

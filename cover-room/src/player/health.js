@@ -16,6 +16,7 @@ const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 function defineParams(P) {
   const d = (k, v, o) => P.define(k, v, o);
   d('player.maxHp', 100, { min: 1, max: 1000, step: 1, label: 'max hp' });                          // PS §7 [INFERRED]
+  // Max 12 Nov: health regenerates over time and any hit stops it (damage() resets lastHitT, update() waits regenDelay).
   d('player.regenDelay', 1.5, { min: 0, max: 10, step: 0.05, label: 'regen delay (s)' });            // PS §7 [MEASURED low → split INFERRED] F1 ≈2.3 s total (yt-workaround)
   d('player.regenRate', 120, { min: 1, max: 1000, step: 1, label: 'regen (hp/s)' });                 // PS §7 [INFERRED] full in ~0.8 s
   d('player.damageTakenMult', 1, { min: 0, max: 5, step: 0.05, label: 'damage taken ×' });           // PS §7 difficultyTakenMult [WIKI: same on all U4 difficulties]

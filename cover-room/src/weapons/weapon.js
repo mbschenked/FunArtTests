@@ -90,7 +90,7 @@ const PISTOL = [
   // the bar fills at the commit, so the commit defaults to 0.85 to honour the measurement. Set 0.80 to follow the table.
   ['reloadCommitT', 0.85, { min: 0, max: 3, step: 0.01, label: 'reload commit (s)' }],
   ['autoReload', true, { label: 'auto reload on empty' }],             // §5 [MEASURED F1 (yt-workaround)]
-  ['damage', 28, { min: 1, max: 200, step: 1, label: 'body damage' }], // §5 [MEASURED low] ~4 body shots (ai-spec §7 reuses UC2's 34 [INFERRED])
+  ['damage', 28, { min: 1, max: 200, step: 1, label: 'body damage' }], // §5 [MEASURED low] ~4 body shots; Max 12 Nov: correct as is
   ['headMult', 4, { min: 1, max: 10, step: 0.1, label: 'head x' }],    // §5 [INFERRED] one-shot headshot (ai-spec §7 says x3)
   ['limbMult', 0.75, { min: 0.1, max: 2, step: 0.05, label: 'limb x' }], // §5 [INFERRED]
   ['falloffStart', 50, { min: 0, max: 200, step: 1, label: 'falloff start (m)' }], // §5 [DEV G] no falloff to 50 m
@@ -130,7 +130,7 @@ const RIFLE = [
   ['tacticalReloadTime', 2.0, { min: 0.1, max: 5, step: 0.05, label: 'reload, tactical (s)' }], // [INFERRED] same
   ['reloadCommitT', 1.8, { min: 0, max: 5, step: 0.05, label: 'reload commit (s)' }],   // [ASSUMED] near the end
   ['autoReload', true, { label: 'auto reload on empty' }],             // [ASSUMED]
-  ['damage', 7, { min: 1, max: 100, step: 1, label: 'damage' }],       // player-spec §7 enemy rifle hit on player [INFERRED] (ai-spec §7 says 8-10)
+  ['damage', 10, { min: 1, max: 100, step: 1, label: 'damage' }],      // Max 12 Nov: "player can take 10 shots" -> 100 hp / 10, the 10th hit kills
   ['headMult', 1, { min: 1, max: 10, step: 0.1, label: 'head x' }],    // [INFERRED] the player's "luck" has no headshots
   ['limbMult', 1, { min: 0.1, max: 2, step: 0.05, label: 'limb x' }],  // [INFERRED]
   ['falloffStart', 60, { min: 0, max: 200, step: 1, label: 'falloff start (m)' }], // [ASSUMED] the AI's accuracy curve does the falloff

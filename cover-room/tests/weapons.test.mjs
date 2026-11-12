@@ -278,7 +278,7 @@ test('rifle fireAt: gated by its fire interval, fires at the given point', () =>
   for (let i = 0; i < 60; i++) { if (rifle.fireAt(aim)) n++; game.step(); }
   assert.equal(n, 10, '600 rpm -> 10 rounds in 1.0 s');           // ai-spec §5 AR 600 rpm
   assert.equal(game.log.shots[0].hit.actor, target);
-  assert.equal(game.log.damage[0].amount, 7);                    // player-spec §7 rifle hit on player
+  assert.equal(game.log.damage[0].amount, 10);                   // Max 12 Nov: 10 hits kill the 100 hp player
   assert.equal(rifle.state.mag, 20);
 });
 

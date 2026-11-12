@@ -266,7 +266,7 @@ export const AI_PARAMS = [
   // stub weapon (used only until src/weapons/ exists; the real numbers live in the weapons params)
   ['ai.stub.mag',              30,    n(1, 60, 1, 'stub rifle mag')],                         // [INFERRED] spec §5
   ['ai.stub.reload',           2.0,   n(0.2, 5, 0.1, 'stub rifle reload (s)')],               // [INFERRED] spec §5
-  ['ai.stub.damage',           9,     n(0, 50, 1, 'stub rifle damage to player')],            // [INFERRED] 8–10 per hit
+  ['ai.stub.damage',           10,    n(0, 50, 1, 'stub rifle damage to player')],            // Max 12 Nov: 10 hits kill (as the rifle)
 ];
 
 export function defineAIParams(params) {
