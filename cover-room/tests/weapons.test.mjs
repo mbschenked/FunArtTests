@@ -347,6 +347,26 @@ test('preview landing == simulated landing (one launch velocity), on open ground
   }
 });
 
+test('a landed grenade rolls about 1/8 m on flat ground, then stops (Max, 12 Nov: "only a 8th of a meter or so")', () => {
+  for (const [who, target] of [['player', [0, 0, 4]], ['player', [3, 0, 12]], ['player', [-6, 0, 22]], ['enemy', [2, 0, 9]]]) {
+    const game = makeGame();
+    const gr = createGrenades(game);
+    const thrower = actor(who, who, 0, 0, 0);
+    if (who === 'player') game.player = thrower;
+    game.actors.push(thrower);
+    game.params.set('grenade.fuse', 6); game.params.set('grenade.ai.fuse', 6);   // keep it alive until it settles
+    assert.equal(gr.throwAt(thrower, new Vec3(...target)), true);
+    const g = gr.live[0];
+    let contact = null;
+    runUntil(game, () => { if (!contact && g.contacts > 0) contact = g.firstCenter.clone(); return !!contact && g.resting; }, 5);
+    assert.ok(contact, `${who} ${target}: landed`);
+    assert.ok(g.resting, `${who} ${target}: came to rest`);
+    const roll = Math.hypot(g.pos.x - contact.x, g.pos.z - contact.z);
+    assert.ok(roll > 0.08 && roll < 0.17, `${who} ${target}: rolled ${roll.toFixed(3)} m after landing`);
+    assert.ok(Math.abs(g.pos.y - contact.y) < 0.01, 'stayed on the floor (no hop)');
+  }
+});
+
 test('fuse: player grenade explodes 2.0 s after first contact; AI grenade 2.5 s after the throw (spec §6, ai-spec §6)', () => {
   const game = makeGame();
   const gr = createGrenades(game);

@@ -336,8 +336,9 @@ Explode: damage = maxDamage × falloff(dist / radius); LOS check from the blast 
 | grenade.apexRule | apex = 1.5 m + 0.25 × range above the hand | m | high lob; in F4 the arc runs off the top of the frame | [MEASURED shape, INFERRED values] |
 | grenade.gravity | 9.81 | m/s² | – | [INFERRED] |
 | grenade.radius | 0.06 | m | – | [INFERRED] |
-| grenade.restitution | 0.35 | – | – | [INFERRED] |
-| grenade.friction | 0.6 | – | tangent keep per bounce | [INFERRED] |
+| grenade.restitution | 0.35 | – | walls only while rollDist > 0 | [INFERRED] |
+| grenade.friction | 0.6 | – | tangent keep per bounce | [INFERRED] (wall bounces; the floor no longer bounces) |
+| grenade.rollDist | 0.125 | m | a floor landing doesn't hop; it rolls about 1/8 m and stops (0 = the old bounce + free roll) | Max, 12 Nov |
 | grenade.throwReleaseT | 0.25 | s after release press | – | [INFERRED] |
 | grenade.inheritVel | 0.3 | – | – | [INFERRED] |
 | grenade.blast.killRadius | 3.0 | m | full damage | [INFERRED] |

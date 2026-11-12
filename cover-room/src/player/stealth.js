@@ -118,7 +118,7 @@ export function install(game) {
 
   function victimOk(npc) {
     if (!npc || !npc.alive || !npc.ai || npc.ai.takenDown || !npc.ai.brain) return false;
-    return npc.ai.alert !== 'combat';                         // spec §0: orange blocks a stealth takedown [INFERRED]
+    return npc.ai.alert !== 'combat';                         // Max 12 Nov: suspicious yes, alerted (orange) no
   }
   const fwdOf = (yaw, out) => out.set(Math.sin(yaw), 0, Math.cos(yaw));
 

@@ -61,6 +61,9 @@ const PARAMS = [
   ['grenade.friction', 0.6, { min: 0, max: 1, step: 0.01, label: 'tangent keep / bounce' }], // §6 [INFERRED] (world.bounce gets 1 - this)
   ['grenade.rollVn', 0.5, { min: 0, max: 3, step: 0.05, label: 'roll below |v_n| (m/s)' }], // §6 [INFERRED]
   ['grenade.rollDecel', 3.0, { min: 0, max: 20, step: 0.1, label: 'rolling decel (m/s2)' }], // [ASSUMED]
+  // Max 12 Nov: "grenades should roll, but only a 8th of a meter or so". > 0: a floor landing doesn't hop, and its roll
+  // speed is capped so it rolls about this far at rollDecel, then rests. 0: the old bounce (restitution) + free roll.
+  ['grenade.rollDist', 0.125, { min: 0, max: 3, step: 0.005, label: 'roll after landing (m, 0 = bounce + free roll)' }],
   ['grenade.restSpeed', 0.05, { min: 0, max: 1, step: 0.01, label: 'rest below (m/s)' }],   // [ASSUMED]
   ['grenade.throwReleaseT', 0.25, { min: 0, max: 1, step: 0.01, label: 'release delay (s)' }], // §6 [INFERRED]
   ['grenade.inheritVel', 0.3, { min: 0, max: 1, step: 0.05, label: 'inherit thrower vel' }],   // §6 [INFERRED]; part of the ONE launch velocity, so the preview shows it
@@ -124,11 +127,11 @@ export function createGrenades(game, opts = {}) {
   const P = (k) => game.params.get(k);
 
   // ---- constants snapshot, refreshed once per step (params are live-tunable)
-  const C = { g: 9.81, r: 0.06, rest: 0.35, keep: 0.6, rollVn: 0.5, rollDecel: 3, restSpeed: 0.05 };
+  const C = { g: 9.81, r: 0.06, rest: 0.35, keep: 0.6, rollVn: 0.5, rollDecel: 3, restSpeed: 0.05, rollDist: 0.125 };
   function snap() {
     C.g = P('grenade.gravity'); C.r = P('grenade.radius'); C.rest = P('grenade.restitution');
     C.keep = P('grenade.friction'); C.rollVn = P('grenade.rollVn'); C.rollDecel = P('grenade.rollDecel');
-    C.restSpeed = P('grenade.restSpeed');
+    C.restSpeed = P('grenade.restSpeed'); C.rollDist = P('grenade.rollDist');
   }
 
   // ---- bodies
@@ -178,11 +181,21 @@ export function createGrenades(game, opts = {}) {
       }
       b.contactInStep = dt - rem;
       if (b.onContact) b.onContact(b, h);
-      if (b.vel.dot(h.normal) < 0) bounce(b.vel, h.normal, C.rest, 1 - C.keep);
-      if (h.normal.y > FLOOR_NY && b.vel.dot(h.normal) < C.rollVn) {
-        b.vel.addScaledVector(h.normal, -b.vel.dot(h.normal));   // settle: drop the normal part, roll on
+      const floor = h.normal.y > FLOOR_NY;
+      if (floor && C.rollDist > 0) {
+        // no hop: drop the normal part, and cap the roll speed so it rolls ~rollDist (v^2 = 2 a d) before resting
+        b.vel.addScaledVector(h.normal, -b.vel.dot(h.normal));
         b.vel.y = 0;                                            // box tops are flat (world.js), so rolling is horizontal
+        const sp = Math.hypot(b.vel.x, b.vel.z), cap = Math.sqrt(2 * C.rollDecel * C.rollDist);
+        if (sp > cap) { const k = cap / sp; b.vel.x *= k; b.vel.z *= k; }
         b.rolling = true;
+      } else {
+        if (b.vel.dot(h.normal) < 0) bounce(b.vel, h.normal, C.rest, 1 - C.keep);
+        if (floor && b.vel.dot(h.normal) < C.rollVn) {
+          b.vel.addScaledVector(h.normal, -b.vel.dot(h.normal));   // settle: drop the normal part, roll on
+          b.vel.y = 0;
+          b.rolling = true;
+        }
       }
     }
     b.age += dt;

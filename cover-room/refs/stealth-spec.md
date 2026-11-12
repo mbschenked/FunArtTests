@@ -126,9 +126,10 @@ and sees it, the room goes to combat.
 
 1. **Rear and cover durations.** Not measured. The measured noticed front grab (contact → victim down 2.3–2.5 s,
    stealth-measured §4) is a brawl, not this move. Next pass: time press → limp on indicator-on footage.
-2. **The cue.** The arm lift is the U4 cue; is it enough on PC without the text? `stealth.prompt.icon` 1 shows it.
-3. **Takedowns on suspicious / searching enemies** are allowed (only combat blocks them). U4 lets you re-stealth during
-   a search; whether an investigating (yellow) enemy who is looking at you can be taken down is not documented.
+2. **The cue.** Decided (Max, 12 Nov): no takedown prompt; the arm lift is the only cue (`stealth.prompt.icon` stays 0).
+3. **Takedowns on suspicious / searching enemies.** Decided (Max, 12 Nov): suspicious enemies can be taken down, alerted
+   (orange, combat) enemies cannot. Searching (yellow) enemies stay eligible: the search is designed so the player can
+   plan takedowns around the searchers (G 48:06).
 4. **Not built:** drop / vertical takedown (works on alert enemies too, instant kill except a helmeted Brute [WIKI]),
    the helmet button-mash, the edge kick (a victim at a drop with nothing below is kicked over [WIKI]), grass
    takedowns and grass hiding bodies, the brawl and counters on aware enemies, the body highlight on discovery [DEV].
