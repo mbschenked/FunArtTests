@@ -208,6 +208,21 @@ if (hint) {
   sync();
 }
 
+// Real play: the sim holds until the mouse is captured (click to play) and holds again when it is released (Esc, tab
+// switch), so the fight never starts or runs on while nobody is playing. The death screen keeps running (it releases the
+// mouse itself and R restarts there); after a restart the hold applies again. P still pauses on its own.
+if (!TEST) {
+  let held = false;
+  const hold = () => {
+    const locked = document.pointerLockElement === canvas;
+    const dead = !!(game.player && game.player.health <= 0);
+    if (!locked && !dead && !game.paused) { game.paused = true; held = true; }
+    else if (locked && held) { game.paused = false; held = false; }
+    requestAnimationFrame(hold);
+  };
+  hold();
+}
+
 if (fallbackEl && !fallbackEl.dataset.fatal) fallbackEl.hidden = true;
 game.renderFrame(0);
 window.__ready = true;
