@@ -128,8 +128,9 @@ and sees it, the room goes to combat.
    stealth-measured §4) is a brawl, not this move. Next pass: time press → limp on indicator-on footage.
 2. **The cue.** Decided (Max, 12 Nov): no takedown prompt; the arm lift is the only cue (`stealth.prompt.icon` stays 0).
 3. **Takedowns on suspicious / searching enemies.** Decided (Max, 12 Nov): suspicious enemies can be taken down, alerted
-   (orange, combat) enemies cannot. Searching (yellow) enemies stay eligible: the search is designed so the player can
-   plan takedowns around the searchers (G 48:06).
+   (orange, combat) enemies cannot. Enemies that have lost the player are back to suspicious: they know the player is
+   in the area but not where (the `search` state, yellow), so they can be taken down too (Max; also G 48:06, the
+   search is designed so the player can plan takedowns around the searchers).
 4. **Not built:** drop / vertical takedown (works on alert enemies too, instant kill except a helmeted Brute [WIKI]),
    the helmet button-mash, the edge kick (a victim at a drop with nothing below is kicked over [WIKI]), grass
    takedowns and grass hiding bodies, the brawl and counters on aware enemies, the body highlight on discovery [DEV].
