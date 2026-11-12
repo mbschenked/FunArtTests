@@ -7,7 +7,7 @@
 - **[WIKI]** From a community wiki or strategy guide.
 - **[INFERRED]** No source exists. This is my recommended default, and every one of them is a param.
 
-Footage IDs (F1–F6) are listed under Sources. Talk IDs: **G** is Gallant's GDC 2017 combat-AI talk, **Y** is the Yates/Soria GDC 2017 animation bootcamp, and **M** is Mach's GDC 2017 physics-animation talk. Known-repo notes are cited as `Known repo: <path>`. They show how Max's Unreal project did it. They are a view, not a blueprint, and nothing from them is copied here.
+Footage IDs (F1–F6) are listed under Sources. Talk IDs: **G** is Gallant's GDC 2017 combat-AI talk, **Y** is the Yates/Soria GDC 2017 animation bootcamp, and **M** is Mach's GDC 2017 physics-animation talk. Notes from a private reference project are paraphrased and cited as "private reference project". They show how Max's Unreal project did it. They are a view, not a blueprint, and nothing from them is copied here.
 
 **Footage caveat.** YouTube cut downloads off after about 10 MB per session (HTTP 403) and blocked captions (HTTP 429). So the footage is the first 36–46 s of three single-player clips plus four short multiplayer (MP) clips. MP uses the same player animation set but has its own tuning. Every number taken from MP is marked as MP. The protocol at the end lists what is still worth timing by hand.
 
@@ -74,8 +74,8 @@ cover.pressed and no cover in range and m <= deadzone → Roll forward (body fac
 
 - **Abort frames [DEV Y]:** Naughty Dog puts an "abort frame" in almost every player-controlled animation. From that frame on, stick input cancels the rest of the clip and blends into locomotion. Use this for the roll, the cover entry and the reload: input is ignored until `abortT`, then it blends out.
 - **Gameplay movement was made more responsive than The Last of Us** [DEV Y]. Keep input-to-motion inside one sim step (design anti-goal).
-- **Known repo** (`.plan/aim-walk/map.md`): aiming forces the walk gait, and the previous gait comes back on release. In U4 aiming is also a slow strafe walk, which agrees.
-- **Known repo** (`.plan/plain-jump/map.md`): a directional jump snaps body yaw to the stick instantly. It is a useful rule for the roll too: snap the roll direction to the stick on press.
+- **Private reference project** (notes): aiming forces the walk gait, and the previous gait comes back on release. In U4 aiming is also a slow strafe walk, which agrees.
+- **Private reference project** (notes): a directional jump snaps body yaw to the stick instantly. It is a useful rule for the roll too: snap the roll direction to the stick on press.
 
 ### Parameters
 
@@ -85,7 +85,7 @@ cover.pressed and no cover in range and m <= deadzone → Roll forward (body fac
 | player.move.walkThreshold | 0.55 | stick | U4 speed is analog, threshold unknown | [INFERRED] |
 | player.walk.speed | 1.6 | m/s | not measured | [INFERRED] |
 | player.run.speed | 4.8 | m/s | not measured. Run looks like a jog, not a sprint. **Measure first (protocol P1)** | [INFERRED] |
-| player.aimWalk.speed | 1.4 | m/s | aim = walk (Known repo aim-walk) | [INFERRED] |
+| player.aimWalk.speed | 1.4 | m/s | aim = walk (private reference project aim-walk) | [INFERRED] |
 | player.crouchWalk.speed | 1.5 | m/s | auto-crouch in grass/near low cover | [INFERRED] |
 | player.accel | 18 | m/s² | about 0.27 s to full run, snappy | [INFERRED] |
 | player.decel | 22 | m/s² | about 0.22 s to stop | [INFERRED] |
@@ -302,7 +302,7 @@ fire pressed during Reloading/Entering: buffer for inputBuffer s
 - **Aim camera:** the same close over-shoulder view as gun aim (F4 0:01.8–0:03.9). **Arc look:** a thin white line coming from above (the apex is off the top of the screen on a long lob) down to a **small ring marker at the landing point** about 8 px across at 720p. The view looks along the throw, so the arc reads almost as a vertical line. The line disappears on the release frame (F4 0:03.93). [MEASURED, MP]
 - **Fuse (MP):** grenades can't be cooked; the countdown starts on first contact and lasts 3 s, with beeping that speeds up. [WIKI] Release → kill popup took 2.47 s (F4 0:03.93→0:06.40) and about 3.8 s (F5 about 0:10.0→0:13.8). That's consistent with flight plus a contact fuse. [MEASURED, MP]
 - **Enemies flee grenades,** though not all of them, and grenades also flush them out of cover. [WIKI]
-- **Known repo** (`docs/design/grenade-arc-tuning.md`): distance follows camera pitch, mapped across a pitch band through an S-curve; launch is yaw-only. The key lesson is that **the preview line and the real throw must come from one launch velocity**. The kit re-solved the velocity and scaled the impulse, so the line lied. Max's project also slowed the camera while the arc is up and smoothed the power value. We take the lessons, not the code.
+- **Private reference project** (notes): distance follows camera pitch, mapped across a pitch band through an S-curve; launch is yaw-only. The key lesson is that **the preview line and the real throw must come from one launch velocity**. The kit re-solved the velocity and scaled the impulse, so the line lied. Max's project also slowed the camera while the arc is up and smoothed the power value. We take the lessons, not the code.
 
 ### Rules
 
@@ -345,7 +345,7 @@ Explode: damage = maxDamage × falloff(dist / radius); LOS check from the blast 
 | grenade.blast.radius | 6.0 | m | damage → 0, linear falloff from killRadius | [INFERRED] |
 | grenade.blast.maxDamage | 150 | HP | – | [INFERRED] |
 | grenade.blast.playerDamageScale | 0.6 | – | self-damage, survivable at the radius edge | [INFERRED] |
-| grenade.aimLookScale | 0.6 | – | Known repo used 0.6 (also an assumption there) | [INFERRED] |
+| grenade.aimLookScale | 0.6 | – | private reference project used 0.6 (also an assumption there) | [INFERRED] |
 | grenade.preview.color | white, 1–2 px line + ring Ø ≈ 0.011 screen h | – | F4 | [MEASURED, MP] |
 | grenade.preview.fadeOut | on the release frame | – | F4 0:03.93 | [MEASURED, MP] |
 | grenade.fromCover | allowed (pop/lean like aim) | – | not directly seen | [INFERRED] |
@@ -441,7 +441,7 @@ The HUD art must be our own: shapes and layout only, no game icons.
 8. **Hip fire.** Its spread and its reticle (none?) were not observed.
 9. **Look rates and acceleration on pad.** No source. Only measurable with a stick-input overlay video.
 10. **HUD hide timing** after combat.
-11. Both talks were not captioned this session: "Authored vs. Systemic" came from the Known repo transcript. The 2012 Lemarchand playtesting talk turned out to be about attention, not controls, so it was skipped.
+11. Both talks were not captioned this session: "Authored vs. Systemic" came from the private reference project transcript. The 2012 Lemarchand playtesting talk turned out to be about attention, not controls, so it was skipped.
 
 ## Measurement protocol (for Max to capture by hand)
 
@@ -465,7 +465,7 @@ Already measured (from YouTube clips, not needed again unless re-checking): pist
 ## Sources
 
 **Naughty Dog talks / statements**
-- **G**: Matthew Gallant, "Authored vs. Systemic: Finding a Balance for Combat AI in Uncharted 4", GDC 2017. https://www.youtube.com/watch?v=G8W7EQKBgcg. Transcript read from Known repo: `docs/reference/uncharted4-combat-ai/transcript.md` (46:27–47:13 pistol at 50 m, damage wobble, accuracy floor; Q&A 49:59–50:59 first shot centred; 43:54 accuracy ramp).
+- **G**: Matthew Gallant, "Authored vs. Systemic: Finding a Balance for Combat AI in Uncharted 4", GDC 2017. https://www.youtube.com/watch?v=G8W7EQKBgcg. Transcript read from private reference project: notes (46:27–47:13 pistol at 50 m, damage wobble, accuracy floor; Q&A 49:59–50:59 first shot centred; 43:54 accuracy ramp).
 - **Y**: Jeremy Yates and Almudena Soria, "Animation Bootcamp: Animating Uncharted 4: Workflow and Prototyping", GDC 2017. Reupload https://www.youtube.com/watch?v=fQnUTmOu3lc (auto-captions: abort frames ~20:00–21:20; transition cameras blended by distance ~18:08–19:20; responsiveness vs TLOU ~39:20; entry system ~39:00–42:30).
 - **M**: Michal Mach, "Physics Animation in Uncharted 4: A Thief's End", GDC 2017. https://www.youtube.com/watch?v=7S-_vuoKgR4 (Q&A 53:15: ragdoll for deaths only, hit reactions animated).
 - Naughty Dog GDC 2017 talk list: https://naughtydog.com/blog/naughty_dog_gdc_2017
@@ -497,4 +497,4 @@ Already measured (from YouTube clips, not needed again unless re-checking): pist
 
 **Frame methods.** Frames come from ffmpeg at native fps (`-ss`, `tile`), and the timestamps are clip-relative. Fire interval: muzzle-flash onset frames at 60 fps, cross-checked against per-frame changes in the HUD ammo bar. Recoil: phase correlation (numpy FFT) of a 512×256 background patch, per frame. Framing: pixel extents of the character in 1280×720 frames. Roll distance: displacement against wall panels, scaled by the character's crouched pixel height.
 
-**Known repo** (private, paraphrased): `docs/design/grenade-arc-tuning.md`, `.plan/grenade-arc/map.md`, `.plan/grenade-single/map.md`, `.plan/aim-walk/map.md`, `.plan/plain-jump/map.md`, `.plan/roll-air-pop/map.md`, `.plan/player-death/map.md`, `docs/reference/uncharted4-combat-ai/transcript.md`.
+**Private reference project** (paraphrased): its notes on the grenade arc, aim walk and plain jump.

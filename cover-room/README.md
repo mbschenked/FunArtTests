@@ -62,7 +62,7 @@ Param changes made in the panel are saved in the browser. **Copy settings** puts
 
 ## Tests
 
-Unit tests for the world geometry, climbing, weapons and AI (Node 22+, no install):
+Unit tests for the world geometry, climbing, weapons, player health and AI (Node 22+, no install):
 
 ```bash
 node --test tests/*.test.mjs

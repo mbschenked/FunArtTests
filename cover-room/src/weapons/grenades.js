@@ -57,9 +57,9 @@ const PARAMS = [
   ['grenade.apexPerM', 0.25, { min: 0, max: 1, step: 0.01, label: 'apex per m of range' }], // §6 [MEASURED shape F4 (yt-workaround), INFERRED value]
   ['grenade.gravity', 9.81, { min: 1, max: 30, step: 0.01 }],                              // §6 [INFERRED]
   ['grenade.radius', 0.06, { min: 0.02, max: 0.3, step: 0.005, label: 'body radius (m)' }], // §6 [INFERRED]
-  ['grenade.restitution', 0.35, { min: 0, max: 1, step: 0.01 }],                           // §6 [INFERRED]
-  ['grenade.friction', 0.6, { min: 0, max: 1, step: 0.01, label: 'tangent keep / bounce' }], // §6 [INFERRED] (world.bounce gets 1 - this)
-  ['grenade.rollVn', 0.5, { min: 0, max: 3, step: 0.05, label: 'roll below |v_n| (m/s)' }], // §6 [INFERRED]
+  ['grenade.restitution', 0.35, { min: 0, max: 1, step: 0.01, label: 'restitution (walls only while rollDist > 0)' }],                           // §6 [INFERRED]
+  ['grenade.friction', 0.6, { min: 0, max: 1, step: 0.01, label: 'tangent keep / bounce (walls only while rollDist > 0)' }], // §6 [INFERRED] (world.bounce gets 1 - this)
+  ['grenade.rollVn', 0.5, { min: 0, max: 3, step: 0.05, label: 'roll below |v_n| (m/s; unused while rollDist > 0)' }], // §6 [INFERRED]
   ['grenade.rollDecel', 3.0, { min: 0, max: 20, step: 0.1, label: 'rolling decel (m/s2)' }], // [ASSUMED]
   // Max 12 Nov: "grenades should roll, but only a 8th of a meter or so". > 0: a floor landing doesn't hop, and its roll
   // speed is capped so it rolls about this far at rollDecel, then rests. 0: the old bounce (restitution) + free roll.
@@ -74,7 +74,7 @@ const PARAMS = [
   ['grenade.blast.maxDamage', 150, { min: 0, max: 500, step: 1, label: 'max damage' }],               // §6 [INFERRED]
   ['grenade.blast.playerDamageScale', 0.6, { min: 0, max: 2, step: 0.05, label: 'damage x to player' }], // §6 [INFERRED]
   ['grenade.blast.noise', 50, { min: 0, max: 100, step: 1, label: 'blast noise (m)' }],               // ai-spec §1.3 [INFERRED]
-  ['grenade.aimLookScale', 0.6, { min: 0.1, max: 1, step: 0.05, label: 'look gain while aiming' }],   // §6 [INFERRED] (Known repo 0.6)
+  ['grenade.aimLookScale', 0.6, { min: 0.1, max: 1, step: 0.05, label: 'look gain while aiming' }],   // §6 [INFERRED] (private reference project 0.6)
   ['grenade.aim.distanceFrom', 'pitch', { options: ['pitch', 'reticle'], label: 'distance from' }],    // [ASSUMED] pitch band (brief)
   ['grenade.aim.pitchLow', -20, { min: -80, max: 40, step: 0.5, label: 'band low (deg) -> min range' }],  // [ASSUMED] Max's arc notes
   ['grenade.aim.pitchHigh', 45, { min: -40, max: 89, step: 0.5, label: 'band high (deg) -> max range' }], // [ASSUMED] Max's arc notes

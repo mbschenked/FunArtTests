@@ -1,6 +1,6 @@
 # Mocap clip brief (for a fresh Claude session on the NVIDIA PC)
 
-Run this in a **new session in a new folder** on the PC (for example `D:\ClaudeCode\cover-room-mocap`). It must not run in, or touch, any Project Known / Redux folder or session.
+Run this in a **new session in a new folder** on the PC (a new, empty folder). It must not run in, or touch, any other project's folder or session.
 
 ## Goal
 Generate motion clips with a text-to-motion model on the GPU. Cover Room, a browser third-person cover shooter with an original mannequin, will swap them in later in place of its procedural animation (`src/character/clips.js`).

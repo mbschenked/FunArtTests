@@ -38,7 +38,8 @@ const MODULES = [
   { name: 'nav',        path: 'level/nav.js' },
   { name: 'skeleton',   path: 'character/skeleton.js' },
   { name: 'animator',   path: 'character/animator.js', order: ORDER.animation },
-  { name: 'clips',      path: 'character/clips.js' },
+  // character/clips.js (mocap clips, refs/mocap-brief.md) goes here once it exists. It is not listed before then: on
+  // GitHub Pages there are no directory listings, so a listed-but-missing module costs a 404 console error at boot.
   // character/skins.js install(): loads the CC0 figures (assets/figures) that createCharacter dresses the rigs in.
   { name: 'skins',      path: 'character/skins.js' },
   // vfx/index.js wires muzzle, tracer, impact and explosion and hooks the 'shot' and 'grenade:explode' events.

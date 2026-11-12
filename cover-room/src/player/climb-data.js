@@ -207,7 +207,7 @@ export class ClimbData {
   // mode: 'jump' (targeted leap from the ground), 'fall' (catch while airborne), 'dropFromTop' (step off a top edge).
   // feet: actor feet position. fx, fz: unit intent/facing direction. speed: horizontal speed (m/s).
   // cfg: resolved numbers (see climb.js readCfg). ignore: an edge to skip (just released). out: {edge, s, dist, h}.
-  // Returns out or null. Heights are measured FROM THE FEET (spec §2 note; Known repo roll-air-pop lesson).
+  // Returns out or null. Heights are measured FROM THE FEET (spec §2 note; private reference project roll-air-pop lesson).
   findEntry(mode, feet, fx, fz, speed, cfg, ignore, out) {
     let best = null, bestScore = 1e30;
     const n = this._n;

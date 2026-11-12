@@ -518,7 +518,7 @@ export function createPlayer(game, opts = {}) {
 
   // ============================================================================================== ROLL
   // PS §2: plant (entryPlant) -> dive covering `distance` over `duration` -> control back at entryPlant + controlBackT.
-  // Yaw snaps to the roll direction on the press (Known-repo rule in PS §2). Input is ignored until control back.
+  // Yaw snaps to the roll direction on the press (private reference project rule, PS §2). Input is ignored until control back.
   const roll = {
     t: 0, dx: 0, dz: 1, v0: 0, sp: 0,
     enter(from, ctx) {

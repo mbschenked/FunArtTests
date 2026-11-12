@@ -14,7 +14,7 @@ Research: 11 Nov 2026, about 60 minutes, breadth first. Numbers marked `[MEASURE
 6. The camera pulls far back while climbing. On a 2 m ledge the character fills about 1/3 of the frame height, about 5–7 m away. On cliff faces it pulls out further for the vista.
 7. The feel comes from animation. The GDC talk names three systems. A dense "spider web" of reach poses is blended by the stick. A climbing ragdoll pins the hands, feet and forearms and lets the hips and legs overlap. Free-hang blends between a loose profile and a stiff one depending on stick input, so the swing builds up with each move.
 8. Jump physics on flat ground and fall/death heights were **not** measured cleanly. Defaults are inferred (gravity about 18 m/s², apex about 0.4 m) and flagged as open questions.
-9. Max's Known repo (an Unreal U4-style project) is used only as a view of how a hang system breaks. Its lessons are folded in: ledge stored relative to the held object, the grab band measured from the feet, and a grab that owns the body exclusively. Its jump-to-ledge rule ("always hang, never auto-mantle") differs from U4's low-ledge mantle and is listed as a decision for Max.
+9. A private Unreal U4-style reference project is used only as a view of how a hang system breaks. Its lessons are folded in: ledge stored relative to the held object, the grab band measured from the feet, and a grab that owns the body exclusively. Its jump-to-ledge rule ("always hang, never auto-mantle") differs from U4's low-ledge mantle and is listed as a decision for Max.
 10. The data format is authored edges (polylines with an outward normal, a kind and flags) plus one query module (`climb.findEntry / findMove / slide / topSurface`). The format is below.
 
 ---
@@ -87,7 +87,7 @@ GROUND --(Jump, nothing)--> JUMP (section 4)
 AIR    --(edge enters the catch band while descending, within catchWindow)--> HANG
 TOP    --(drop pressed or walk off the edge slowly at a 'top' edge)--> DROP_TO_HANG
 ```
-Measure every height **from the feet** (actor.pos is at the feet), never from the capsule centre. The Known repo shows why: a capsule resized in the air moved its grab band by 30 cm. (Known repo: `.plan/roll-air-pop/map.md`)
+Measure every height **from the feet** (actor.pos is at the feet), never from the capsule centre. The private reference project shows why: a capsule resized in the air moved its grab band by 30 cm. (private reference project: notes)
 
 | name | value | unit | source | confidence |
 |---|---|---|---|---|
@@ -104,7 +104,7 @@ Measure every height **from the feet** (actor.pos is at the feet), never from th
 | hop-to-wall catch time | ≈0.20 | s | h2KpeldU3nU 50.87–51.07 s, 30 fps samples | [MEASURED] ±0.033 |
 | one-arm reach to ledge after catch | ≈0.25–0.28 | s | h2KpeldU3nU 51.07–51.35 s | [MEASURED] ±0.033 |
 | catch window while falling | until fall speed > 7 m/s (≈0.7 s of free fall) | — | — | [INFERRED] |
-| catch band | hands from 0.0 to +0.35 m above edge, ≤ 0.5 m in front of chest | m | Known kit scans hip→just above head each frame (Known repo: `.plan/plain-jump/map.md`) | [INFERRED] |
+| catch band | hands from 0.0 to +0.35 m above edge, ≤ 0.5 m in front of chest | m | the private reference project scans hip→just above head each frame (private reference project: notes) | [INFERRED] |
 | drop-to-hang (top → hanging) | ≈0.3 | s | the hang-aim exit (kuieMoIemgc 4.53–4.83 s) is the closest measured move | [MEASURED] proxy |
 | low-ledge choice (U4) | mantle when top ≤ ≈1.6 m; hang above | — | gameplay memory, not frame-checked | [INFERRED] |
 
@@ -131,27 +131,27 @@ HANG ── aim ─────────────────────�
 SHIMMY ── edge reaches a corner ───────► CORNER (outer: wrap around; inner: step across), then SHIMMY
 ```
 Rules:
-- SHIMMY moves both grips along the same edge polyline. A sideways probe (a capsule offset 0.15–0.25 m along the move) blocks it before obstacles. The Known kit does the same. (Known repo: `docs/kits/agls/howto/climbing-component-primer.md`)
-- Jump input is buffered for 0.2 s so a press slightly before the arm extends still counts. The Known kit holds the press as a 0.2 s impulse. [INFERRED]
+- SHIMMY moves both grips along the same edge polyline. A sideways probe (a capsule offset 0.15–0.25 m along the move) blocks it before obstacles. The private reference project does the same. (private reference project)
+- Jump input is buffered for 0.2 s so a press slightly before the arm extends still counts. The private reference project holds the press as a 0.2 s impulse. [INFERRED]
 - LUNGE takes the shortest ballistic arc to the target grip, warped to land exactly. No free physics on the wall.
 - CLIMB_UP is not cancellable after 0.25 s. JUMP_BACK is only offered when a landing target is behind within lunge range or the floor is within the safe drop height.
-- A move in progress cannot be cancelled by an exit request, except a forced break. Release the climber before destroying a grabbed object. (Known repo: `.plan/breakable-handhold/map.md`)
+- A move in progress cannot be cancelled by an exit request, except a forced break. Release the climber before destroying a grabbed object. (private reference project: notes)
 
 | name | value | unit | source | confidence |
 |---|---|---|---|---|
 | shimmy speed | ≈1.3 | m/s | kuieMoIemgc 6.2–7.6 s, 5 fps strip; Drake's displacement vs a sandbag on the lip (≈0.6 m wide) | [MEASURED] ±30% |
 | shimmy accel / stop | 0.15 / 0.1 | s | — | [INFERRED] |
-| shimmy obstacle probe offset | 0.2 | m | Known kit uses 12/22 cm probes | [INFERRED] |
+| shimmy obstacle probe offset | 0.2 | m | the private reference project uses 12/22 cm probes | [INFERRED] |
 | reach duration (lead hand) | 0.25–0.30 | s | h2K 51.07–51.35 s; pillar reaches (≈0.43 s cycle incl. follow hand) | [MEASURED] |
 | follow-hand lag | 0.10–0.15 | s | pillar sheet, 20 fps | [MEASURED] rough |
 | lunge airtime (side/up, 1–2 m) | 0.35–0.45 | s | close to the 0.38 s gap jump (section 4) | [INFERRED] |
 | lunge anticipation (load) | 0.10 | s | — | [INFERRED] |
 | climb-up: hands on lip → crouched on top | ≈0.65 | s | h2KpeldU3nU 52.40–53.05 s, 30 fps | [MEASURED] ±0.05 |
 | climb-up: hands on lip → standing, control back | ≈1.0 (0.9–1.2) | s | same + pillar 17.7–18.9 s | [MEASURED] |
-| corner handling | wrap around outer and inner corners of a continuous ledge | — | Known kit has outer/inner corner and 180° turn actions | [INFERRED] |
+| corner handling | wrap around outer and inner corners of a continuous ledge | — | the private reference project has outer/inner corner and 180° turn actions | [INFERRED] |
 | jump-back look-over delay | 0.15 | s | — | [INFERRED] |
 | jump-back max distance | 2.5 | m | — | [INFERRED] |
-| jump input buffer | 0.2 | s | Known kit (0.2 s impulse) | [INFERRED] |
+| jump input buffer | 0.2 | s | the private reference project (0.2 s impulse) | [INFERRED] |
 
 ---
 
@@ -159,11 +159,11 @@ Rules:
 
 **Measured.** A gap jump between balance beams (h2KpeldU3nU) has a crouch-load of about 0.1–0.15 s, takeoff at 32.10 s and landing at about 32.48 s. That is **≈0.38 s airborne** for a gap of roughly 1.5–2 m between similar heights. A walk-off drop from a bank (Spv14WGA9MU, 30 fps) is airborne about 0.95 s (8.38 → 9.35 s) and ends in a crouched hard landing with one hand down: no roll, no damage. The bank height could not be calibrated.
 
-**Inferred model.** U4 jumps are short, quick and committed. The 0.38 s airtime implies a low apex at real gravity (≈0.18 m), which looks wrong against the tucked legs in the footage (frames 32.08/32.30/32.48 in `frames/beam_triple.jpg`). So use a raised jump gravity. With g = 18 m/s² and a 0.4 m apex, flat-ground airtime is 0.42 s. For contrast, the Known repo's sprint-jump clip has its root at 1 m and lasts 1.15 s (Known repo: `.plan/plain-jump/map.md`). That is about three times floatier than U4.
+**Inferred model.** U4 jumps are short, quick and committed. The 0.38 s airtime implies a low apex at real gravity (≈0.18 m), which looks wrong against the tucked legs in the footage (frames 32.08/32.30/32.48 in `frames/beam_triple.jpg`). So use a raised jump gravity. With g = 18 m/s² and a 0.4 m apex, flat-ground airtime is 0.42 s. For contrast, the private reference project's sprint-jump clip has its root at 1 m and lasts 1.15 s (private reference project: notes). That is about three times floatier than U4.
 
 ```
 on Jump (grounded, no climb/mantle/vault target):
-  yaw snaps to the stick direction at takeoff (Known repo decision: instant snap, `.plan/plain-jump/map.md`; U4 looks the same) [INFERRED]
+  yaw snaps to the stick direction at takeoff (private reference project decision: instant snap, notes; U4 looks the same) [INFERRED]
   v.y = sqrt(2 * gJump * apex); horizontal = current ground velocity (standing jump adds hopSpeed forward if stick held)
   air: accel toward stick at airControl * groundAccel, clamp to the takeoff speed
   each air step: run the catch test (section 2); if a target edge or floor is ahead within assist range, warp the arc to it (ledge assist)
@@ -188,7 +188,7 @@ landing: fallHeight = apexY - landY → land / hardLand / death bands
 
 ## 5. Shooting while hanging
 
-**Confirmed from footage** (kuieMoIemgc, PS5, chapter 8). Drake hangs from a rock lip under enemies. On aim he pulls up so his head and shoulders clear the lip, holds the **pistol in the right hand only**, and keeps the left hand on the edge. The camera cuts from a wide hang framing to a close right-shoulder over-the-shoulder view. The HUD shows the sidearm. Footage of the convoy rope-drag (RfZ6zWsvo3w) also shows one-handed aiming while hanging from a rope. Pulling enemies down from a hang (Square) is a separate melee move. [WIKI] (Prima) The Known repo has the same move as its own ability gated on the hang state. (Known repo: `.plan/ledge-pulldown/map.md`)
+**Confirmed from footage** (kuieMoIemgc, PS5, chapter 8). Drake hangs from a rock lip under enemies. On aim he pulls up so his head and shoulders clear the lip, holds the **pistol in the right hand only**, and keeps the left hand on the edge. The camera cuts from a wide hang framing to a close right-shoulder over-the-shoulder view. The HUD shows the sidearm. Footage of the convoy rope-drag (RfZ6zWsvo3w) also shows one-handed aiming while hanging from a rope. Pulling enemies down from a hang (Square) is a separate melee move. [WIKI] (Prima) The private reference project has the same move as its own ability gated on the hang state. (private reference project: notes)
 
 ```
 HANG --aim held--> HANG_AIM_ENTER (0.18 s: body rises, gun hand leaves the edge, camera blends) --> HANG_AIM
@@ -239,7 +239,7 @@ on CLIMB_UP done: blend (0.4 s) back to the locomotion rig
 
 Sources: Mach, GDC 2017 (30:44–41:24), PS Blog 2022, Kotaku 2016, frame sheets. The goal is to sell the moves with IK and springs instead of mocap.
 
-- **Hands are pinned.** Each hand is an IK target locked to its grip in the grip's local space, so moving or breakable holds keep working. The Known kit stores the ledge relative to the held object for the same reason. (Known repo: `docs/kits/agls/howto/climbing-component-primer.md`) U4 keyframes the hands, feet and forearms and keeps the upper body stiff because the arms carry the weight. [DEV] (Mach 34:23)
+- **Hands are pinned.** Each hand is an IK target locked to its grip in the grip's local space, so moving or breakable holds keep working. The private reference project stores the ledge relative to the held object for the same reason. (private reference project) U4 keyframes the hands, feet and forearms and keeps the upper body stiff because the arms carry the weight. [DEV] (Mach 34:23)
 - **Feet look for holds.** Each foot ray-casts down the wall 0.9–1.3 m below the hands for a foothold edge and IK-plants on it. With none (a bar, an overhang), go to free-hang. [DEV] (Broner: feet look for an edge instead of dangling)
 - **Free-hang swing.** U4 uses a loose lower-body profile while idle-hanging, so a landing at any angle swings out naturally, and a stiffer profile while the stick is held. Each move carries momentum, so alternating left and right builds a bigger swing. [DEV] (Mach 36:00–38:12) Procedural version: a pendulum on the pelvis below the hand midpoint, with stiffness 25 (idle) / 60 (stick held), damping ratio 0.25 / 0.5, and the move velocity injected into the pendulum. [INFERRED values]
 - **Overlap.** The spine is weak so the hips trail and settle after each move ("subtle overlap to Drake's butt"). [DEV] (Mach 33:19) Procedural: hip spring lagging the hand-midpoint target, ≈0.12 s settle, ≤6 cm overshoot. [INFERRED]
@@ -264,8 +264,8 @@ Sources: Mach, GDC 2017 (30:44–41:24), PS Blog 2022, Kotaku 2016, frame sheets
 ## 8. Failure states (note only; out of scope for now)
 
 - Crumbling or breaking holds are mostly scripted in U4. The usual beat is a one-hand slip, a dangle and a re-grab. [INFERRED from gameplay memory]
-- Hard rule for later: release the climber first, then destroy the hold. The Known repo broke this rule and teleported the player to the origin. (Known repo: `.plan/breakable-handhold/map.md`)
-- A grab must own the body exclusively. In the Known repo, a jump clip's end event set walking mode under an active hang. Gravity built up speed while the hang held the body, which stretched the arms and caused a fatal landing. (Known repo: `.plan/plain-jump/map.md`) In our build, while CLIMB is active nothing else may write `actor.pos`/`vel`.
+- Hard rule for later: release the climber first, then destroy the hold. The private reference project broke this rule and teleported the player to the origin. (private reference project: notes)
+- A grab must own the body exclusively. In the private reference project, a jump clip's end event set walking mode under an active hang. Gravity built up speed while the hang held the body, which stretched the arms and caused a fatal landing. (private reference project: notes) In our build, while CLIMB is active nothing else may write `actor.pos`/`vel`.
 - Piton, rope swing, slide and stamina are all out of scope. U4 cut the stamina bar. [DEV]
 
 ---
@@ -339,7 +339,7 @@ Capture on PS5 or PC (Legacy of Thieves, 60 fps, performance mode) or use the li
 1. **Ground jump apex and gravity.** Only airtime was measured. A side-on flat-ground standing jump with the character visible is needed (PS5 or PC capture by Max, or a clean clip). It also settles fall gravity and whether U4 uses a stronger gravity after the apex.
 2. **Fall bands.** At what height does Drake hard-land, and when does a fall kill? No clean footage was found. A capture with a 1 m grid reference (or Naughty Dog blockout footage, whose grid size is unconfirmed) would settle it.
 3. **Reach and lunge maximums** (up, side, down, diagonal). Only typical spacing (≈0.6 m) was measured. A wall with uneven hold spacing, filmed straight on, is needed.
-4. **Jump at a 1.2–1.6 m ledge: mantle straight up, or hang first?** U4 seems to mantle low ledges. Max's Known project chose "always hang, never auto-mantle" (Known repo: `.plan/ledge-hang/map.md`). This is a decision for Max; default here is U4-style mantle ≤ 1.6 m.
+4. **Jump at a 1.2–1.6 m ledge: mantle straight up, or hang first?** U4 seems to mantle low ledges. The private reference project chose "always hang, never auto-mantle" (private reference project: notes). This is a decision for Max; default here is U4-style mantle ≤ 1.6 m.
 5. **Climb-up input.** Stick up at a top edge versus Jump. Footage cannot show inputs. Default is stick up, with Jump also accepted.
 6. **Hang-aim limits.** Yaw and pitch arcs, whether aiming works from a free-hang bar, and whether grenades can be thrown while hanging are all unverified.
 7. **Corners.** U4 corner wrap behaviour was not measured in this pass.
@@ -376,9 +376,9 @@ Footage (720p video only, frames extracted with ffmpeg; timing by counting sampl
 - RfZ6zWsvo3w, "Hang Tough! Trophy Guide" (PowerPyx): https://www.youtube.com/watch?v=RfZ6zWsvo3w . One-handed aim while dragged on a rope (partial download).
 - Looked at and not used: uFtN1_6SInc and MV9O4gvFUe8 (multiplayer), 2h254cVykWI (not U4), 70msTYWCQBI (night rooftop drop, too dark to calibrate), Vv2IU1KPlqM (climbers react; dyno definition only).
 
-Known repo (private, paraphrased, not copied; a view of how hang systems fail, not a blueprint)
-- `docs/kits/agls/howto/climbing-component-primer.md`: grip stored relative to the held component, hang flag set at detection with the body interpolated in, sideways room probe, stick smoothing, 0.2 s jump impulse, action list (short move, outer/inner corner, turn 180, jump to next ledge, jump back).
-- `.plan/ledge-hang/map.md`: owner decision, a jump that reaches a ledge hangs and never auto-mantles.
-- `.plan/plain-jump/map.md`: instant yaw snap on a directional jump; a per-frame ledge scan from hip to above head during the jump; the hang-stretch death caused by two systems writing the body.
-- `.plan/roll-air-pop/map.md`: a grab band measured from the capsule moves when the capsule resizes in the air.
-- `.plan/breakable-handhold/map.md`, `.plan/ledge-pulldown/map.md`: release before destroy; pull-down as a hang-gated ability.
+Private reference project (paraphrased, not copied; a view of how hang systems fail, not a blueprint)
+- Grip stored relative to the held component, hang flag set at detection with the body interpolated in, sideways room probe, stick smoothing, 0.2 s jump impulse, action list (short move, outer/inner corner, turn 180, jump to next ledge, jump back).
+- Owner decision: a jump that reaches a ledge hangs and never auto-mantles.
+- Instant yaw snap on a directional jump; a per-frame ledge scan from hip to above head during the jump; the hang-stretch death caused by two systems writing the body.
+- A grab band measured from the capsule moves when the capsule resizes in the air.
+- Release before destroy; pull-down as a hang-gated ability.

@@ -8,10 +8,10 @@ Max asked for one room of a level "in Uncharted 4 fashion". The character contro
 
 ## Boundaries
 
-- **A separate, standalone app** (Max). Everything lives in `cover-room/` and runs if that folder is copied out on its own. Code from `vfx-studies/` is copied in, never imported or linked at runtime. The only outside dependencies are the CDN importmap entries. It is not part of Project Known.
+- **A separate, standalone app** (Max). Everything lives in `cover-room/` and runs if that folder is copied out on its own. Code from `vfx-studies/` is copied in, never imported or linked at runtime. The only outside dependencies are the CDN importmap entries. It is not part of any other project.
 
 - **Original content only.** The room, the characters, the props and the HUD art are our own. No game assets, character likenesses, names or level layouts. Only mechanics, timings and behaviour rules are matched. The page title and the folder don't use the game's name; the README credits the talks as research sources.
-- The Known repo (`~/ClaudeCode/references/project-known-database`, private) is reference only. Nothing from it is copied into this public repo; we paraphrase and cite.
+- The private reference project (private) is reference only. Nothing from it is copied into this public repo; we paraphrase and cite.
 
 ## Goals
 
@@ -36,7 +36,7 @@ Melee, more weapons, the rope/grapple, stealth takedowns, a story, audio beyond 
 ## How it is made [ASSUMED unless noted]
 
 - Three.js r160 + lil-gui 0.19.2 via an importmap from cdn.jsdelivr.net, the same as `vfx-studies`. Plain ES modules, no build step, works on GitHub Pages.
-- Local server: `python3 -m http.server 8434 --bind 127.0.0.1 --directory ~/ClaudeCode/FunArtTests-cover-room`, then open `http://127.0.0.1:8434/cover-room/`.
+- Local server: `python3 -m http.server 8434 --bind 127.0.0.1 --directory <repo root>`, then open `http://127.0.0.1:8434/cover-room/`.
 - Units: meters, seconds, radians. Y up. A character's forward is local +Z; yaw 0 faces +Z.
 - Fixed simulation step of 1/60 s (`game.dt`). Rendering runs once per rAF after 0–4 sim steps, without interpolation in v1. All randomness goes through `game.rng` (seeded mulberry32), so headless runs repeat.
 - Input: keyboard/mouse **and** gamepad (standard mapping), with bindings from a table. Defaults come from `refs/player-spec.md`.
