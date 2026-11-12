@@ -27,7 +27,10 @@ const VIEW_PARAMS = [
   ['grenade.preview.dotSize', 6, { min: 1, max: 20, step: 0.5, label: 'dot size (px)' }],  // [ASSUMED]
   ['grenade.preview.flow', 0.9, { min: 0, max: 5, step: 0.05, label: 'dot flow (m/s)' }],  // [ASSUMED] subtle drift toward the landing
   ['grenade.preview.ringRadius', 0.2, { min: 0.05, max: 1, step: 0.01, label: 'landing ring (m)' }], // §6 [MEASURED F4 (yt-workaround)] small ring
-  ['grenade.preview.blastRing', false, { label: 'show blast radius' }],                    // [ASSUMED] off: not in the reference
+  ['grenade.preview.blastRing', true, { label: 'show blast radius' }],                     // Max 11 Nov: "radius around the land point so i know where it will damage" (not in U4)
+  ['grenade.preview.blastColor', '#ff5a36', { label: 'blast radius colour' }],             // [ASSUMED] our own look
+  ['grenade.preview.blastFill', 0.13, { min: 0, max: 0.6, step: 0.01, label: 'blast fill opacity' }],   // [ASSUMED]
+  ['grenade.preview.blastEdge', 0.75, { min: 0, max: 1, step: 0.05, label: 'blast edge opacity' }],     // [ASSUMED]
   ['grenade.preview.color', '#f6f3ec', { label: 'arc colour' }],                           // §6 [MEASURED F4 (yt-workaround)] white
   ['grenade.preview.opacity', 0.9, { min: 0.1, max: 1, step: 0.05, label: 'arc opacity' }], // [ASSUMED]
   ['grenade.view.glowSize', 0.5, { min: 0, max: 2, step: 0.05, label: 'red glow size (m)' }], // §6 [WIKI] red glow; size [ASSUMED]
@@ -187,13 +190,22 @@ export function createView(game) {
   ring.visible = false;
   root.add(ring);
 
-  // --- optional blast-radius rings (kill radius + outer radius)
-  const circlePts = [];
-  for (let i = 0; i <= 64; i++) { const a = (i / 64) * Math.PI * 2; circlePts.push(new THREE.Vector3(Math.cos(a), Math.sin(a), 0)); }
-  const circleGeo = new THREE.BufferGeometry().setFromPoints(circlePts);
-  const blastMat = new THREE.LineBasicMaterial({ color: 0xff7a4a, transparent: true, opacity: 0.55, depthWrite: false });
-  const blastIn = new THREE.Line(circleGeo, blastMat), blastOut = new THREE.Line(circleGeo, blastMat);
-  ring.add(blastIn, blastOut);
+  // --- blast radius on the ground around the landing point: a soft fill out to the blast radius, a stronger fill over
+  // the full-damage radius, and an edge band on each (grenade.blast.radius / killRadius). Flat (world up), not tilted
+  // with the contact normal, since the blast is a sphere and the grenade ends up on the floor.
+  const blast = new THREE.Group();
+  const mkMat = (o) => new THREE.MeshBasicMaterial({ color: 0xff5a36, transparent: true, opacity: o, depthWrite: false,
+    side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  const fillOutMat = mkMat(0.07), fillInMat = mkMat(0.13), edgeOutMat = mkMat(0.75), edgeInMat = mkMat(0.4);
+  const disc = new THREE.CircleGeometry(1, 64);
+  const fillOut = new THREE.Mesh(disc, fillOutMat), fillIn = new THREE.Mesh(disc, fillInMat);
+  const edgeOut = new THREE.Mesh(new THREE.RingGeometry(1, 1, 96), edgeOutMat);    // radii set per frame (band in metres)
+  const edgeIn = new THREE.Mesh(new THREE.RingGeometry(1, 1, 96), edgeInMat);
+  for (const m of [fillOut, fillIn, edgeOut, edgeIn]) { m.rotation.x = -Math.PI / 2; m.renderOrder = 19; blast.add(m); }
+  blast.visible = false;
+  root.add(blast);
+  let bandKey = '';
+  const setBand = (mesh, r, w) => { mesh.geometry.dispose(); mesh.geometry = new THREE.RingGeometry(Math.max(0.01, r - w), r, 96); };
 
   // --- grenade bodies (pooled) + red glow sprites
   const bodyGeo = new THREE.SphereGeometry(1, 14, 10);
@@ -262,10 +274,19 @@ export function createView(game) {
       ringW.scale.setScalar(rr); ringD.scale.setScalar(rr); pip.scale.setScalar(rr);
       ringMatW.color.copy(_col);
       const br = P('grenade.preview.blastRing');
-      blastIn.visible = br; blastOut.visible = br;
-      if (br) { blastIn.scale.setScalar(P('grenade.blast.killRadius')); blastOut.scale.setScalar(P('grenade.blast.radius')); }
+      blast.visible = br;
+      if (br) {
+        const R = P('grenade.blast.radius'), K = Math.min(R, P('grenade.blast.killRadius'));
+        blast.position.set(pv.landing.x, pv.landing.y + 0.02, pv.landing.z);
+        fillOut.scale.setScalar(R); fillIn.scale.setScalar(K);
+        const key = R + ':' + K;
+        if (key !== bandKey) { bandKey = key; setBand(edgeOut, R, 0.09); setBand(edgeIn, K, 0.05); }   // rebuilt only on a tuning change
+        const c = P('grenade.preview.blastColor'), f = P('grenade.preview.blastFill'), e = P('grenade.preview.blastEdge');
+        for (const m of [fillOutMat, fillInMat, edgeOutMat, edgeInMat]) m.color.set(c);
+        fillOutMat.opacity = f * 0.55; fillInMat.opacity = f; edgeOutMat.opacity = e; edgeInMat.opacity = e * 0.55;
+      }
     } else {
-      line.visible = false; dots.visible = false; ring.visible = false;
+      line.visible = false; dots.visible = false; ring.visible = false; blast.visible = false;
     }
 
     // held grenade (from aim start until it leaves the hand)

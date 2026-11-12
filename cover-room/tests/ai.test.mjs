@@ -260,3 +260,118 @@ test('cover facing and behind-the-player measures from geometry', () => {
   measureCheap(post, q, ctx, P);
   assert.equal(ctx.behindTarget, true);          // …so this post, 10 m on the other side, is behind the player
 });
+
+// ------------------------------------------------------------------------------------------------ layout / vantage (refs/ai-vantage.md)
+import { normalizeRegion, regionContains, regionDist, loadHardPoints, addPerchPosts } from '../src/ai/layout.js';
+import { sampleReach } from '../src/ai/vantage.js';
+
+test('hard-point regions: polygon (even-odd) and circle, same floor only', () => {
+  const sq = normalizeRegion({ y: 6, poly: [[-2, -2], [2, -2], [2, 2], [-2, 2]] });
+  near(sq.center.x, 0); near(sq.center.z, 0); near(sq.radius, Math.SQRT2 * 2);      // bounding circle of a 4 m square
+  assert.equal(regionContains(sq, { x: 1.9, y: 6, z: -1.9 }), true);
+  assert.equal(regionContains(sq, { x: 2.1, y: 6, z: 0 }), false);
+  assert.equal(regionContains(sq, { x: 0, y: 0, z: 0 }), false);                         // the floor 6 m below
+  assert.equal(regionContains(sq, { x: 0, y: 7.2, z: 0 }), true);                        // within the 1.5 m tolerance
+  const L = normalizeRegion({ y: 0, poly: [[0, 0], [4, 0], [4, 1], [1, 1], [1, 4], [0, 4]] });  // an L shape
+  assert.equal(regionContains(L, { x: 3, y: 0, z: 0.5 }), true);
+  assert.equal(regionContains(L, { x: 3, y: 0, z: 3 }), false);                          // the notch
+  const c = normalizeRegion({ center: { x: 3, y: 6, z: -9.6 }, radius: 4 });
+  assert.equal(regionContains(c, { x: 6.9, y: 6, z: -9.6 }), true);
+  assert.equal(regionContains(c, { x: 7.1, y: 6, z: -9.6 }), false);
+  assert.equal(regionDist(sq, { x: 1, y: 6, z: 1 }), 0);                                 // inside → 0
+  near(regionDist(sq, { x: 5, y: 0, z: 0 }), 5 + 6);                                      // 5 m to the centre + 6 m of height
+});
+
+test('hard points: designer ones load as given; an overwatch spawn adds an auto one only outside every designer zone', () => {
+  const level = { hardPoints: [{ id: 'hp-a', name: 'a', min: 0, max: 1, region: { y: 6, poly: [[-10, -11], [9, -11], [9, -8], [-10, -8]] } },
+    { id: 'hp-off', min: 1, max: 2, enabled: false, region: { y: 0, poly: [[0, 0], [1, 0], [1, 1]] } }] };
+  const spawns = [{ role: 'overwatch' }, { role: 'hold' }, { role: 'overwatch' }];
+  const npcs = [{ id: 'e1', pos: { x: 3, y: 6, z: -9.6 } }, { id: 'e2', pos: { x: 0, y: 0, z: 0 } }, { id: 'e3', pos: { x: 13.6, y: 6, z: -5.2 } }];
+  const hps = loadHardPoints(level, spawns, npcs);
+  assert.deepEqual(hps.map((h) => h.id), ['hp-a', 'hp-off', 'hp-e3']);                  // e1 is inside hp-a: no auto one
+  assert.deepEqual([hps[0].min, hps[0].max, hps[0].enabled, hps[0].designer], [0, 1, true, true]);
+  assert.equal(hps[1].enabled, false);
+  assert.deepEqual([hps[2].min, hps[2].max, hps[2].designer, hps[2].region.radius], [1, 1, false, 4]);
+});
+
+// A fake world for the perch passes: balcony slab top 6 for z < −8, a parapet z −8.35..−8.0 top 7.0 only for x < 0
+// (x ≥ 0 is an open edge), courtyard floor 0 beyond. groundAt = highest top ≤ fromY.
+const fakeWorld = {
+  Vector3: class { constructor() { this.x = 0; this.y = 0; this.z = 0; } set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; } },
+  lineOfSight: () => true,
+  groundAt(x, z, fromY) {
+    const tops = [0];
+    if (z < -8) tops.push(6);
+    if (x < 0 && z >= -8.35 && z <= -8) tops.push(7);
+    const ok = tops.filter((t) => t <= fromY);
+    return ok.length ? Math.max(...ok) : null;
+  },
+};
+
+test('perches: a low rail over a drop becomes a perch with a lean-out point past its far face; an open edge gets a ledge perch', () => {
+  // rail: cover post 0.5 m behind the parapet's near face (z −8.35), normal toward the walkway (0, −1), top 7.0
+  const rail = { id: 0, type: 'cover', height: 'low', x: -3, y: 6, z: -8.85, nx: 0, nz: -1, top: 7, fire: { x: -3, y: 7.45, z: -8.85 }, lean: 0 };
+  const posts = [rail];
+  const nav = { nodes: [{ id: 0, x: 2, y: 6, z: -8.4 }] };            // one walkway node 0.4 m from the open edge (x ≥ 0)
+  const n = addPerchPosts(posts, nav, fakeWorld, P);
+  assert.deepEqual(n, { rails: 1, ledges: 1 });
+  assert.equal(rail.type, 'perch'); assert.equal(rail.rail, true);
+  near(rail.drop, 6);                                                   // walkway 6 → courtyard 0
+  assert.deepEqual(rail.fire, { x: -3, y: 7.45, z: -8.85 });           // the pop-up point is kept for normal fights
+  // far face at z −8.0, + leanPast 0.25 → −7.75 (± one 0.05 m probe step); eye = top 7.0 + railUp 0.3
+  near(rail.perchFire.y, 7.3); assert.ok(Math.abs(rail.perchFire.z - -7.75) <= 0.051, `perchFire.z ${rail.perchFire.z}`);
+  const ledge = posts[1];
+  assert.equal(ledge.type, 'perch'); assert.equal(ledge.rail, false);
+  assert.deepEqual([ledge.nx, ledge.nz], [-0, -1]);                     // faces away from the drop (+Z)
+  near(ledge.perchFire.y, 6 + 1.35);                                    // leaning eye ai.perch.eye
+  assert.ok(Math.abs(ledge.perchFire.z - (-8.0 + 0.25)) <= 0.051, `ledge perchFire.z ${ledge.perchFire.z}`);   // edge −8.0 + 0.25
+});
+
+test('reach set sampling: one node per (sector, ring) bucket, nearest the ring target (hand-picked on a line)', () => {
+  // nodes every 0.5 m along +X from the LKP; path distance = x. R = 3 s × 4.8 m/s = 14.4 m, 8 sectors, 2 rings.
+  const nodes = [], dist = [];
+  for (let i = 0; i <= 40; i++) { nodes.push({ x: i * 0.5, z: 0 }); dist.push(i * 0.5); }
+  const R = P('ai.vantage.reachTime') * P('ai.vantage.speed');
+  near(R, 14.4, 1e-9);
+  const ids = sampleReach(nodes, dist, { x: 0, z: 0 }, R, 8, 2);
+  // bearing 0 → one sector; ring 1 target 7.2 m → the 7.0 m node (|−0.2| beats 7.5's 0.3); ring 2 target 14.4 → 14.0
+  // (14.5 is past R). The LKP node itself (dist 0) is not sampled (the manager adds the LKP as point 0).
+  assert.deepEqual(ids.map((i) => nodes[i].x), [7.0, 14.0]);
+  // a node at bearing 180° lands in another sector
+  nodes.push({ x: -5, z: 0.01 }); dist.push(5);
+  const ids2 = sampleReach(nodes, dist, { x: 0, z: 0 }, R, 8, 2);
+  assert.equal(ids2.length, 3);
+});
+
+test('vantage term: curve 0 → 0.15, 0.6 → 1 (refs/ai-vantage.md); unmeasured vantage sits out of the weights', () => {
+  // engage weights: range 1, path 1, cover 1, space 1, vantage 0.5 → W = 4.5 when measured, 4 when not
+  near(scorePost(coverPost, { ...baseCtx(), vantage: 0.6 }, P), Math.pow(0.9, 1 / 4.5), 1e-9);
+  near(scorePost(coverPost, { ...baseCtx(), vantage: 0 }, P), Math.pow(0.9 * Math.pow(0.15, 0.5), 1 / 4.5), 1e-9);
+  near(scorePost(coverPost, { ...baseCtx(), vantage: -1 }, P), Math.pow(0.9, 0.25), 1e-9);   // = the pre-vantage score
+  // defend search: must see the reach (≥ ai.vantage.min 0.15) once measured
+  const ds = refreshSelector(SELECTORS.defendSearch, P);
+  assert.equal(scorePost(coverPost, { ...baseCtx(), sel: ds, vantage: 0.1 }, P), 0);
+  assert.ok(scorePost(coverPost, { ...baseCtx(), sel: ds, vantage: 0.2 }, P) > 0);
+});
+
+test('perch selector takes perches only; ledge perches are for it alone; rails count as cover elsewhere', () => {
+  const ps = refreshSelector(SELECTORS.perch, P);
+  const railPerch = { type: 'perch', rail: true, claimedBy: null }, ledgePerch = { type: 'perch', rail: false, claimedBy: null };
+  assert.equal(scorePost(coverPost, { ...baseCtx(), sel: ps }, P), 0);
+  // perch: range(10 m) on '0:1, 6:1, 15:0.4' = 1 − 0.6·4/9; path 0.9; cover rail 1 (w 0.5) → (r · 0.9)^(1/2.5)
+  near(scorePost(railPerch, { ...baseCtx(), sel: ps }, P), Math.pow((1 - 0.6 * 4 / 9) * 0.9, 1 / 2.5), 1e-9);
+  near(scorePost(ledgePerch, { ...baseCtx(), sel: ps }, P), Math.pow((1 - 0.6 * 4 / 9) * 0.9 * Math.pow(0.6, 0.5), 1 / 2.5), 1e-9);
+  assert.equal(scorePost(ledgePerch, baseCtx(), P), 0);                                     // engage ignores ledges
+  near(scorePost(railPerch, baseCtx(), P), Math.pow(0.9, 0.25), 1e-9);                     // engage: a rail = cover
+});
+
+test('designer tags: a post tagged with a hard point / roles is only for those NPCs', () => {
+  const tagged = { type: 'open', claimedBy: null, hardPoint: 'hp-a' };
+  const ctxFor = (ai) => ({ ...baseCtx(), npc: { ai } });
+  assert.equal(scorePost(tagged, ctxFor({ role: 'engager', hardPoint: null }), P), 0);
+  assert.equal(scorePost(tagged, ctxFor({ role: 'defender', hardPoint: { id: 'hp-b' } }), P), 0);
+  assert.ok(scorePost(tagged, ctxFor({ role: 'defender', hardPoint: { id: 'hp-a' } }), P) > 0);
+  const roles = { type: 'cover', claimedBy: null, roles: ['ambusher'] };
+  assert.equal(scorePost(roles, ctxFor({ role: 'engager' }), P), 0);
+  assert.ok(scorePost(roles, ctxFor({ role: 'ambusher' }), P) > 0);
+});

@@ -5,6 +5,7 @@
 import { dist2D, randRange, emitState, clamp } from './tuning.js';
 import { playerCrouched, playerExposed } from './perception.js';
 import { PostQuery, SELECTORS } from './posts.js';
+import { regionDist } from './layout.js';
 
 export const DIRECTOR_ACTOR = Object.freeze({ id: 'director', team: 'enemy' });
 
@@ -190,7 +191,8 @@ export class Director {
     this.rolesDirty = true;
     this.replaceAt = -1;
     this.warnings = [];
-    this.budget = { rays: 0, fields: 0 };
+    this.budget = { rays: 0, fields: 0, vrays: 0 };
+    this.vantage = null;              // VantageManager (vantage.js), set by index.js
     this.queryCursor = 0;
     this.exposedSince = -1e9; this.everHidden = false; this.wasExposed = true;
     this.investigation = null;
@@ -249,7 +251,9 @@ export class Director {
     this.player = g.player;
     this.budget.rays = P('ai.budget.postRays');
     this.budget.fields = P('ai.budget.fields');
+    this.budget.vrays = P('ai.budget.vantageRays');
     this.trackPlayer(dt);
+    if (this.vantage) this.vantage.update();                  // reach set follows the LKP (combat and search)
     if (this.combat) {
       combatVector(this.npcs, this.lkp, g.time, P('ai.flank.shotWindow'), this.cv);
       if (this.rolesDirty) this.assign();
@@ -265,6 +269,7 @@ export class Director {
       this.lostPlayer();
     }
     this.runQueries();
+    if (this.vantage) this.vantage.sweep(this.budget);
     this.grenadeAvoid();
   }
 
@@ -296,7 +301,7 @@ export class Director {
     for (const n of this.npcs) {
       if (!n.alive) continue;
       const hpDist = {};
-      for (const hp of hps) hpDist[hp.id] = hp.region ? dist2D(n.pos, hp.region.center || hp.region) : Infinity;
+      for (const hp of hps) hpDist[hp.id] = hp.region ? (hp.region.center ? regionDist(hp.region, n.pos) : dist2D(n.pos, hp.region)) : Infinity;
       list.push({ id: n.id, npc: n, distToPlayer: dist2D(n.pos, this.lkp),
         distToAmbush: this.ambush.valid ? dist2D(n.pos, this.ambush) : undefined, hpDist, pin: n.ai.pin || null });
     }
@@ -686,6 +691,8 @@ export class Director {
     const counts = this.loops.map(() => 0);
     for (const n of this.npcs) {
       if (!n.alive) continue;
+      // defenders don't walk the loops: they search from their hard point (G 39:51; vantage.js searchStep)
+      if (this.vantage && this.P('ai.vantage.on') && n.ai.role === 'defender' && n.ai.hardPoint && n.ai.hardPoint.region) { n.ai.searchLoop = -1; continue; }
       let li = -1;
       for (let i = 0; i < this.loops.length; i++) if (counts[i] < cap && (li < 0 || counts[i] < counts[li])) li = i;
       if (li < 0) li = 0;

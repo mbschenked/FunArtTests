@@ -45,6 +45,7 @@ export function createCharacter(game, opts = {}) {
     dispose() { if (root.parent) root.parent.remove(root); mesh.skeleton.dispose(); },
   };
   rig.animator = new Animator(game, rig);
+  if (game && game.skins && opts.skin !== false) game.skins.attach(rig);   // character/skins.js: CC0 figure over the rig
   if (opts.scene) opts.scene.add(root);
   return rig;
 }

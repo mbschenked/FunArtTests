@@ -6,7 +6,7 @@
 import { clamp, randRange, wrapAngle, yawTo, dist2D, emitState } from './tuning.js';
 import { updateVision, stepMeter, hearNoise, inViewCone, playerCrouched } from './perception.js';
 import { hitChance, planBurst, burstPause, aimPoint } from './shooting.js';
-import { SELECTORS } from './posts.js';
+import { SELECTORS, isCoverLike } from './posts.js';
 
 const STATIC_ONLY = Object.freeze({ hitActors: false });
 const MOVE_OPTS = Object.freeze({ stepHeight: 0.35, snapDown: 0.3 });
@@ -247,7 +247,7 @@ export class Brain {
   firePoint(out) {
     const ai = this.ai, npc = this.npc;
     if (ai.atPost && ai.post && !ai.moving) {
-      const f = ai.post.fire;
+      const f = (ai.perchMode && ai.post.perchFire) || ai.post.fire;     // perch mode: lean out past the edge (vantage.js)
       if (!f) return null;
       return out.set(f.x, f.y, f.z);
     }
@@ -290,7 +290,7 @@ export class Brain {
     }
     this.selectPost();
     if (ai.moving) { this.setBehavior('move'); this.setPhase('none'); return; }
-    if (ai.atPost && ai.post && ai.post.type === 'cover') this.coverFight();
+    if (ai.atPost && isCoverLike(ai.post)) this.coverFight();
     else this.openFight();
   }
 
@@ -302,20 +302,23 @@ export class Brain {
     const name = panic ? 'panic' : ai.advanceReq ? 'advance' : ai.role === 'ambusher' ? 'ambush' : ai.role === 'defender' ? 'defend' : 'engage';
     if (now >= ai.queryDueT && (q.phase === 'idle' || q.phase === 'done')) {
       ai.queryDueT = now + P('ai.posts.rescore');
-      ai.selName = name;
-      let anchor = D.lkp, limit = P('ai.posts.radius');
-      if (name === 'ambush' && D.ambush.valid) anchor = D.ambush;
-      if (name === 'defend' && ai.hardPoint && ai.hardPoint.region) {
+      // vantage.js may swap in 'perch' (player below the edge) or 'defendSearch' (defender with no vantage)
+      const sel = D.vantage && !panic && !ai.advanceReq ? D.vantage.selectorFor(this, name) : name;
+      ai.selName = sel;
+      let anchor = D.lkp, limit = P('ai.posts.radius'), region = null;
+      if (sel === 'ambush' && D.ambush.valid) anchor = D.ambush;
+      if (ai.role === 'defender' && (sel === 'defend' || sel === 'defendSearch' || sel === 'perch') && ai.hardPoint && ai.hardPoint.region) {
         anchor = ai.hardPoint.region.center || ai.hardPoint.region;
         limit = ai.hardPoint.region.radius || 4;
+        region = ai.hardPoint.region.center ? ai.hardPoint.region : null;   // a layout.js zone: posts inside it
       }
-      q.begin(npc, SELECTORS[name], D.posts, D.lkp, anchor, limit, D.cv, D.npcs, D.tools, P, ai.post);
+      q.begin(npc, SELECTORS[sel], D.posts, D.lkp, anchor, limit, D.cv, D.npcs, D.tools, P, ai.post, region);
       q.consumed = false;
       return;
     }
     if (q.phase !== 'done' || q.consumed) return;
     q.consumed = true;
-    const forced = ai.selName === 'advance' || ai.selName === 'panic';
+    const forced = ai.selName === 'advance' || ai.selName === 'panic' || ai.selName === 'defendSearch' || ai.selName === 'perch';
     const cur = ai.post, cs = cur ? q.scoreOf(cur) : 0;
     const best = q.best, bs = q.bestScore;
     if (best && best !== cur && (cs <= 0 || forced || (bs >= P('ai.posts.hysteresis') * cs && now - ai.postArriveT >= P('ai.posts.minDwell')))) {
@@ -451,7 +454,8 @@ export class Brain {
   // rig's muzzle socket, else chest height in front.
   muzzle(out) {
     const ai = this.ai, npc = this.npc;
-    if (ai.atPost && ai.post && ai.post.type === 'cover' && ai.post.fire && !ai.moving) return out.set(ai.post.fire.x, ai.post.fire.y - 0.1, ai.post.fire.z);
+    const pf = ai.atPost && ai.post && !ai.moving ? (ai.perchMode && ai.post.perchFire) || (isCoverLike(ai.post) && ai.post.fire) : null;
+    if (pf) return out.set(pf.x, pf.y - 0.1, pf.z);
     const sock = npc.rig && typeof npc.rig.socket === 'function' ? npc.rig.socket('muzzle') : null;
     if (sock && typeof sock.getWorldPosition === 'function') return sock.getWorldPosition(out);
     return out.set(npc.pos.x + Math.sin(npc.yaw) * 0.45, npc.pos.y + 1.42, npc.pos.z + Math.cos(npc.yaw) * 0.45);
@@ -569,6 +573,7 @@ export class Brain {
   // ---- search (§2) -------------------------------------------------------------------------------------------------
   search() {
     const ai = this.ai, P = this.P, D = this.dir;
+    if (D.vantage && D.vantage.searchStep(this)) return;          // defenders search from their hard point (vantage.js)
     this.setBehavior(ai.moving ? 'search' : 'look');
     if (ai.detour) {
       if (!ai.moving || ai.goalKind !== 'detour') {
@@ -632,7 +637,7 @@ export class Brain {
     ai.moving = false; ai.path = null;
     if (kind === 'post' && ai.post) {
       ai.atPost = true; ai.postArriveT = now;
-      this.setPhase(ai.post.type === 'cover' ? 'idle' : 'none');
+      this.setPhase(isCoverLike(ai.post) ? 'idle' : 'none');
       ai.aimReadyAt = now + randRange(rng, 0.2, 0.6);                                         // [ASSUMED] settle
       ai.peekAt = now + randRange(rng, P('ai.cover.peekGapMin'), P('ai.cover.peekGapMax'));
       ai.fireLosNext = 0;
@@ -692,7 +697,7 @@ export class Brain {
     const sp = Math.hypot(v.x, v.z);
     if (ai.hitUntil > this.now) return;
     if (ai.alert === 'combat' && !ai.moving && D.lkp.valid) {
-      if (ai.atPost && ai.post && ai.post.type === 'cover') {
+      if (ai.atPost && isCoverLike(ai.post)) {
         target = yawTo(-ai.post.nx, -ai.post.nz);              // root faces INTO the wall in cover (animator contract)
       } else target = yawTo(D.lkp.x - npc.pos.x, D.lkp.z - npc.pos.z);
     } else if (ai.throwPhase) target = yawTo(ai.throwTarget.x - npc.pos.x, ai.throwTarget.z - npc.pos.z);
@@ -702,7 +707,8 @@ export class Brain {
       target = ai.inv.phase === 'look' ? base + Math.sin(this.now * 1.1) * 0.9 : base;
     } else if ((ai.alert === 'unaware' || ai.alert === 'search') && ai.meter > 0 && ai.lastSeen.valid) {
       target = yawTo(ai.lastSeen.x - npc.pos.x, ai.lastSeen.z - npc.pos.z);   // white phase: stop and look (P)
-    } else if (ai.alert === 'unaware' && !ai.moving) target = this.home.yaw;
+    } else if (ai.lookAt != null && !ai.moving) target = ai.lookAt;   // defend search: look outward (vantage.js)
+    else if (ai.alert === 'unaware' && !ai.moving) target = this.home.yaw;
     if (target === null) { this.turnRate = 0; return; }
     const d = wrapAngle(target - npc.yaw), max = P('ai.move.turnRate') * dt;
     const step = clamp(d, -max, max);
@@ -747,7 +753,7 @@ export class Brain {
       a.hit.dir = ai.hit.dir; a.hit.part = ai.hit.part; a.hit.t = now - ai.hit.t0;
       return;
     }
-    const inCover = ai.alert === 'combat' && ai.atPost && ai.post && ai.post.type === 'cover' && !ai.moving && !ai.flee;
+    const inCover = ai.alert === 'combat' && ai.atPost && isCoverLike(ai.post) && !ai.moving && !ai.flee;
     a.mode = inCover ? 'cover' : 'locomotion';
     if (inCover) {
       const post = ai.post, cv = a.cover;

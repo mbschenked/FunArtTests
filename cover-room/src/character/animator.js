@@ -70,6 +70,7 @@ const PARAM_DEFS = [
   ['blend.roll', 0.08, 0, 1, 0.01], ['blend.jump', 0.08, 0, 1, 0.01], ['blend.fall', 0.2, 0, 1, 0.01],
   ['blend.land', 0.05, 0, 1, 0.01], ['blend.mantle', 0.1, 0, 1, 0.01], ['blend.climb', 0.15, 0, 1, 0.01],
   ['blend.climbSub', 0.12, 0, 1, 0.01], ['blend.hitreact', 0.06, 0, 1, 0.01], ['blend.death', 0.08, 0, 1, 0.01],
+  ['blend.takedown', 0.12, 0, 1, 0.01],                 // into a stealth takedown (src/player/stealth.js) [INFERRED]
   ['blend.velDecay', 0.06, 0.005, 0.5, 0.005],          // dead-blend velocity halflife (s)
   // Gait: cadence anchors (steps/s) at 0.3 / 1.5 / 4.5 / 6.5 m/s, gait biomechanics norms. [INFERRED]
   ['gait.cadenceMin', 1.3, 0.5, 3, 0.05], ['gait.cadenceWalk', 1.95, 1, 3, 0.05],
@@ -98,7 +99,9 @@ const PARAM_DEFS = [
   ['idle.exertRise', 0.12, 0, 1, 0.01], ['idle.exertFall', 0.04, 0, 1, 0.005],
   // Aim offset and pistol holds. TODO(spec): player-spec aim-in time.
   ['aim.blend', 0.07, 0.01, 0.5, 0.005],                // aim-in halflife when animState.aim.weight is absent
-  ['aim.gunDist', 0.6, 0.2, 0.8, 0.005], ['aim.gunDrop', 0.06, -0.1, 0.3, 0.005], ['aim.gunRight', 0.03, -0.15, 0.15, 0.005],
+  // Pistol aim: gun further out and at eye level, per refs/stealth-measured.md "Pistol aim pose" (U4 frames, low confidence:
+  // shoulder->grip ~0.96 of arm reach, ~160 deg at the gun elbow). Was 0.6 / 0.06 / 0.03 [ASSUMED].
+  ['aim.gunDist', 0.68, 0.2, 0.8, 0.005], ['aim.gunDrop', 0.02, -0.1, 0.3, 0.005], ['aim.gunRight', 0.0, -0.15, 0.15, 0.005],
   ['aim.spineYaw', 0.8, 0, 1, 0.01], ['aim.spinePitch', 0.45, 0, 1, 0.01], ['aim.maxTwist', 1.3, 0.3, 2, 0.01],
   ['aim.lookW', 0.75, 0, 1, 0.01], ['aim.hipTwist', 0.45, 0, 1, 0.01],
   ['aim.pointHold', 0.8, 0, 3, 0.05],                  // s the gun stays pointed after a hip (non-aimed) shot. TODO(spec)
@@ -233,6 +236,22 @@ function lerpHand(h, o, t) {   // h = lerp(h, o, t)
   if (t <= 0) return;
   if (t >= 1) { copyHand(h, o); return; }
   h.pos.lerp(o.pos, t); h.q.slerp(o.q, t); h.pole.lerp(o.pole, t);
+}
+function lerpTarget(a, b, w) {   // a = lerp(a, b, w), field by field (takedown cross-fade into the death pose)
+  if (w <= 0) return;
+  a.pelvis.lerp(b.pelvis, w); a.pre.slerp(b.pre, w);
+  a.pYaw = lerp(a.pYaw, b.pYaw, w); a.pPitch = lerp(a.pPitch, b.pPitch, w); a.pRoll = lerp(a.pRoll, b.pRoll, w);
+  a.sPitch = lerp(a.sPitch, b.sPitch, w); a.sYaw = lerp(a.sYaw, b.sYaw, w); a.sRoll = lerp(a.sRoll, b.sRoll, w);
+  a.nPitch = lerp(a.nPitch, b.nPitch, w); a.nYaw = lerp(a.nYaw, b.nYaw, w); a.nRoll = lerp(a.nRoll, b.nRoll, w);
+  a.hPitch = lerp(a.hPitch, b.hPitch, w); a.hYaw = lerp(a.hYaw, b.hYaw, w); a.hRoll = lerp(a.hRoll, b.hRoll, w);
+  a.look.lerp(b.look, w); if (a.look.lengthSq() < 1e-8) a.look.set(0, 0, 1);
+  a.lookW = lerp(a.lookW, b.lookW, w); a.autoCollar = lerp(a.autoCollar, b.autoCollar, w);
+  for (let i = 0; i < 2; i++) {
+    a.cRaise[i] = lerp(a.cRaise[i], b.cRaise[i], w); a.cFwd[i] = lerp(a.cFwd[i], b.cFwd[i], w);
+    const f = a.foot[i], g = b.foot[i];
+    f.ball.lerp(g.ball, w); f.q.slerp(g.q, w); f.toe = lerp(f.toe, g.toe, w); f.pole.lerp(g.pole, w);
+    lerpHand(a.hand[i], b.hand[i], w);
+  }
 }
 
 class TargetPose {
@@ -398,11 +417,16 @@ export class Animator {
         case 'fall': this.evalAir(tp, s, dt, false); break;
         case 'land': this.evalLand(tp, s, dt); break;
         case 'mantle': this.evalMantle(tp, s, dt); break;
-        case 'climb': this.evalClimb(tp, s, dt); break;
+        case 'climb':   // the ledge pull-down stays in mode 'climb' (the skin's hang correction keys on it)
+          if (s.takedown && s.takedown.kind === 'ledge' && s.takedown.role === 'attacker' && s.takedown.T) this.evalTakedown(tp, s, dt);
+          else this.evalClimb(tp, s, dt);
+          break;
         case 'death': this.evalDeath(tp, s, dt); break;
+        case 'takedown': this.evalTakedown(tp, s, dt); break;
         case 'hitreact': this.evalLocomotion(tp, s, dt, true); break;
         default: this.evalLocomotion(tp, s, dt, false);
       }
+      if (s.reach && s.reach.w > 0 && mode !== 'takedown' && !s.takedown) this.reachCue(tp, s.reach);
       this.solve(tp, this.pose);
     }
     this.applyBlend(dt);
@@ -452,6 +476,7 @@ export class Animator {
     if (mode === 'mantle') { this.mantleOrigin.copy(this.rootPos); this.mantleYaw = this.yaw; }
     if (mode === 'climb') this.climbInit = false;
     if (mode === 'jump') this.airVy = 0;
+    if (mode === 'takedown') this.replantFromPose();   // gait planters start where the body is
     if (mode === 'land') this.landVy = Math.min(this.airVy, this.vel.y);
     if (mode === 'death') {
       const d = s.death && s.death.dir;
@@ -465,7 +490,7 @@ export class Animator {
       this.hitSign = lx >= 0 ? 1 : -1;
     }
     // Coming out of a full-body mode: re-plant the feet where the output pose has them, so nothing pops.
-    if (prev === 'jump' || prev === 'fall' || prev === 'climb' || prev === 'mantle' || prev === 'roll' || prev === 'death' || prev === '') {
+    if (prev === 'jump' || prev === 'fall' || prev === 'climb' || prev === 'mantle' || prev === 'roll' || prev === 'death' || prev === 'takedown' || prev === '') {
       if (mode === 'locomotion' || mode === 'cover' || mode === 'land' || mode === 'hitreact') this.replantFromPose();
     }
   }
@@ -1611,6 +1636,236 @@ export class Animator {
     }
   }
 
+  // =====================================================================================================================
+  // STEALTH TAKEDOWNS. src/player/stealth.js writes s.takedown and owns every root path (actor pos / yaw) and the world
+  // points the hands go to; these methods pose the limbs around them (refs/stealth-spec.md). Original keyframes, all
+  // [INFERRED] from how the moves read: no game animation data is used.
+  //   s.takedown {kind 'rear'|'ledge'|'cover', role 'attacker'|'victim', t (s since the start), T {grab, kill, end, ...},
+  //     dir (victim topple +1 forward / -1 back), pitch (victim body pitch, rad, + forward), pelvisW (victim pelvis in
+  //     the world, or null), air (0..1 feet off the floor), land (0..1 into the lying death pose), deathT (the death
+  //     clock of that pose, s), grabW / strikeW (world points for the attacker's hands), gap (rear: attacker behind, m)}
+  //   The ledge attacker is posed from case 'climb' (anim.mode stays 'climb' with s.takedown set): the skins' climb
+  //   pass (character/skins.js) lifts the shorter-armed figure onto the anchored hands only in mode 'climb'.
+
+  // Takedown cue: U4 shows no icon, the free (left) arm lifts toward the enemy (stealth-measured.md §4 [WIKI]). Layered on
+  // whatever mode posed the body. R = s.reach {w 0..1, x, y, z (world, the victim's chest), arm (false: hanging, so
+  // only the look), dist (hand out from the shoulder, m)}. Not while aiming (the left hand is on the gun).
+  reachCue(tp, R) {
+    const W = this._rc || (this._rc = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]);
+    const w = sstep(0, 1, R.w) * (1 - this.aimW);
+    if (w <= 0) return;
+    const g = this.worldToRoot(W[0].set(R.x, R.y, R.z));
+    const look = W[3].set(tp.pelvis.x, tp.pelvis.y + 0.6, tp.pelvis.z);
+    look.subVectors(g, look).normalize();
+    tp.look.lerp(look, w).normalize(); tp.lookW = Math.max(tp.lookW, 0.7 * w);
+    if (!R.arm) return;
+    const sh = W[1].copy(this.rsP[ARM[0].upper]);
+    const d = W[2].subVectors(g, sh), len = d.length();
+    if (len < 1e-3) return;
+    d.divideScalar(len);
+    const p = W[0].copy(sh).addScaledVector(d, Math.min(len, R.dist || 0.45));
+    p.y -= 0.08;   // a little below the line: forearm up, hand open, not a pointing arm
+    const h = this._hA;
+    this.handAtPalm(h, 0, p, W[3].set(d.x * 0.6, -0.8, d.z * 0.6).normalize(), W[1].set(d.x, d.y + 0.35, d.z).normalize());
+    h.pole.set(0.8, -0.6, -0.2);
+    lerpHand(tp.hand[0], h, w);
+  }
+
+  evalTakedown(tp, s, dt) {
+    const td = s.takedown;
+    if (!td || !td.T) { this.evalLocomotion(tp, s, dt, false); return; }
+    if (!this._td) this._td = { v: Array.from({ length: 8 }, () => new THREE.Vector3()), q: new THREE.Quaternion(), s: { death: { t: 0, dir: null } } };
+    if (td.role === 'attacker') {
+      if (td.kind === 'ledge') this.tdLedgeAttacker(tp, s, td, dt);
+      else if (td.kind === 'cover') this.tdCoverAttacker(tp, s, td, dt);
+      else this.tdRearAttacker(tp, s, td, dt);
+      return;
+    }
+    if (td.kind === 'rear') this.tdRearVictim(tp, s, td, dt);
+    else this.tdFlightVictim(tp, s, td, dt);
+    if (td.land > 0) {   // cross-fade into the death pose at the death clock the brain continues from
+      const S = this._td.s;
+      S.death.t = td.deathT || 0;
+      this.deathBack = td.dir < 0 ? 1 : 0; this.deathYaw = 0; this.hitSign = 1;
+      this.evalDeath(this.tpB, S, dt);
+      lerpTarget(tp, this.tpB, clamp(td.land, 0, 1));
+    }
+  }
+
+  // Rear choke frame shared by both roles (victim root space): hold 0..1, knees buckling, lean back (rad), neck point.
+  tdChoke(t, T, out) {
+    const hold = sstep(T.grab - 0.05, T.grab + 0.12, t);
+    const buckle = sstep(T.grab, T.kill, t);
+    const lean = 0.32 * hold;
+    out.hold = hold; out.buckle = buckle; out.lean = lean;
+    out.py = PELVIS_H - 0.03 - 0.12 * buckle; out.pz = -0.07 * hold;
+    out.ny = out.py + 0.56 * Math.cos(lean); out.nz = out.pz - 0.56 * Math.sin(lean);
+    return out;
+  }
+
+  tdRearAttacker(tp, s, td, dt) {
+    const P = this.P, T = td.T, t = td.t, W = this._td.v;
+    const c = this.tdChoke(t, T, this._tdc || (this._tdc = {}));
+    const reach = sstep(0, T.grab, t);
+    const hold = c.hold * (1 - sstep(T.kill + 0.05, T.kill + 0.35, t));
+    const snap = bump(T.kill - 0.07, T.kill + 0.2, t);
+    const rec = sstep(T.kill + 0.1, T.end, t);
+    const strain = hold * (1 - sstep(T.kill - 0.25, T.kill, t));
+    this.baseTrunk(tp);
+    this.setStance(0, 0, 0, 0.17, FOOT[0].ballZ + 0.16 * hold, -0.17, FOOT[1].ballZ - 0.18 * hold, P.gait_toeOut + 0.12 * hold);
+    this.updateGait(dt, 0, 0.3 * hold);
+    const sq = 0.11 * hold + 0.05 * reach * (1 - rec);         // hips sink to take his weight
+    tp.pelvis.set(0, PELVIS_H - 0.02 - sq, -0.05 * hold);
+    tp.pYaw = -0.1 * hold - 0.2 * snap;
+    tp.pPitch = 0.12 * reach * (1 - hold) * (1 - rec) - 0.04 * hold;
+    tp.sPitch = 0.25 * reach * (1 - hold) * (1 - rec) + 0.06 * hold;
+    tp.sYaw = 0.1 * hold - 0.5 * snap;                           // the twist that breaks the neck
+    tp.sRoll = 0.1 * snap + 0.035 * Math.sin(TAU * 3.1 * t) * strain;
+    tp.nPitch = 0.22 * hold;
+    tp.look.set(0, -0.3, 1).normalize(); tp.lookW = 0.6 * hold;
+    this.gaitFeetToTargets(tp, tp.pYaw);
+    this.pelvisGuard(tp, dt);
+    this.solveTrunk(tp);
+    const tmp = this.tpB.copy(tp);
+    this.upperBody(tmp, s, 0, this.ub(0, 0, 0, 0, -1));
+    // left forearm across his throat (hand at the far side of the neck), right (gun) hand pushing the back of his head
+    const g = td.gap || 0.5, ny = c.ny, nz = g + c.nz;
+    const w = sstep(0, T.grab + 0.05, t) * (1 - sstep(T.kill + 0.05, T.kill + 0.45, t));
+    const hL = tp.hand[0], hR = tp.hand[1];
+    this.handAtPalm(hL, 0, W[0].set(-0.08, ny - 0.03, nz + 0.07), W[1].set(0.7, 0, -0.7), W[2].set(-0.75, 0.1, -0.65));
+    hL.pole.set(1, -0.25, 0.35);
+    this.handAtPalm(hR, 1, W[0].set(-0.05, ny + 0.07, nz - 0.1 + 0.03 * snap), W[1].set(0.15, 0, 1), W[2].set(-0.1, 1, 0.1));
+    hR.pole.set(-1, -0.6, -0.2);
+    lerpHand(hL, tmp.hand[0], 1 - w); lerpHand(hR, tmp.hand[1], 1 - w);
+  }
+
+  tdRearVictim(tp, s, td, dt) {
+    const P = this.P, T = td.T, t = td.t, W = this._td.v;
+    const c = this.tdChoke(t, T, this._tdc || (this._tdc = {}));
+    const jolt = pulse(t - T.grab, 0.08);
+    const dead = sstep(T.kill, T.kill + 0.1, t);
+    const fight = c.hold * (1 - dead);
+    this.baseTrunk(tp);
+    this.setStance(0, 0, 0, 0.13, FOOT[0].ballZ + 0.04 * c.hold, -0.13, FOOT[1].ballZ + 0.02 * c.hold, P.gait_toeOut);
+    this.updateGait(dt, 0, 0);
+    const wob = Math.sin(TAU * 2.3 * t), wob2 = Math.sin(TAU * 1.7 * t + 1.1);
+    tp.pelvis.set(0.025 * wob * fight, c.py, c.pz);
+    tp.pPitch = -0.45 * c.lean; tp.sPitch = -0.55 * c.lean - 0.2 * jolt + 0.25 * dead;
+    tp.sRoll = 0.09 * wob * fight; tp.sYaw = 0.12 * wob2 * fight;
+    tp.nPitch = -0.3 * fight + 0.5 * dead; tp.hPitch = -0.15 * fight + 0.25 * dead; tp.hRoll = 0.55 * dead; tp.nRoll = 0.3 * dead;
+    this.gaitFeetToTargets(tp, 0);
+    this.pelvisGuard(tp, dt);
+    this.solveTrunk(tp);
+    const tmp = this.tpB.copy(tp);
+    this.upperBody(tmp, s, 0, this.ub(0, 0, 0, 0, -1));
+    // claw at the forearm across the throat; limp at the snap (arms hang)
+    const k = sstep(T.grab, T.grab + 0.15, t) * (1 - dead);
+    for (let i = 0; i < 2; i++) {
+      const sd = i === 0 ? 1 : -1, h = tp.hand[i];
+      this.handAtPalm(h, i, W[0].set(sd * 0.07 + 0.02 * Math.sin(TAU * 3 * t + i), c.ny - 0.06, c.nz + 0.11),
+        W[1].set(0, -0.25, -1), W[2].set(-sd, 0.4, 0));
+      h.pole.set(sd, -0.6, 0.2);
+      if (dead > 0) { this.armSwing(this._hB, i, 0.05, 0.15, 0.12); lerpHand(h, this._hB, dead); }
+      if (k < 1 && dead <= 0) lerpHand(h, tmp.hand[i], 1 - k);
+    }
+  }
+
+  // Ledge / cover victims: grabbed, tipped over the edge or hauled over the wall, airborne, landing.
+  tdFlightVictim(tp, s, td, dt) {
+    const T = td.T, t = td.t, W = this._td.v, q = this._td.q;
+    const dir = td.dir < 0 ? -1 : 1, th = td.pitch || 0, air = clamp(td.air || 0, 0, 1);
+    const grab = sstep(T.grab, T.grab + 0.12, t);
+    this.baseTrunk(tp);
+    const rq = tp.pre.setFromAxisAngle(X_AXIS, th);
+    if (td.pelvisW) tp.pelvis.copy(this.worldToRoot(W[0].copy(td.pelvisW))); else tp.pelvis.set(0, PELVIS_H - 0.03, 0);
+    const ph = TAU * 1.5 * t;
+    tp.sPitch = dir * 0.2 * grab - 0.15 * air * dir;              // folds toward the pull, then arches
+    tp.sRoll = 0.14 * Math.sin(ph) * air;
+    tp.nPitch = -dir * 0.3 * grab * (1 - air) + 0.15 * Math.sin(ph * 0.7) * air;
+    for (let i = 0; i < 2; i++) {   // feet: on the floor while dragged (in the root frame), bicycling once airborne
+      const sd = i === 0 ? 1 : -1, f = tp.foot[i];
+      const stand = W[1].set(sd * 0.12, BALL_H, FOOT[i].ballZ + 0.04 * dir * grab);
+      const kick = Math.sin(ph + i * Math.PI);
+      const fly = W[2].set(sd * 0.13, -(L_LEG1 + L_LEG2) * 0.92 + 0.18 * (0.5 + 0.5 * kick), 0.12 * kick + 0.06).applyQuaternion(rq).add(tp.pelvis);
+      f.ball.lerpVectors(stand, fly, air);
+      f.q.identity().slerp(q.setFromAxisAngle(X_AXIS, th + 0.4), air);
+      f.toe = 0.2 * air;
+      f.pole.set(sd * 0.15, 0, 1).applyQuaternion(rq);
+    }
+    this.solveTrunk(tp);
+    for (let i = 0; i < 2; i++) {   // arms thrown up and windmilling
+      const sd = i === 0 ? 1 : -1, h = tp.hand[i], S = this.rsP[ARM[i].upper];
+      const a = ph * 1.3 + i * 2.1;
+      h.pos.set(sd * (0.32 + 0.08 * Math.sin(a)), 0.22 + 0.22 * Math.sin(a) * grab, 0.2 + 0.18 * Math.cos(a) * grab).applyQuaternion(this.rsQ[J.spine3]).add(S);
+      h.pole.set(sd * 0.6, -0.5, -0.4).applyQuaternion(this.rsQ[J.spine3]);
+      handQuat(h.q, i, W[3].set(sd * 0.3, 0.8, 0.3).applyQuaternion(this.rsQ[J.spine3]), W[4].set(-sd * 0.5, 0, 1).applyQuaternion(this.rsQ[J.spine3]));
+    }
+    if (grab < 1) {
+      const tmp = this.tpB.copy(tp);
+      this.upperBody(tmp, s, 0, this.ub(0, 0, 0, 0, -1));
+      lerpHand(tp.hand[0], tmp.hand[0], 1 - grab); lerpHand(tp.hand[1], tmp.hand[1], 1 - grab);
+    }
+  }
+
+  // Ledge attacker: the hang (s.climb keeps the last hang frame), the right hand off the lip to the victim's ankle.
+  tdLedgeAttacker(tp, s, td, dt) {
+    this.evalClimb(tp, s, dt);
+    const T = td.T, t = td.t, W = this._td.v;
+    const up = sstep(0.02, T.grab, t) * (1 - sstep(T.release + 0.05, T.end, t));
+    const yank = bump(T.grab - 0.05, T.release + 0.12, t);
+    tp.pelvis.y -= 0.1 * yank;
+    tp.sPitch += 0.3 * yank; tp.sRoll -= 0.12 * up; tp.sYaw -= 0.15 * up;
+    if (up > 0 && td.grabW) {
+      const g = this.worldToRoot(W[0].copy(td.grabW));
+      // hand pulls down and out through the yank
+      g.y -= 0.35 * sstep(T.grab, T.release, t); g.z -= 0.15 * sstep(T.grab, T.release, t);
+      const h = this._hA;
+      this.handAtPalm(h, 1, g, W[1].set(0, 0.2, 1), W[2].set(0, 1, 0.15));
+      h.pole.set(-1, -0.5, -0.4);
+      lerpHand(tp.hand[1], h, up);
+      tp.look.copy(g).sub(W[3].set(tp.pelvis.x, tp.pelvis.y + 0.6, tp.pelvis.z)).normalize(); tp.lookW = 0.9 * up;
+    }
+  }
+
+  // Cover attacker: rise over the wall, both hands on his collar, haul him over, kneel beside him, one strike, back.
+  tdCoverAttacker(tp, s, td, dt) {
+    const P = this.P, T = td.T, t = td.t, W = this._td.v;
+    const Tg = T.grab, Th = T.haul || T.grab + 0.15, To = T.over, Tk = T.kill, Te = T.end, Tm = (Th + To) / 2;
+    this.baseTrunk(tp);
+    const strike = bump(Tk - 0.16, Tk + 0.14, t);
+    tp.pelvis.y = 0.58 + 0.22 * sstep(0, Tg, t) + 0.17 * sstep(Tg, Tm, t) - 0.2 * sstep(Tm, To, t)
+      - 0.24 * sstep(To, Tk - 0.12, t) + 0.05 * sstep(Tk + 0.15, Te, t);
+    tp.pelvis.z = 0.08 * sstep(0, Tg, t) - 0.2 * sstep(Tg, Tm, t) + 0.12 * sstep(Tm, To, t);
+    tp.pPitch = 0.12 + 0.35 * sstep(0, Tg, t) - 0.5 * sstep(Tg, Tm, t) + 0.35 * sstep(Tm, To, t) - 0.2 * sstep(Tk + 0.1, Te, t);
+    tp.sPitch = 0.12 + 0.55 * sstep(0, Tg, t) - 0.85 * sstep(Tg, Tm, t) + 0.5 * sstep(Tm, To, t) + 0.25 * strike - 0.3 * sstep(Tk + 0.1, Te, t);
+    tp.sYaw = 0.35 * bump(Tk - 0.45, Tk - 0.1, t) - 0.3 * strike;   // wind up, then the blow
+    tp.nPitch = 0.15 + 0.2 * sstep(To, Tk, t);
+    const crouch = 1 - sstep(0, Tm, t) * (1 - sstep(Tm, To, t));
+    this.setStance(0, 0, 0, 0.17, FOOT[0].ballZ + 0.18, -0.17, FOOT[1].ballZ - 0.2, P.gait_toeOut + 0.1);
+    this.updateGait(dt, 0, clamp(crouch, 0, 1));
+    if (td.grabW) { tp.look.copy(this.worldToRoot(W[5].copy(t < To ? td.grabW : td.strikeW))).sub(W[6].set(0, 1.4, 0)).normalize(); tp.lookW = 0.7; }
+    this.gaitFeetToTargets(tp, tp.pYaw);
+    this.pelvisGuard(tp, dt);
+    this.solveTrunk(tp);
+    const tmp = this.tpB.copy(tp);
+    this.upperBody(tmp, s, 0, this.ub(0, 0, 0, 0, -1));
+    const hL = tp.hand[0], hR = tp.hand[1];
+    const gR = td.grabW ? this.worldToRoot(W[0].copy(td.grabW)) : W[0].set(0, 1.2, 0.8);
+    // left hand: on the collar until after the strike
+    this.handAtPalm(hL, 0, W[1].copy(gR).add(W[2].set(0.1, 0.02, 0)), W[3].set(0, -0.4, 1), W[4].set(-0.3, -0.8, 0.3));
+    hL.pole.set(1, -0.4, -0.3);
+    lerpHand(hL, tmp.hand[0], 1 - sstep(0, Tg * 0.9, t) * (1 - sstep(Tk + 0.1, Tk + 0.45, t)));
+    // right hand: collar, wind up beside the head, the blow on his head, back to the hip
+    const sR = td.strikeW ? this.worldToRoot(W[5].copy(td.strikeW)) : W[5].set(0, 0.1, 0.6);
+    const wind = W[6].set(-0.28, tp.pelvis.y + 0.75, 0.05);
+    const p = W[1].copy(gR).add(W[2].set(-0.1, 0.02, 0));
+    p.lerp(wind, sstep(To - 0.1, Tk - 0.16, t));
+    p.lerp(sR.add(W[7].set(0, 0.08, 0)), sstep(Tk - 0.16, Tk, t) * (1 - sstep(Tk + 0.03, Tk + 0.25, t)));
+    this.handAtPalm(hR, 1, p, W[3].set(0, -1, 0.3), W[4].set(0.2, -0.3, 1));
+    hR.pole.set(-1, -0.3, -0.5);
+    lerpHand(hR, tmp.hand[1], 1 - sstep(0, Tg * 0.9, t) * (1 - sstep(Tk + 0.15, Te - 0.15, t)));
+  }
+
   // --- death: jolt, knees buckle, topple along the shot, impact, limbs settle on the floor --------------------------------
   evalDeath(tp, s, dt) {
     const P = this.P;
@@ -1732,8 +1987,8 @@ function spring(st, target, freq, zeta, dt) {   // semi-implicit damped spring
   st.x += st.v * dt;
 }
 
-export const MODES = ['locomotion', 'cover', 'roll', 'jump', 'fall', 'land', 'mantle', 'climb', 'hitreact', 'death'];
-const MODE_IDX = { locomotion: 1, cover: 2, roll: 3, jump: 4, fall: 5, land: 6, mantle: 7, climb: 8, hitreact: 9, death: 10 };
+export const MODES = ['locomotion', 'cover', 'roll', 'jump', 'fall', 'land', 'mantle', 'climb', 'hitreact', 'death', 'takedown'];
+const MODE_IDX = { locomotion: 1, cover: 2, roll: 3, jump: 4, fall: 5, land: 6, mantle: 7, climb: 8, hitreact: 9, death: 10, takedown: 11 };
 const COVER_SUB = { idle: 0, move: 0, popup: 1, lean: 2, blind: 3, enter: 4, exit: 5 };
 const KIND_SUB = { mantle: 0, vault: 1 };
 const CLIMB_SUB = { hang: 0, shimmy: 0, reach: 0, climbup: 1, drop: 2, hangAim: 3 };
@@ -1746,7 +2001,7 @@ function poseKey(mode, s) {
   return (m << 4) | sub;
 }
 const BLEND_FIELD = ['', 'blend_locomotion', 'blend_cover', 'blend_roll', 'blend_jump', 'blend_fall', 'blend_land',
-  'blend_mantle', 'blend_climb', 'blend_hitreact', 'blend_death'];
+  'blend_mantle', 'blend_climb', 'blend_hitreact', 'blend_death', 'blend_takedown'];
 function blendTime(P, key, prevKey) {
   const m = key >> 4;
   if (m === prevKey >> 4) return m === MODE_IDX.climb ? P.blend_climbSub : P.blend_coverSub;

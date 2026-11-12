@@ -17,7 +17,8 @@ export function visionRange(alert, P) {
 }
 
 // Is the offset (dx, dy, dz) from the NPC eye inside the cone around forward (fx, fz)? (ignores occlusion)
-export function inViewCone(fx, fz, dx, dy, dz, alert, P) {
+// downDeg (optional): the downward vertical half angle (a perch NPC leaning out looks down; vantage.js / layout.js).
+export function inViewCone(fx, fz, dx, dy, dz, alert, P, downDeg) {
   const h = Math.hypot(dx, dz);
   const d = Math.hypot(h, dy);
   if (d > visionRange(alert, P)) return false;
@@ -25,7 +26,8 @@ export function inViewCone(fx, fz, dx, dy, dz, alert, P) {
   const cosH = (fx * dx + fz * dz) / (h * (Math.hypot(fx, fz) || 1));
   const half = Math.min(180, halfAngleDeg(d, P) * (alert === 'combat' ? P('ai.vision.combatConeMul') : 1));
   if (cosH < Math.cos(half * DEG)) return false;
-  return Math.abs(Math.atan2(dy, h)) <= P('ai.vision.halfV') * DEG;
+  const v = Math.atan2(dy, h);
+  return Math.abs(v) <= (v < 0 && downDeg != null ? downDeg : P('ai.vision.halfV')) * DEG;
 }
 
 // §1.2 white-phase fill time: linear in distance (R), slower if never seen (M), faster when searching (C).
@@ -76,9 +78,15 @@ export function testPointHeight(player, combatStarted, P) {
 // Vision check for one NPC: cone, then one ray to the test point. Writes npc.ai.canSee / seeDist.
 // `tmp` is {eye, target, dir} scratch vectors (world.Vector3); no allocation.
 // The eye follows the cover pose: the pop-up / lean point while peeking or aiming, crouched while hidden at low cover.
+// Perches (layout.js): in perch mode the eye is the lean-out point (a ledge perch always leans; a rail perch while
+// popped up), so the NPC can see straight down past the edge.
 export function npcEye(npc, P, out) {
   const ai = npc.ai, post = ai && ai.atPost && !ai.moving ? ai.post : null;
-  if (post && post.type === 'cover' && ai.alert === 'combat') {
+  if (post && post.type === 'perch' && ai.perchMode && post.perchFire && ai.alert === 'combat') {
+    const ph = ai.coverPhase, f = post.perchFire;
+    if (!post.rail || ph === 'aim' || ph === 'peek' || ph === 'blind') return out.set(f.x, f.y, f.z);
+  }
+  if (post && (post.type === 'cover' || (post.type === 'perch' && post.rail)) && ai.alert === 'combat') {
     const ph = ai.coverPhase;
     if ((ph === 'aim' || ph === 'peek' || ph === 'blind') && post.fire) return out.set(post.fire.x, post.fire.y, post.fire.z);
     if (post.height === 'low') return out.set(npc.pos.x, npc.pos.y + P('ai.vision.crouchEye'), npc.pos.z);
@@ -98,7 +106,8 @@ export function updateVision(npc, player, game, P, tmp, combatStarted) {
   if (player.ctrl && player.ctrl.mode === 'cover' && d > P('ai.vision.coverRange')) return false;   // [WIKI] 18 m
   const look = ai.lookYaw ?? npc.yaw;                      // the aim direction while popped out, else the body
   const fx = Math.sin(look), fz = Math.cos(look);
-  if (!inViewCone(fx, fz, dx, dy, dz, ai.alert, P)) return false;
+  const leaning = ai.perchMode && ai.atPost && !ai.moving && ai.post && ai.post.type === 'perch';
+  if (!inViewCone(fx, fz, dx, dy, dz, ai.alert, P, leaning ? P('ai.perch.lookDown') : undefined)) return false;
   tmp.dir.set(dx, dy, dz);
   const hit = game.world.raycast(eye, tmp.dir, d, STATIC_ONLY);
   ai.canSee = !hit;

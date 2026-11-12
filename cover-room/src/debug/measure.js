@@ -4,6 +4,8 @@
 //   {type: 'state', time, frame, actor, sys, from, to, t}     every `state` event (actor = actor.id)
 //   {type: 'input', time, frame, action, edge: 'press'|'release'}   per-step input edges; `move` counts as pressed while |move| > 0
 //   {type: 'grenade:throw' | 'grenade:explode' | 'shot' | 'death', time, frame, actor}
+//   {type: 'takedown', time, frame, kind, phase, actor, victim, duration}   stealth takedowns (src/player/stealth.js);
+//                           phase 'start' | 'kill' | 'end', duration = planned length (s) on start, measured on end
 //
 // window.__measure:
 //   log(filter?)            entries (a copy, JSON-safe). filter: {type, sys, actor, action} (all optional)
@@ -36,6 +38,10 @@ export class Measure {
         type, actor: actorId(e && (e.owner || e.shooter || e.actor)),
       })));
     }
+    this._offs.push(game.events.on('takedown', (e) => this._push({
+      type: 'takedown', kind: e.kind ?? null, phase: e.phase ?? null, actor: actorId(e.attacker),
+      victim: actorId(e.victim), duration: e.duration ?? null,
+    })));
   }
 
   _push(entry) {

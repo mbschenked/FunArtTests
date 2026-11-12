@@ -16,6 +16,7 @@ export const AI_PARAMS = [
   ['ai.budget.postRays',       24,    n(4, 160, 4, 'post rays per step')],                    // [ASSUMED] spec: 160 rays/frame on PS (M p.424)
   ['ai.budget.fields',         1,     n(1, 6, 1, 'path fields per step')],                    // [ASSUMED] Dijkstra fields per step
   ['ai.budget.fireLosEvery',   0.1,   n(0.02, 0.5, 0.02, 'fire-LOS check (s)')],              // [ASSUMED]
+  ['ai.budget.vantageRays',    64,    n(8, 256, 8, 'vantage rays per step')],                 // [ASSUMED] browser budget for refs/ai-vantage.md
 
   // §1.1 vision
   ['ai.vision.K',              300,   n(50, 900, 10, 'cone K (deg·m)')],                      // [INFERRED] halfAngle = K/d (law [DEV] M p.421)
@@ -103,6 +104,44 @@ export const AI_PARAMS = [
   ['ai.sel.panic.range',       1, n(0, 10, 0.5)], ['ai.sel.panic.path', 1, n(0, 10, 0.5)],     // [DEV] curve (M), [INFERRED] weights
   ['ai.sel.panic.cover',       1, n(0, 10, 0.5)],                                              // [INFERRED]
   ['ai.sel.investigate.range', 1, n(0, 10, 0.5)], ['ai.sel.investigate.path', 1, n(0, 10, 0.5)], // [INFERRED]
+  ['ai.sel.engage.vantage',    0.5, n(0, 10, 0.5)], ['ai.sel.advance.vantage', 0.5, n(0, 10, 0.5)], // [ASSUMED] light: the talk dropped vantage as a zone replacement (G-deck p69–72)
+  ['ai.sel.defend.vantage',    2, n(0, 10, 0.5)],                                              // [ASSUMED] weight; defenders seek best vantage [DEV G 39:51]
+  ['ai.sel.defendSearch.vantage', 3, n(0, 10, 0.5)], ['ai.sel.defendSearch.path', 1, n(0, 10, 0.5)], // [ASSUMED]
+  ['ai.sel.defendSearch.cover', 1, n(0, 10, 0.5)], ['ai.sel.defendSearch.high', 0.5, n(0, 10, 0.5)], // [ASSUMED]
+  ['ai.sel.perch.range',       1, n(0, 10, 0.5)], ['ai.sel.perch.path', 1, n(0, 10, 0.5)],     // [ASSUMED]
+  ['ai.sel.perch.cover',       0.5, n(0, 10, 0.5)],                                            // [ASSUMED] rail 1.0 / ledge perchScore
+
+  // vantage (refs/ai-vantage.md): what the player could reach in ~3 s, and how much of it a post sees
+  ['ai.vantage.on',            true,  { label: 'vantage term + defend search' }],            // [ASSUMED] debug switch
+  ['ai.vantage.reachTime',     3.0,   n(0.5, 8, 0.25, 'player reach (s)')],                    // [DEV] G 18:52, G-deck p66 "~3 seconds of movement"
+  ['ai.vantage.speed',         4.8,   n(1, 8, 0.1, 'player run speed (m/s)')],                 // [INFERRED] player-spec player.run.speed
+  ['ai.vantage.sectors',       8,     n(2, 16, 1, 'reach sample sectors')],                    // [ASSUMED] G-deck p67 shows ~a ring of points
+  ['ai.vantage.rings',         2,     n(1, 4, 1, 'reach sample rings')],                       // [ASSUMED]
+  ['ai.vantage.pointH',        1.0,   n(0.3, 1.8, 0.05, 'reach point height (m)')],            // [ASSUMED] torso of a standing / crouched player
+  ['ai.vantage.resample',      2.0,   n(0.25, 8, 0.25, 'rebuild reach when LKP moves (m)')],   // [ASSUMED]
+  ['ai.vantage.min',           0.15,  n(0, 1, 0.05, 'no vantage below')],                      // [ASSUMED] ~2 of 17 points
+  ['ai.vantage.lostT',         2.0,   n(0, 10, 0.25, 'defender searches after no LOF (s)')],   // [ASSUMED] the talk gives no number
+  ['ai.vantage.sweep',         true,  { label: 'background vantage sweep (debug)' }],        // [ASSUMED]
+  ['ai.vantage.lookDwell',     1.5,   n(0.25, 6, 0.25, 'defend search look dwell (s)')],      // [ASSUMED] "look outward" (G 19:05) has no timing
+  ['ai.posts.curve.vantage',   '0:0.15, 0.3:0.7, 0.6:1', { label: 'vantage curve' }],           // [ASSUMED] G-deck p68 good vs bad vantage, no numbers
+  ['ai.posts.curve.perch',     '0:1, 6:1, 15:0.4', { label: 'perch range (2D to player)' }],    // [ASSUMED] right above the climber is the point
+  ['ai.posts.perchScore',      0.6,   n(0, 1, 0.05, 'ledge perch cover score')],               // [ASSUMED] between open 0.4 and cover 1.0
+  ['ai.posts.designerClear',   0.75,  n(0, 3, 0.05, 'designer post clears generated (m)')],    // [ASSUMED]
+
+  // perches (G 11:03, 44:19; G-deck p46, p146–147): elevated edges, lean out to aim down
+  ['ai.perch.on',              true,  { label: 'perch posts' }],                             // [DEV] post type exists (G-deck p46)
+  ['ai.perch.rails',           true,  { label: 'rails over drops are perches' }],            // [DEV] G-deck p147 "thin railings"
+  ['ai.perch.minDrop',         2.5,   n(0.5, 10, 0.25, 'min drop below edge (m)')],            // [ASSUMED] a storey, not a step
+  ['ai.perch.leanPast',        0.25,  n(0, 1, 0.05, 'lean past the edge (m)')],                // [ASSUMED]
+  ['ai.perch.railUp',          0.3,   n(0, 1, 0.05, 'eye above the rail (m)')],                // [ASSUMED]
+  ['ai.perch.ledgeProbe',      0.8,   n(0.3, 2, 0.05, 'ledge probe distance (m)')],            // [ASSUMED] nav keeps ~0.3 m off a drop
+  ['ai.perch.eye',             1.35,  n(0.8, 1.8, 0.05, 'leaning eye height (m)')],            // [ASSUMED] bent over the edge
+  ['ai.perch.ledgeSpacing',    1.0,   n(0.5, 4, 0.25, 'ledge perch spacing (m)')],             // [ASSUMED] = cover spacing
+  ['ai.perch.below',           2.0,   n(0.5, 10, 0.25, 'perch when player below by (m)')],    // [ASSUMED] climbing below (G-deck p30, p146)
+  ['ai.perch.near',            4.0,   n(0.5, 15, 0.25, '… and within (m) of a perch edge')],  // [ASSUMED] "under the edge"
+  ['ai.perch.noLof',           1.0,   n(0, 5, 0.25, 'perch after no LOF (s)')],                // [ASSUMED]
+  ['ai.perch.retry',           3.0,   n(0, 10, 0.5, 'perch query retry (s)')],                 // [ASSUMED]
+  ['ai.perch.lookDown',        88,    n(30, 90, 1, 'perch downward view half (deg)')],         // [ASSUMED] leaning out to look straight down
 
   // §4 coordination
   ['ai.roles.engagers',        2,     n(0, 6, 1, 'engagers (X)')],                            // [INFERRED] room default (G 33:36: 2–3 typical)

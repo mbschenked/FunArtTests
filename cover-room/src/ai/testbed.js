@@ -1,6 +1,7 @@
 // AI scenario harness for tests/ai.html: a box stand-in courtyard (so the scenario geometry is fixed and every expected
 // time below can be worked out by hand), a scripted dummy player read only through the Actor shape, and four
 // scenarios (?scenario=notice|camp|flank|lost). ?room=real&scenario=free spawns the AI in level/room.js instead.
+// Real-room scenarios (refs/ai-vantage.md): perch | vantage | hardpoint.
 // Uses the real modules when they exist (nav.js, weapons/*, hud.js, character createCharacter) and ai/stubs.js if not.
 //
 // Each scenario logs its state transitions with sim times (window.__measure.log() and __ai.transitions) and
@@ -80,6 +81,8 @@ function buildStandIn(game) {
 
 // ------------------------------------------------------------------------------------------------ dummy player
 // Scripted keyframes: {at, goto: [x, z], speed} | {at, cover: true|false} | {at, pose: 'popup'|'idle'}
+//   | {at, place: [x, y, z], mode} (teleport, e.g. hanging on the climb wall) | {at, combat: true} (director combat at
+//   the dummy, as if an NPC had spotted it: the scenario then starts from a known combat state)
 function createDummy(game, start) {
   const V = THREE.Vector3;
   const d = {
@@ -115,6 +118,9 @@ function scriptSystem(game, dummy, script, logT) {
         if (k.cover === true) { setMode('cover'); dummy.anim.cover.pose = 'idle'; dummy.height = 1.1; logT('player', 'crouch in cover'); }
         if (k.cover === false) { setMode('ground'); dummy.height = 1.8; logT('player', 'leave cover'); }
         if (k.pose) { dummy.anim.cover.pose = k.pose; dummy.height = k.pose === 'popup' ? 1.8 : 1.1; logT('player', 'cover pose ' + k.pose); }
+        if (k.place) { dummy.pos.set(k.place[0], k.place[1], k.place[2]); dummy.vel.set(0, 0, 0); target = null; setMode(k.mode || 'ground'); logT('player', `place (${k.place}) ${k.mode || ''}`); }
+        if (k.combat && game.ai) { game.ai.enterCombat(null, dummy.pos, 'scripted'); game.ai.lastPerceivedT = game.time; logT('player', 'combat (scripted)'); }
+        if (k.search && game.ai) { game.ai.enterSearch(); logT('player', 'lost (scripted search)'); }
       }
       if (target) {
         const dx = target.x - dummy.pos.x, dz = target.z - dummy.pos.z, dd = Math.hypot(dx, dz);
@@ -234,6 +240,81 @@ const SCENARIOS = {
     },
   },
   free: { title: 'free: the AI in the real room (level/room.js), dummy player at the gate', duration: 6, player: null, set: {}, script: [], cam: { pos: [0, 24, 22], look: [0, 0, -1] }, expect: () => [] },
+
+  // ---- real room (refs/ai-vantage.md). Expected values come from the room geometry (LAYOUT numbers copied here) and
+  // from fresh raycasts in the observer, never from the AI's own cached measures.
+  perch: {
+    title: 'perch: the player climbs the rampart wall under the north-rampart defender, who leans over the rail to aim down',
+    real: true, duration: 12, player: [-7.5, 2], set: { 'ai.grenade.on': false, 'ai.advance.wait': 99, 'ai.flank.wait': 99 },
+    // combat from a known state at 0.2 s; at 4 s the player hangs on the climb wall (L1..H2 band, 2.6 m) 0.45 m off the
+    // rampart face (z = −8), right under the climb gap, and is spotted there.
+    script: [{ at: 0.2, combat: true }, { at: 4.0, place: [-7.5, 2.6, -7.55], mode: 'climb' }, { at: 4.0, combat: true }],
+    climbAt: 4.0,
+    cam: { pos: [-2.5, 10.5, 3.5], look: [-5.5, 4.2, -8.2] },
+    expect: (r) => {
+      const p = r.perch || {};
+      const inRampart = p.pos && p.pos[0] >= -10 && p.pos[0] <= 9 && p.pos[2] >= -11.2 && p.pos[2] <= -7.9 && Math.abs(p.pos[1] - 6) < 0.5;
+      return [
+        r.check('enemy2 defends the designer hard point hp-north-rampart', p.hp === 'hp-north-rampart' ? 1 : 0, 1, 0),
+        r.check('no perch mode before the climb (player 9.7 m from the edge)', p.perchBefore ? 1 : 0, 0, 0),
+        r.check('perch mode after the climb (s after climbing; noLof 1.0 + re-score 0.5)', p.onT - 4.0, 1.5 + 0.05, 0, 'le'),
+        r.check('at a perch post in perch mode (s after climbing)', p.arriveT - 4.0, 6, 0, 'le'),
+        r.check('the perch is on the north rampart, inside the hard point (bounds from LAYOUT)', inRampart ? 1 : 0, 1, 0),
+        r.check('fresh ray: lean-out point → climbing player chest is clear', p.los ? 1 : 0, 1, 0),
+        r.check('enemy2 sees the player from the perch', p.seeT > p.arriveT ? 1 : 0, 1, 0),
+        r.check('enemy2 fires from the lean-out point (shots)', p.shots || 0, 1, 0, 'ge'),
+        r.check('shot origin = lean-out point − 0.1 m (max m off)', p.originErr ?? NaN, 0.05, 0, 'le'),
+      ];
+    },
+  },
+  vantage: {
+    title: 'vantage: the stair-foot defender loses vantage when the player moves, relocates in its zone, then searches from it',
+    real: true, duration: 20, player: [-13.8, 8.3],
+    // 1 engager, no ambusher → enemy2 is pinned to hp-north-rampart and the leftover fills hp-stair-foot (both designer)
+    set: { 'ai.roles.engagers': 1, 'ai.roles.ambushers': 0, 'ai.grenade.on': false, 'ai.advance.wait': 99, 'ai.flank.wait': 99 },
+    // A (south-west yard) → B (north-west, behind the column line) at 8 s, spotted there; lost at 14 s → search.
+    // At 14 s the player is lifted out of the room (y −30: nobody can re-spot it) and the director goes to search.
+    script: [{ at: 0.2, combat: true }, { at: 8.0, place: [-9.8, 0, -5.7], mode: 'ground' }, { at: 8.0, combat: true },
+      { at: 14.0, place: [-9.8, -30, -5.7], mode: 'ground' }, { at: 14.0, search: true }],
+    moveAt: 8.0, searchAt: 14.0,
+    cam: { pos: [4, 21, 21], look: [3, 0, 0] },
+    expect: (r) => {
+      const v = r.vant || {};
+      const inStair = (q) => q && q[0] >= 10.4 && q[0] <= 15 && q[2] >= 3.4 && q[2] <= 8.9 && q[1] < 1;
+      return [
+        r.check('a leftover NPC fills the designer hard point hp-stair-foot', v.hp === 'hp-stair-foot' ? 1 : 0, 1, 0),
+        r.check('enemy2 (overwatch spawn inside the designer zone) holds hp-north-rampart, no auto hard point', v.enemy2Hp === 'hp-north-rampart' && v.autoHps === 0 ? 1 : 0, 1, 0),
+        r.check('its post at the move is inside the stair-foot zone (bounds from LAYOUT)', inStair(v.oldPos) ? 1 : 0, 1, 0),
+        r.check('fresh rays: vantage of that post over B\'s reach < min 0.15', v.oldV, 0.15, 0, 'le'),
+        r.check('relocates within 4 s of the move (s)', v.newT - 8.0, 4, 0, 'le'),
+        r.check('new post inside the stair-foot zone', inStair(v.newPos) ? 1 : 0, 1, 0),
+        r.check('fresh rays: new post vantage ≥ min 0.15', v.newV, 0.15, 0, 'ge'),
+        r.check('defend search starts with the search (s after it)', v.searchT - 14.0, 0.05, 0, 'le'),
+        r.check('in search the defender walks no loop and stays in its zone', v.stayed ? 1 : 0, 1, 0),
+        r.check('it looks outward: distinct look directions after the search', v.looks || 0, 2, 0, 'ge'),
+      ];
+    },
+  },
+};
+// The same run with a 30 s minimum dwell: the defend selector's vantage term can't move the defender, so the combat
+// fallback must: no vantage + no line of fire for ai.vantage.lostT (2 s) → defend search (forced, ignores the dwell).
+SCENARIOS.vantageDwell = {
+  ...SCENARIOS.vantage,
+  title: 'vantageDwell: as vantage, but dwell 30 s — the blind defender\'s defend search moves it in combat',
+  set: { ...SCENARIOS.vantage.set, 'ai.posts.minDwell': 30 },
+  expect: (r) => {
+    const v = r.vant || {};
+    const ds = r.transitions.find((x) => x.actor === v.npc && x.sys === 'ai.defend' && x.to === 'search');
+    const inStair = (q) => q && q[0] >= 10.4 && q[0] <= 15 && q[2] >= 3.4 && q[2] <= 8.9 && q[1] < 1;
+    return [
+      r.check('fresh rays: post at the move has vantage < min 0.15', v.oldV, 0.15, 0, 'le'),
+      // LKP moves at 8 s; vantage is measured that step; no line of fire for 2 s (lostT) → the next re-score (≤ 0.5 s)
+      r.check('defend search in combat (s after the move; lostT 2 + re-score 0.5)', ds ? ds.t - 8.0 : NaN, 2.5 + 0.05, 0, 'le'),
+      r.check('relocates (s after the move)', v.newT - 8.0, 6, 0, 'le'),
+      r.check('new post inside the stair-foot zone', inStair(v.newPos) ? 1 : 0, 1, 0),
+      r.check('fresh rays: new post vantage ≥ min 0.15', v.newV, 0.15, 0, 'ge'),
+    ];
+  },
 };
 
 // ------------------------------------------------------------------------------------------------ boot
@@ -241,7 +322,7 @@ export async function runTestbed({ canvas, query }) {
   const name = query.get('scenario') || 'notice';
   const S = SCENARIOS[name] || SCENARIOS.notice;
   const test = query.has('test');
-  const realRoom = query.get('room') === 'real' || name === 'free';
+  const realRoom = query.get('room') === 'real' || name === 'free' || !!S.real;
   const game = new Game({ seed: 1, test: true });
   game.world = createWorld({ Vector3: THREE.Vector3, cellSize: 2 });
 
@@ -314,7 +395,12 @@ export async function runTestbed({ canvas, query }) {
 
   // per-step observers: 'see' edges, shooter count, flank bookkeeping, lost-scenario bookkeeping
   const seeWas = new Map();
-  const obs = { maxShooters: 0, flank: null, lost: null, allSearch: false, lastSeenT: -1 };
+  const obs = { maxShooters: 0, flank: null, lost: null, allSearch: false, lastSeenT: -1, perch: null, vant: null };
+  const va = new THREE.Vector3(), vb = new THREE.Vector3(), NO_ACT = { hitActors: false };
+  const los = (a, b) => game.world.lineOfSight(va.set(a.x, a.y, a.z), vb.set(b.x, b.y, b.z), NO_ACT);
+  // fresh vantage: own rays from a post's fire point to the manager's current reach points
+  const freshV = (post) => { const pts = ai.vantage.pts; if (!post.fire || !pts.length) return 0; let k = 0; for (const p of pts) if (los(post.fire, p)) k++; return +(k / pts.length).toFixed(4); };
+  const inStairZone = (p, m = 0) => p.x >= 10.4 - m && p.x <= 15 + m && p.z >= 3.4 - m && p.z <= 8.9 + m && p.y < 1;
   game.addSystem({
     name: 'observe', order: ORDER.ai + 1,
     update() {
@@ -331,6 +417,41 @@ export async function runTestbed({ canvas, query }) {
         }
       }
       obs.maxShooters = Math.max(obs.maxShooters, tok);
+      if (name === 'perch') {
+        const e2 = ai.npcs.find((n) => n.id === 'enemy2'), a2 = e2 && e2.ai;
+        const p = obs.perch || (obs.perch = { hp: null, perchBefore: false, onT: NaN, arriveT: NaN, pos: null, los: false, seeT: NaN, shots: 0, originErr: NaN, post: null });
+        if (a2) {
+          if (a2.hardPoint) p.hp = a2.hardPoint.id;
+          if (a2.perchMode && game.time < S.climbAt) p.perchBefore = true;
+          if (a2.perchMode && !(p.onT >= 0) && game.time >= S.climbAt) p.onT = game.time;
+          if (!(p.arriveT >= 0) && a2.perchMode && a2.atPost && !a2.moving && a2.post && a2.post.type === 'perch') {
+            const q = a2.post;
+            p.arriveT = game.time; p.post = q; p.pos = [q.x, q.y, q.z];
+            p.los = los(q.perchFire, { x: dummy.pos.x, y: dummy.pos.y + 1.3, z: dummy.pos.z });
+          }
+          if (p.arriveT >= 0 && !(p.seeT >= 0) && a2.canSee) p.seeT = game.time;
+        }
+      }
+      if (name === 'vantage' || name === 'vantageDwell') {
+        const v = obs.vant || (obs.vant = { hp: null, npc: null, enemy2Hp: null, autoHps: 0, old: null, oldPos: null, oldV: NaN, newPos: null, newV: NaN, newT: NaN, searchT: NaN, stayed: true, looks: 0, lookSet: new Set() });
+        const def = ai.npcs.find((n) => n.alive && n.ai.role === 'defender' && n.ai.hardPoint && n.ai.hardPoint.id === 'hp-stair-foot');
+        if (def && !v.npc) { v.npc = def; v.hp = 'hp-stair-foot'; }
+        const e2 = ai.npcs.find((n) => n.id === 'enemy2');
+        if (e2 && e2.ai.hardPoint) v.enemy2Hp = e2.ai.hardPoint.id;
+        v.autoHps = ai.hardPoints.filter((h) => !h.designer).length;
+        const d = v.npc && v.npc.ai;
+        if (d && game.time >= S.moveAt && !v.oldPos && d.post) { v.old = d.post; v.oldPos = [d.post.x, d.post.y, d.post.z]; }
+        if (d && v.old && !v.newPos && game.time < S.searchAt && d.atPost && !d.moving && d.post && d.post !== v.old) {
+          v.newPos = [d.post.x, d.post.y, d.post.z]; v.newT = game.time;
+          v.oldV = freshV(v.old); v.newV = freshV(d.post);       // the reach set is B's by now (rebuilt at 8 s)
+        }
+        if (d && game.time >= S.searchAt) {
+          if (!(v.searchT >= 0) && d.defendState === 'search') v.searchT = game.time;
+          if (d.searchLoop >= 0 || !inStairZone(v.npc.pos, 0.5)) v.stayed = false;
+          if (d.lookAt != null) v.lookSet.add(Math.round(d.lookAt * 10));
+          v.looks = v.lookSet.size;
+        }
+      }
       if (obs.flank && !obs.flank.arrivedT && !obs.flank.npc.ai.flankRoute) obs.flank.arrivedT = game.time;
       // lost: start the run 1.0 s after combat; record the frozen LKP once the snuck-away check fires
       if (name === 'lost') {
@@ -353,14 +474,23 @@ export async function runTestbed({ canvas, query }) {
       }
     },
   });
-  game.events.on('shot', (e) => { if (obs.flank && obs.flank.arrivedT && e.shooter === obs.flank.npc) obs.flank.shotsAfter++; });
+  game.events.on('shot', (e) => {
+    if (obs.flank && obs.flank.arrivedT && e.shooter === obs.flank.npc) obs.flank.shotsAfter++;
+    const p = obs.perch;
+    if (p && p.post && e.shooter && e.shooter.id === 'enemy2' && e.shooter.ai.post === p.post && e.shooter.ai.perchMode) {
+      const o = e.origin || (e.muzzle && e.muzzle.pos), f = p.post.perchFire;
+      if (o) { const err = Math.hypot(o.x - f.x, o.y - (f.y - 0.1), o.z - f.z); p.originErr = Math.max(p.originErr >= 0 ? p.originErr : 0, +err.toFixed(4)); p.shots++; }
+    }
+  });
 
   // shot lines + live grenades (visual only)
   addShotLines(game);
 
   const report = () => {
     const r = {
-      maxShooters: obs.maxShooters, flank: obs.flank && { ...obs.flank, npc: obs.flank.npc.id }, lost: obs.lost, allSearch: obs.allSearch, allSearchT: obs.allSearchT,
+      transitions, maxShooters: obs.maxShooters, flank: obs.flank && { ...obs.flank, npc: obs.flank.npc.id }, lost: obs.lost, allSearch: obs.allSearch, allSearchT: obs.allSearchT,
+      perch: obs.perch && { ...obs.perch, post: obs.perch.post && obs.perch.post.id },
+      vant: obs.vant && { ...obs.vant, npc: obs.vant.npc && obs.vant.npc.id, old: obs.vant.old && obs.vant.old.id, lookSet: undefined },
       first: (what, actor) => { const e = transitions.find((x) => x.what === what && x.actor === actor); return e ? e.t : NaN; },
       firstState: (actor, sys, to) => { const e = transitions.find((x) => x.actor === actor && x.sys === sys && x.to === to); return e ? e.t : NaN; },
       firstAny: (sys, to) => { const e = transitions.find((x) => x.sys === sys && x.to === to); return e ? e.t : NaN; },
@@ -373,6 +503,7 @@ export async function runTestbed({ canvas, query }) {
     const checks = S.expect(r);
     return {
       scenario: name, title: S.title, simTime: +game.time.toFixed(3), pass: checks.every((c) => c.pass), checks,
+      ...(r.perch ? { perch: r.perch } : {}), ...(r.vant ? { vantage: r.vant } : {}),
       transitions: transitions.filter((x) => x.sys !== 'ai.cover' && x.sys !== 'ai.behavior').slice(0, 120),
       director: ai.snapshot(), player: { hits: dummy.hits, damage: dummy.damageTaken },
       boot: { room: game.level.standIn ? 'stand-in' : 'level/room.js', weapons: !!createWeapon, hud: !!game.hud, rig: createCharacter ? 'character' : 'stub', posts: ai.posts.length, navNodes: game.level.nav ? game.level.nav.nodes.length : 0 },

@@ -20,39 +20,42 @@ export function createExplosion(game, shared) {
   const render = game.render;
   const def = (k, v, o) => params.define('vfx.explosion.' + k, v, o);
   // the visible clock (as the shots'): live, a blast's first drawn frame shows this age, so frame 1 is the flash at its peak
+  // In-game pass (11 Nov, headless grenade capture from the player camera): bigger, faster-cooling fireball and a denser,
+  // darker smoke column that rises, so the blast reads past the player's body. Was size 1, fireball 14 x 2.3 m cool 11,
+  // smoke 28 x 0.6 #615b55 rise 0.75, light 140, dust 0.5, debris 26. [ASSUMED, by eye]
   def('firstAge', 4, { min: 0, max: 16, step: 0.1, label: 'First drawn frame shows age (ms)' });
   def('radius', 5, { min: 0.5, max: 20, step: 0.1, label: 'Default blast radius (m; the grenade event sends its own)' });
-  def('size', 1, { min: 0.2, max: 3, step: 0.01, label: 'Visual size (x)' });
+  def('size', 1.25, { min: 0.2, max: 3, step: 0.01, label: 'Visual size (x)' });
   def('shake', 1, { min: 0, max: 4, step: 0.01, label: 'Camera shake strength at the default radius' });
   def('flash.gain', 10, { min: 0, max: 200, step: 0.5, label: 'Flash intensity (HDR)' });
   def('flash.size', 2.4, { min: 0.5, max: 15, step: 0.1, label: 'Flash diameter (m)' });
   def('flash.ms', 70, { min: 10, max: 300, step: 1, label: 'Flash life (ms)' });
   def('core.heat', 30, { min: 0, max: 200, step: 0.5, label: 'Hot core flame heat (HDR)' });
-  def('light.peak', 140, { min: 0, max: 5000, step: 5, label: 'Light: flash peak (candela)' });        // [ASSUMED] ~7 radiance on the floor 1.6 m below for a frame
+  def('light.peak', 100, { min: 0, max: 5000, step: 5, label: 'Light: flash peak (candela)' });        // [ASSUMED] ~7 radiance on the floor 1.6 m below for a frame
   def('light.glow', 45, { min: 0, max: 2000, step: 1, label: 'Light: fireball glow (candela)' });
   def('light.ms', 650, { min: 50, max: 3000, step: 10, label: 'Light: glow gone by (ms)' });
   def('light.height', 1.6, { min: 0.3, max: 5, step: 0.05, label: 'Light height above the blast (m)' });
   def('light.reach', 16, { min: 1, max: 60, step: 0.5, label: 'Light reach (m)' });
   def('light.color', '#ffb064', { color: true, label: 'Light colour (glow)' });
-  def('fireball.count', 14, { min: 0, max: 40, step: 1, label: 'Fireball puffs (count)' });
-  def('fireball.size', 2.3, { min: 0.2, max: 8, step: 0.05, label: 'Fireball puff final diameter (m)' });
+  def('fireball.count', 20, { min: 0, max: 40, step: 1, label: 'Fireball puffs (count)' });
+  def('fireball.size', 2.9, { min: 0.2, max: 8, step: 0.05, label: 'Fireball puff final diameter (m)' });
   def('fireball.speed', 6.5, { min: 0, max: 30, step: 0.1, label: 'Fireball expansion speed (m/s)' });
   def('fireball.heat', 32, { min: 0, max: 120, step: 0.5, label: 'Fireball heat at birth (HDR)' });
-  def('fireball.cool', 11, { min: 0.5, max: 30, step: 0.1, label: 'Fireball cooling rate (1/s)' });
-  def('smoke.count', 28, { min: 0, max: 60, step: 1, label: 'Smoke column puffs (count)' });
+  def('fireball.cool', 14, { min: 0.5, max: 30, step: 0.1, label: 'Fireball cooling rate (1/s)' });
+  def('smoke.count', 34, { min: 0, max: 60, step: 1, label: 'Smoke column puffs (count)' });
   def('smoke.size', 3.8, { min: 0.3, max: 12, step: 0.05, label: 'Smoke puff final diameter (m)' });
   def('smoke.life', 6.5, { min: 0.5, max: 20, step: 0.1, label: 'Smoke life (s)' });
-  def('smoke.rise', 0.75, { min: 0, max: 6, step: 0.05, label: 'Smoke rise speed (m/s, after launch)' });
-  def('smoke.launch', 4.2, { min: 0, max: 20, step: 0.1, label: 'Smoke launch speed (m/s)' });
-  def('smoke.opacity', 0.6, { min: 0, max: 1, step: 0.01, label: 'Smoke opacity' });
-  def('smoke.color', '#615b55', { color: true, label: 'Smoke colour' });
+  def('smoke.rise', 1.15, { min: 0, max: 6, step: 0.05, label: 'Smoke rise speed (m/s, after launch)' });
+  def('smoke.launch', 5.2, { min: 0, max: 20, step: 0.1, label: 'Smoke launch speed (m/s)' });
+  def('smoke.opacity', 0.78, { min: 0, max: 1, step: 0.01, label: 'Smoke opacity' });
+  def('smoke.color', '#453f3a', { color: true, label: 'Smoke colour' });
   def('dust.count', 16, { min: 0, max: 48, step: 1, label: 'Ground dust ring puffs (count)' });
   def('dust.size', 2.6, { min: 0.2, max: 8, step: 0.05, label: 'Dust puff final diameter (m)' });
   def('dust.speed', 11, { min: 0, max: 40, step: 0.1, label: 'Dust ring speed (m/s)' });
   def('dust.life', 3.2, { min: 0.2, max: 10, step: 0.05, label: 'Dust life (s)' });
-  def('dust.opacity', 0.5, { min: 0, max: 1, step: 0.01, label: 'Dust opacity' });
+  def('dust.opacity', 0.62, { min: 0, max: 1, step: 0.01, label: 'Dust opacity' });
   def('dust.color', '#ab9e8a', { color: true, label: 'Dust colour' });
-  def('debris.count', 26, { min: 0, max: 64, step: 1, label: 'Debris chips (count)' });
+  def('debris.count', 40, { min: 0, max: 64, step: 1, label: 'Debris chips (count)' });
   def('debris.speed', 9, { min: 0, max: 30, step: 0.1, label: 'Debris speed (m/s)' });
   def('sparks.count', 28, { min: 0, max: 96, step: 1, label: 'Sparks / embers (count)' });
   def('sparks.speed', 14, { min: 0, max: 40, step: 0.1, label: 'Spark speed (m/s)' });

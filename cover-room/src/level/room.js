@@ -77,6 +77,23 @@ export const LAYOUT = {
       { pos: [13.6, BALCONY_Y, -5.2], yaw: -Math.PI / 2, role: 'overwatch' }, // east balcony, 21 m
     ],
   },
+  // Designer hard points (ai/layout.js; fields from the talk's G-deck p88: name, zone region, min / max NPCs, on/off).
+  // Regions are floor polygons [[x, z], ...] at height y. Placements [ASSUMED]. The east balcony has none on purpose:
+  // its 'overwatch' spawn still makes an auto hard point there (ai count 5), so both kinds run side by side.
+  hardPoints: [
+    { id: 'hp-north-rampart', name: 'north rampart', min: 0, max: 1,       // the walkway over the climb, enemy2's spawn
+      region: { y: BALCONY_Y, poly: [[-10, -11.2], [9, -11.2], [9, -7.9], [-10, -7.9]] } },
+    { id: 'hp-stair-foot', name: 'stair foot', min: 0, max: 1,             // guards the stair route up to the ramparts
+      region: { y: 0, poly: [[10.4, 3.4], [15, 3.4], [15, 8.9], [10.4, 8.9]] } },
+    { id: 'hp-climb-foot', name: 'climb foot', min: 0, max: 1, enabled: false, // the toggle: off until a designer wants it
+      region: { y: 0, poly: [[-11, -7.6], [-4, -7.6], [-4, -4.4], [-11, -4.4]] } },
+  ],
+  // Designer posts (ai/layout.js): join the generated pool, treated equally; optional hardPoint / roles tags.
+  // pos is a nav point (the nav keeps ~0.32 m back from a drop); face is the way the NPC looks / leans out.
+  posts: [
+    { id: 'climb-top', type: 'perch', pos: [-7.5, BALCONY_Y, -8.4], face: [0, 1], hardPoint: 'hp-north-rampart' }, // over the climb gap
+    { id: 'stair-watch', type: 'open', pos: [13.5, 0, 5.5], face: [-1, -0.4], hardPoint: 'hp-stair-foot' },       // stair foot, watching the yard
+  ],
 };
 
 // =====================================================================================================================
@@ -1138,6 +1155,9 @@ function buildRoom(game, level) {
     player: { pos: new THREE.Vector3(...S.player.pos), yaw: S.player.yaw },
     enemies: S.enemies.map((e) => ({ pos: new THREE.Vector3(...e.pos), yaw: e.yaw, role: e.role })),
   };
+  // AI layout data (plain copies; ai/layout.js normalises them)
+  level.hardPoints = LAYOUT.hardPoints.map((h) => ({ ...h, region: { y: h.region.y, poly: h.region.poly.map((v) => v.slice()) } }));
+  level.posts = LAYOUT.posts.map((p) => ({ ...p, pos: p.pos.slice(), face: p.face.slice() }));
 
   // --- per-frame: banner/ivy sway time (allocation-free) -----------------------------------------------------------------
   level.wind = windU;

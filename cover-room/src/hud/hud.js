@@ -42,14 +42,18 @@ import * as THREE from 'three';
 
 const TAU = Math.PI * 2;
 const DEG = 180 / Math.PI;
-const RING_R = 9;                       // awareness ring radius in its 24-unit SVG viewBox
-const RING_C = TAU * RING_R;            // circumference (stroke-dasharray)
+const KITE = 'M12 0.7 L23.4 11.4 L12 29.3 L0.6 11.4 Z';   // awareness diamond in its 24 x 30 viewBox (w:h = 1:1.24 [MEASURED])
 const HIT_RANK = { body: 1, head: 2, kill: 3 };
 // ai-spec §1.2 [DEV]: white = about to notice, yellow = suspicious / investigating (and searching), orange = combat.
 const AW_COLOR = { unaware: 'white', suspicious: 'yellow', investigate: 'yellow', search: 'yellow', combat: 'orange', alerted: 'orange' };
 const REF_H = 720;                      // player-spec measured the HUD on 1280x720 frames; sizes are px at 720p
 const TICK_POOL = 40;                   // most magazine ticks the panel can show
 const STREAK_POOL = 6;
+const GW_POOL = 6;                        // grenade warning icons at once
+// Our frag silhouette for the grenade warning, 20 x 32 units = px at 720p [MEASURED box]: round body, fuse cap, spoon.
+// Upright frag per the build spec (the tilted-cylinder glyph seen once is a second grenade type we don't have).
+const FRAG_GLYPH = '<circle cx="10" cy="21.3" r="9.6"/><rect x="6.2" y="7.2" width="7.6" height="6.4" rx="1.2"/>' +
+  '<rect x="7.6" y="3.4" width="4.8" height="4.4" rx="0.8"/><path d="M12.6 4.2 L16.8 5.6 L18.4 15.2 L16.4 15.6 L15 8.2 L12.6 7.6 Z"/>';
 const CORNER_BAND = 10 / DEG;           // streak rotation blends between edge normals within this of a screen corner
 // prefers-reduced-motion: no scale pops or drip-in, and no blink shorter than this (s).
 const REDUCED_MIN_FLASH = 0.3;
@@ -69,7 +73,21 @@ const PARAMS = [
   ['hud.ammo.spentAlpha',       0.25,  { min: 0, max: 1, step: 0.01, label: 'spent tick alpha' }],           // [MEASURED F1 §8]
   ['hud.ammo.totalIncludesMag', true,  { label: 'number counts the mag' }],                                   // [MEASURED F1 §8]
   // reticle
-  ['hud.reticle.style',         'dot', { options: ['dot', 'arcs'], label: 'aim reticle' }],                   // [MEASURED F1: pistol dot; F5: rifle arcs]
+  ['hud.reticle.style',         'u4',  { options: ['u4', 'dot', 'arcs'], label: 'aim reticle' }],             // u4 = Max's pick (the pistol in U4's crosshair clip); dot [MEASURED F1]; arcs [MEASURED F5 rifle]
+  // 'u4' style: a ring of three arcs while aiming; each shot drops the ring and shows the bullet dot, which kicks up and
+  // settles; ~0.17 s after the last shot the ring comes back open and shrinks in. [MEASURED refs/frames/reticle: YouTube
+  // _CPi2pmZ32o "Uncharted 4's Dynamic Crosshair System", 1080p60, pistol shots 24.0-26.3 s; px below are @720p]
+  ['hud.u4.radius',             10.5,  { min: 4, max: 40, step: 0.5, label: 'ring radius (px @720p)' }],     // [MEASURED] arc centroids 14.5-16.3 px @1080p
+  ['hud.u4.openRadius',         19.5,  { min: 4, max: 80, step: 0.5, label: 'ring open radius (px)' }],      // [MEASURED] reappears at 25-30 px @1080p
+  ['hud.u4.contractTau',        0.12,  { min: 0.01, max: 1, step: 0.01, label: 'ring shrink tau (s)' }],     // [MEASURED] 25.5 -> 14.3 px in 0.33 s
+  ['hud.u4.stroke',             1.6,   { min: 0.5, max: 5, step: 0.1, label: 'arc stroke (px)' }],           // [MEASURED] ~2 px @1080p (+ dark edge)
+  ['hud.u4.bulletDot',          4.7,   { min: 1, max: 14, step: 0.1, label: 'bullet dot (px)' }],            // [MEASURED] 5 px core @1080p + 1 px outline (refs/stealth-measured.md)
+  ['hud.u4.bulletKick',         4,     { min: 0, max: 20, step: 0.5, label: 'dot kick up (px)' }],           // [MEASURED] ~6 px @1080p the frame after a shot
+  ['hud.u4.bulletTau',          0.035, { min: 0.005, max: 0.3, step: 0.005, label: 'dot settle tau (s)' }],  // [MEASURED] back to ~1 px within 2 frames
+  ['hud.u4.dotHold',            0.10,  { min: 0, max: 1.5, step: 0.01, label: 'dot hold after shot (s)' }],  // [MEASURED] 24.27->24.37, 25.14->25.24
+  ['hud.u4.dotFade',            0.04,  { min: 0, max: 0.5, step: 0.01, label: 'dot fade (s)' }],             // [MEASURED] gone within 2-3 frames
+  ['hud.u4.ringReturn',         0.17,  { min: 0, max: 1.5, step: 0.01, label: 'ring back after shot (s)' }], // [MEASURED] 0.17-0.2 s after the last shot
+  ['hud.u4.useShotDir',         true,  { label: 'dot follows the bullet' }],                               // [WIKI] "the dot tracks where each bullet goes"
   ['hud.reticle.y',             0.42,  { min: 0.3, max: 0.6, step: 0.005, label: 'reticle y (frac from top)' }], // [MEASURED F1, F5 §8]
   ['hud.reticle.dot',           6,     { min: 2, max: 14, step: 0.5, label: 'dot (px @720p)' }],             // [MEASURED F1 zoom §8]
   ['hud.reticle.fadeIn',        0.06,  { min: 0, max: 0.5, step: 0.01, label: 'reticle fade in (s)' }],       // [INFERRED]; cover->aim camera is 0.14 s (§3)
@@ -103,12 +121,12 @@ const PARAMS = [
   ['hud.health.contrastDrop',   0,     { min: 0, max: 0.5, step: 0.01, label: 'contrast drop at 0 health' }], // [ASSUMED] §7 silent
   ['hud.health.lag',            0.08,  { min: 0, max: 1, step: 0.01, label: 'grade lag (s)' }],               // [ASSUMED] softens the step on a hit
   // enemy awareness, ai-spec §1.2
-  ['hud.awareness.size',        26,    { min: 10, max: 60, step: 1, label: 'marker size (px @720p)' }],      // [ASSUMED] art
-  ['hud.awareness.lift',        0.32,  { min: 0, max: 1.5, step: 0.01, label: 'height above head (m)' }],    // [ASSUMED]
+  ['hud.awareness.size',        27,    { min: 10, max: 60, step: 1, label: 'diamond width (px @720p)' }],    // [MEASURED refs/stealth-measured.md §1: 26-28 x 33 @720p, enemy ~1.5 m]
+  ['hud.awareness.lift',        0.10,  { min: 0, max: 1.5, step: 0.01, label: 'gap head top -> diamond (m)' }], // [MEASURED §1 ~0.10 m gap, centre ~0.16 m]
   ['hud.awareness.fadeIn',      0.15,  { min: 0, max: 1, step: 0.01, label: 'marker fade in (s)' }],         // [INFERRED]
   ['hud.awareness.fadeOut',     0.45,  { min: 0, max: 2, step: 0.01, label: 'marker fade out (s)' }],        // [INFERRED]
-  ['hud.awareness.combatPersist', true, { label: 'orange stays through combat' }],                            // [DEV ai-spec §1.2 "solid orange in Combat"]
-  ['hud.awareness.combatHold',  1.6,   { min: 0, max: 6, step: 0.1, label: 'orange hold if not persistent (s)' }], // [ASSUMED]
+  ['hud.awareness.combatPersist', false, { label: 'orange stays through combat' }],                           // [WIKI Prima via stealth-measured §1: no indicator in full combat]
+  ['hud.awareness.combatHold',  1.2,   { min: 0, max: 6, step: 0.1, label: 'orange hold if not persistent (s)' }], // [INFERRED stealth-measured: show orange at full awareness, ~1-1.5 s]
   ['hud.awareness.stale',       0.4,   { min: 0.05, max: 3, step: 0.05, label: 'drop if not updated (s)' }],  // [ASSUMED] the AI calls every step
   ['hud.awareness.maxDist',     45,    { min: 5, max: 150, step: 1, label: 'max distance (m)' }],           // [ASSUMED] the room is ~30 m
   ['hud.awareness.nearDist',    6,     { min: 0, max: 40, step: 0.5, label: 'full size within (m)' }],       // [ASSUMED]
@@ -116,6 +134,26 @@ const PARAMS = [
   ['hud.awareness.pop',         0.3,   { min: 0, max: 1, step: 0.05, label: 'combat pop (scale)' }],          // [ASSUMED]; 0 under reduced motion
   ['hud.awareness.occlude',     true,  { label: 'hide behind walls' }],                                       // [ASSUMED]; ai-spec open question 6
   ['hud.awareness.pool',        8,     { min: 1, max: 32, step: 1, label: 'pool size (read at start)' }],    // [ASSUMED]
+  // grenade danger indicator, refs/grenade-warning-measured.md "Build spec" (sizes px @720p)
+  ['hud.grenadeWarn.on',        true,  { label: 'grenade warning on' }],
+  ['hud.grenadeWarn.size',      54,    { min: 20, max: 120, step: 1, label: 'outline diamond diagonal (px @720p)' }], // [MEASURED 0.075 H]
+  ['hud.grenadeWarn.filledSize', 78,   { min: 20, max: 160, step: 1, label: 'filled diamond diagonal (px @720p)' }],  // [MEASURED 0.108 H]
+  ['hud.grenadeWarn.stroke',    2,     { min: 0.5, max: 6, step: 0.25, label: 'outline stroke (px @720p)' }],         // [MEASURED]
+  ['hud.grenadeWarn.glyphW',    20,    { min: 6, max: 60, step: 1, label: 'glyph width (px @720p)' }],               // [MEASURED]
+  ['hud.grenadeWarn.glyphH',    32,    { min: 6, max: 80, step: 1, label: 'glyph height (px @720p)' }],              // [MEASURED]
+  ['hud.grenadeWarn.color',     '#e40c18', { label: 'red' }],                                                       // [INFERRED from MEASURED p90]
+  ['hud.grenadeWarn.pointerR',  45,    { min: 10, max: 120, step: 1, label: 'pointer distance, outline (px @720p)' }], // [MEASURED]
+  ['hud.grenadeWarn.pointerRFilled', 52, { min: 10, max: 140, step: 1, label: 'pointer distance, filled (px @720p)' }], // [MEASURED]
+  ['hud.grenadeWarn.pointerW',  16,    { min: 4, max: 40, step: 1, label: 'pointer base (px @720p)' }],             // [MEASURED]
+  ['hud.grenadeWarn.pointerL',  17,    { min: 4, max: 40, step: 1, label: 'pointer length (px @720p)' }],           // [MEASURED]
+  ['hud.grenadeWarn.pointerTurn', 350, { min: 0, max: 2000, step: 10, label: 'pointer turn rate (deg/s, 0 = snap)' }], // [MEASURED once]
+  ['hud.grenadeWarn.pointerDead', 0.05, { min: 0, max: 0.3, step: 0.01, label: 'keep pointer angle within (x height of centre)' }], // [ASSUMED]
+  ['hud.grenadeWarn.warnRadius', 12,   { min: 1, max: 40, step: 0.5, label: 'show within (m of the player)' }],     // [ASSUMED >= the 10 m seen]
+  ['hud.grenadeWarn.dangerRadius', 0,  { min: 0, max: 15, step: 0.1, label: 'filled within (m; 0 = grenade kill radius)' }], // [INFERRED = grenade.blast.killRadius]
+  ['hud.grenadeWarn.occludedAlpha', 0.45, { min: 0, max: 1, step: 0.01, label: 'behind a wall: icon alpha' }],     // [INFERRED]
+  ['hud.grenadeWarn.occludedPointerAlpha', 0.7, { min: 0, max: 1, step: 0.01, label: 'behind a wall: pointer alpha' }], // [INFERRED]
+  ['hud.grenadeWarn.edgeInset', 0.07,  { min: 0, max: 0.3, step: 0.005, label: 'off-screen ellipse inset (x height)' }], // [ASSUMED] never seen off-screen
+  ['hud.grenadeWarn.ownFromContact', true, { label: "player's own grenade: show from first contact" }],              // [ASSUMED] V3 ~0.3-0.4 s after release
   // prompt
   ['hud.prompt.fade',           0.15,  { min: 0, max: 1, step: 0.01, label: 'prompt fade (s)' }],            // [ASSUMED]
 ];
@@ -207,6 +245,13 @@ export function createHud(game, opts = {}) {
   // ---------------------------------------------------------------- DOM, built once
   const parent = opts.parent || document.body;
   const root = el('div', 'crhud' + (parent === document.body ? '' : ' crhud-local'));
+  // The look lives in hud.css. Pages that don't link it (the game page did not, so the HUD sat unstyled below the
+  // canvas) get it injected once, resolved next to this module.
+  if (!document.querySelector('link[href$="hud.css"]')) {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet'; link.href = new URL('./hud.css', import.meta.url).href;
+    document.head.appendChild(link);
+  }
   root.setAttribute('aria-hidden', 'true');
 
   const gradeEl = el('div', 'crhud-grade', root);
@@ -230,7 +275,7 @@ export function createHud(game, opts = {}) {
     const node = el('div', 'crhud-aw', awLayer);
     node.dataset.a = '0';
     const svg = document.createElementNS(SVGNS, 'svg');
-    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('viewBox', '0 0 24 30');
     const mk = (tag, cls, attrs) => {
       const n = document.createElementNS(SVGNS, tag);
       n.setAttribute('class', cls);
@@ -238,11 +283,20 @@ export function createHud(game, opts = {}) {
       svg.appendChild(n);
       return n;
     };
-    mk('circle', 'bg', { cx: 12, cy: 12, r: RING_R });
-    mk('circle', 'core', { cx: 12, cy: 12, r: RING_R - 1.5 });
-    const fill = mk('circle', 'fill', { cx: 12, cy: 12, r: RING_R, transform: 'rotate(-90 12 12)',
-      'stroke-dasharray': RING_C.toFixed(3), 'stroke-dashoffset': RING_C.toFixed(3) });
-    mk('path', 'pin', { d: 'M9.2 23.4 L14.8 23.4 L12 27.6 Z' });   // small pointer down toward the head
+    // U4's threat indicator is a solid kite, widest 3/8 down, the long lower point toward the head [MEASURED
+    // stealth-measured §1]. The colour rises from the bottom with the value (direction [ASSUMED]: Prima says only
+    // "fills progressively"); a dark underlay and a coloured rim keep the empty part readable.
+    const cid = `${uid}-awc${i}`;
+    const defs = mk('defs', 'd', {});
+    const clip = document.createElementNS(SVGNS, 'clipPath');
+    clip.setAttribute('id', cid);
+    const clipRect = document.createElementNS(SVGNS, 'rect');
+    clipRect.setAttribute('x', '0'); clipRect.setAttribute('width', '24'); clipRect.setAttribute('y', '30'); clipRect.setAttribute('height', '30');
+    clip.appendChild(clipRect); defs.appendChild(clip);
+    mk('path', 'bg', { d: KITE });
+    const fill = mk('path', 'fill', { d: KITE, 'clip-path': `url(#${cid})` });
+    fill.clipRect = clipRect;
+    mk('path', 'rim', { d: KITE });
     node.appendChild(svg);
     const glyph = el('span', 'glyph', node);
     aw.push({ node, fill, glyph, actor: null, value: 0, state: 'unaware', color: 'white', lastCall: -1e9, alpha: 0,
@@ -250,6 +304,23 @@ export function createHud(game, opts = {}) {
       tx: NaN, ty: NaN, ts: NaN, cache: {}, anchor: new THREE.Vector3() });
   }
   const awByActor = new Map();
+
+  // Grenade danger icons (refs/grenade-warning-measured.md): a red diamond around a frag glyph, fixed screen size, drawn
+  // at the grenade's projected position, and a hollow white triangle outside it pointing away from the screen centre.
+  // The diamond and the glyph are separate SVGs so the glyph keeps its pixel size when the diamond grows (FILLED).
+  const gwLayer = el('div', 'crhud-gw-layer', root);
+  const gw = [];
+  for (let i = 0; i < GW_POOL; i++) {
+    const node = el('div', 'crhud-gw', gwLayer);
+    node.innerHTML =
+      `<svg class="dia" viewBox="0 0 100 100"><path d="M50 1 L99 50 L50 99 L1 50 Z" vector-effect="non-scaling-stroke"/></svg>` +
+      `<svg class="gly" viewBox="0 0 20 32">${FRAG_GLYPH}</svg>` +
+      `<svg class="ptr" viewBox="0 0 17 16"><path d="M1 1 L16 8 L1 15 Z" vector-effect="non-scaling-stroke"/></svg>`;
+    const icon = { node, ptr: node.lastChild, id: -1, seen: false, filled: false, occluded: false, edge: false, ang: 0, angSet: false,
+      x: NaN, y: NaN, shownTf: '', shownPtr: '', cache: {}, pos: new THREE.Vector3() };
+    node.dataset.a = '0';
+    gw.push(icon);
+  }
 
   const center = el('div', 'crhud-center', root);
   const retEl = el('div', 'crhud-ret', center);
@@ -259,6 +330,11 @@ export function createHud(game, opts = {}) {
   const hipEl = el('div', 'crhud-hip', center);
   el('div', 'ring', hipEl);
   el('div', 'crhud-dot', hipEl);
+  const r3El = el('div', 'crhud-r3', center);
+  el('div', 'ring', r3El);
+  const bulEl = el('div', 'crhud-bullet', center);
+  el('div', 'crhud-dot', bulEl);
+  r3El.dataset.a = bulEl.dataset.a = '0';
   const hitEl = el('div', 'crhud-hit', center);
   for (let i = 0; i < 4; i++) el('div', 'crhud-hk', hitEl);
   retEl.dataset.a = arcsEl.dataset.a = hipEl.dataset.a = hitEl.dataset.a = '0';
@@ -298,7 +374,9 @@ export function createHud(game, opts = {}) {
   let combatFlag = false, awEncounter = false;
   let u = 1;                        // px per 720p px (viewport height / 720 x hud.scale)
 
-  const ret = { mode: 'none', spread: 0, onTarget: false, style: null, hipT: 1e9, dotA: 0, arcsA: 0, hipA: 0, gap: -1, tint: null };
+  const ret = { mode: 'none', spread: 0, onTarget: false, style: null, hipT: 1e9, dotA: 0, arcsA: 0, hipA: 0, gap: -1, tint: null,
+    // 'u4' style: ring of three arcs + bullet dot
+    r3A: 0, r3: 0, r3Sent: -1, bulA: 0, bx: 0, by: 0, bSent: '', shotClock: -1e9, wasAiming: false, seed: 0x9e3779b9 };
   const ammo = { mag: null, reserve: null, cap: 0, total: null, grenades: null, flag: false, changedAt: -1e9, offFor: 1e9,
     alpha: 0, grenadeMode: null };
   const hit = { kind: null, t: 1e9, dur: 0, shownKind: '' };
@@ -326,11 +404,23 @@ export function createHud(game, opts = {}) {
     setVar('--ret-y', Math.round(P('hud.reticle.y') * 10000) / 100, '%');
     setVar('--ret-dot', P('hud.reticle.dot') * u, 'px');
     setVar('--hip-dot', P('hud.reticle.hipDot') * u, 'px');
+    setVar('--r3-stroke', Math.round(P('hud.u4.stroke') * u * 100) / 100, 'px');
+    setVar('--bul-dot', Math.round(P('hud.u4.bulletDot') * u * 100) / 100, 'px');
     const len = P('hud.hit.len');
     setVar('--hit-len', len * u, 'px');
     setVar('--hit-gap', Math.round(Math.max(0, P('hud.hit.span') / Math.SQRT2 - len) * u * 100) / 100, 'px');   // span = √2 (gap + len)
     setVar('--hit-thick', P('hud.hit.thickness') * u, 'px');
     setVar('--aw-size', P('hud.awareness.size') * u, 'px');
+    const r2 = (v) => Math.round(v * u * 100) / 100;
+    setVar('--gw-size', r2(P('hud.grenadeWarn.size')), 'px');
+    setVar('--gw-fsize', r2(P('hud.grenadeWarn.filledSize')), 'px');
+    setVar('--gw-stroke', r2(P('hud.grenadeWarn.stroke')), 'px');
+    setVar('--gw-glw', r2(P('hud.grenadeWarn.glyphW')), 'px');
+    setVar('--gw-glh', r2(P('hud.grenadeWarn.glyphH')), 'px');
+    setVar('--gw-pw', r2(P('hud.grenadeWarn.pointerW')), 'px');
+    setVar('--gw-pl', r2(P('hud.grenadeWarn.pointerL')), 'px');
+    const red = P('hud.grenadeWarn.color');
+    if (red !== vars['--gw-red']) { vars['--gw-red'] = red; root.style.setProperty('--gw-red', red); }
     setVar('--streak-l', Math.round(P('hud.damage.length') * H), 'px');
     setVar('--streak-d', Math.round(P('hud.damage.depth') * H), 'px');
     setVar('--panel-x', Math.round(P('hud.panel.x') * 10000) / 100, '%');
@@ -542,20 +632,20 @@ export function createHud(game, opts = {}) {
       else if (e.color === 'orange') want = persist || e.alertT < hold ? 1 : 0;
       else want = e.value > 0 ? 1 : 0;
       if (e.occluded) want = 0;
-      e.alpha = approach(e.alpha, want, dt, fadeIn, fadeOut);
+      e.alpha = a.alive === false ? 0 : approach(e.alpha, want, dt, fadeIn, fadeOut);   // taken down / killed: snaps off [MEASURED §1]
       setAlpha(e.node, e.cache, 'a', onScreen ? e.alpha : 0);           // off-screen: gone at once (no edge slide)
 
       if (e.color !== e.shownColor) {
         if (e.shownColor) e.node.classList.remove(e.shownColor);
         if (e.color) e.node.classList.add(e.color);
         e.shownColor = e.color;
-        const g = e.color === 'orange' ? '!' : '';
+        const g = '';                                                    // U4: no glyph on the diamond [MEASURED §1]
         if (g !== e.shownGlyph) { e.shownGlyph = g; e.glyph.textContent = g; }
       }
       const qv = e.color === 'orange' ? 1 : Math.round(e.value * 200) / 200;
       if (qv !== e.shownValue) {
         e.shownValue = qv;
-        e.fill.setAttribute('stroke-dashoffset', (RING_C * (1 - qv)).toFixed(2));
+        e.fill.clipRect.setAttribute('y', (0.7 + 28.6 * (1 - qv)).toFixed(2));
       }
 
       // Release once faded, when only a fresh non-zero call could bring it back.
@@ -567,13 +657,115 @@ export function createHud(game, opts = {}) {
     }
   }
 
+  // Grenade danger indicator. One icon per live grenade within warnRadius of the player: an enemy grenade from its
+  // release, the player's own from first contact. Instant show and hide (no fades, gone on the explosion frame),
+  // FILLED within dangerRadius, dimmed behind static geometry, clamped to an ellipse when off-screen or behind.
+  const _clip = new THREE.Vector4();
+  function frameGrenadeWarn(dt, cam) {
+    const gr = game.grenades, pl = game.player;
+    const live = P('hud.grenadeWarn.on') && cam && gr && pl ? gr.live : null;
+    const warnR = P('hud.grenadeWarn.warnRadius');
+    const dangerR = P('hud.grenadeWarn.dangerRadius') ||
+      (params.has('grenade.blast.killRadius') ? P('grenade.blast.killRadius') : 3);
+    const ownContact = P('hud.grenadeWarn.ownFromContact');
+    const occlude = game.world && typeof game.world.raycast === 'function';
+    const turn = P('hud.grenadeWarn.pointerTurn') * Math.PI / 180;
+    const dead = P('hud.grenadeWarn.pointerDead') * H;
+    const inset = P('hud.grenadeWarn.edgeInset') * H;
+    const ea = Math.max(1, W / 2 - inset), eb = Math.max(1, H / 2 - inset);
+    const cx = W / 2, cy = H / 2;
+
+    for (const g of gw) g.seen = false;
+    if (live) {
+      for (let i = 0; i < live.length; i++) {
+        const b = live[i];
+        if (!b || !b.pos) continue;
+        const own = b.owner === pl;
+        if (own && ownContact && !b.fuseStarted) continue;
+        const d = b.pos.distanceTo(pl.pos);
+        if (d > warnR) continue;
+        // the icon already following this grenade, else a free one
+        let g = null;
+        for (const c of gw) if (c.id === b.id) { g = c; break; }
+        if (!g) for (const c of gw) if (c.id < 0) { g = c; g.id = b.id; g.angSet = false; break; }
+        if (!g) continue;                                         // pool full: the nearest ones already have icons
+        g.seen = true;
+        g.pos.copy(b.pos);
+        g.filled = d <= dangerR;
+
+        // screen position: clip space, so a grenade behind the camera still gets a direction
+        _clip.set(b.pos.x, b.pos.y, b.pos.z, 1).applyMatrix4(cam.matrixWorldInverse).applyMatrix4(cam.projectionMatrix);
+        let x, y, edge = false;
+        if (_clip.w > 1e-4) {
+          x = cx + (_clip.x / _clip.w) * cx;
+          y = cy - (_clip.y / _clip.w) * cy;
+        } else {
+          // Behind the camera, x/w and y/w come out mirrored; the raw clip x/y still carry the true left/right and
+          // up/down, so use them (screen y down) and push to the edge on the grenade's side.
+          const dx = _clip.x, dy = -_clip.y;
+          const l = Math.hypot(dx, dy);
+          x = cx + (l > 1e-6 ? dx / l : 0) * 1e5;
+          y = cy + (l > 1e-6 ? dy / l : 1) * 1e5;
+          edge = true;
+        }
+        const ox = x - cx, oy = y - cy;
+        const k = (ox * ox) / (ea * ea) + (oy * oy) / (eb * eb);
+        if (k > 1) { const s = 1 / Math.sqrt(k); x = cx + ox * s; y = cy + oy * s; edge = true; }
+        else if (x < 0 || x > W || y < 0 || y > H) edge = true;
+        g.edge = edge;
+        x = Math.round(x * 10) / 10; y = Math.round(y * 10) / 10;
+
+        // pointer: away from the screen centre, turning along the shorter arc; keeps its angle near the centre
+        const rx = x - cx, ry = y - cy;
+        if (Math.hypot(rx, ry) > dead || !g.angSet) {
+          const want = Math.atan2(ry, rx);
+          if (!g.angSet || turn <= 0) { g.ang = want; g.angSet = true; }
+          else {
+            let err = want - g.ang;
+            err = Math.atan2(Math.sin(err), Math.cos(err));
+            const stepA = turn * dt;
+            g.ang += Math.abs(err) <= stepA ? err : Math.sign(err) * stepA;
+          }
+        }
+
+        // occlusion against static geometry (a one-frame lag is fine and matches U4)
+        if (occlude && !edge) {
+          rayDir.subVectors(g.pos, camPos);
+          const dist = rayDir.length();
+          if (dist > 1e-3) {
+            rayDir.multiplyScalar(1 / dist);
+            const h = game.world.raycast(camPos, rayDir, dist, rayOpts);
+            g.occluded = !!(h && h.dist < dist - 0.15);
+          } else g.occluded = false;
+        } else g.occluded = false;
+
+        if (x !== g.x || y !== g.y) {
+          g.x = x; g.y = y;
+          g.node.style.transform = 'translate3d(' + x + 'px,' + y + 'px,0)';
+        }
+        const pr = (g.filled ? P('hud.grenadeWarn.pointerRFilled') : P('hud.grenadeWarn.pointerR')) * u;
+        const ptf = 'rotate(' + (Math.round(g.ang * 5730) / 100) + 'deg) translateX(' + (Math.round(pr * 10) / 10) + 'px)';
+        if (ptf !== g.shownPtr) { g.shownPtr = ptf; g.ptr.style.transform = ptf; }
+        if (g.filled !== g.cache.filled) { g.cache.filled = g.filled; g.node.classList.toggle('filled', g.filled); }
+        const ia = g.occluded ? P('hud.grenadeWarn.occludedAlpha') : 1;
+        const pa = g.occluded ? P('hud.grenadeWarn.occludedPointerAlpha') : 1;
+        if (ia !== g.cache.ia) { g.cache.ia = ia; g.node.style.setProperty('--gw-ia', ia); }
+        if (pa !== g.cache.pa) { g.cache.pa = pa; g.node.style.setProperty('--gw-pa', pa); }
+        setAlpha(g.node, g.cache, 'a', 1);
+      }
+    }
+    // grenades that exploded, left the radius or were never live: gone at once [MEASURED: hidden on the blast frame]
+    for (const g of gw) if (!g.seen && g.id >= 0) { g.id = -1; g.angSet = false; setAlpha(g.node, g.cache, 'a', 0); }
+  }
+
   function frameReticle(dt) {
     ret.hipT += dt;
     const mode = ret.mode, aiming = mode === 'aim';
     const style = ret.style || P('hud.reticle.style');
     const persistent = P('hud.reticle.persistentDot') && mode !== 'grenade';
     const wantArcs = aiming && style === 'arcs' ? 1 : 0;
-    const wantDot = (aiming && style !== 'arcs') || (persistent && !wantArcs) ? 1 : 0;
+    const wantDot = (aiming && style === 'dot') || (persistent && !wantArcs && style !== 'u4') ? 1 : 0;
+    frameU4(dt, aiming && style === 'u4');
     const wantHip = P('hud.reticle.hipShow') && !aiming && mode !== 'grenade' &&
       (mode === 'hip' || ret.hipT < P('hud.reticle.hipHold')) ? 1 : 0;
     const rIn = P('hud.reticle.fadeIn'), rOut = P('hud.reticle.fadeOut');
@@ -593,8 +785,63 @@ export function createHud(game, opts = {}) {
       retEl.classList.toggle('on-target', tint);
       arcsEl.classList.toggle('on-target', tint);
       hipEl.classList.toggle('on-target', tint);
+      r3El.classList.toggle('on-target', tint);
+      bulEl.classList.toggle('on-target', tint);
     }
   }
+
+  // 'u4' reticle. Aiming and not firing: the three arcs. A shot (onPlayerShot) hides the ring and shows the bullet dot at
+  // the shot's screen offset plus an upward kick that settles back; dotHold after the last shot the dot fades, and at
+  // ringReturn the ring fades back in at openRadius and shrinks to radius.
+  function frameU4(dt, on) {
+    const since = clock - ret.shotClock;
+    if (on && !ret.wasAiming) ret.r3 = P('hud.u4.openRadius') * u;             // aim-in: the ring closes in
+    ret.wasAiming = on;
+    const fade = Math.max(1e-3, P('hud.u4.dotFade'));
+    const wantRing = on && since >= P('hud.u4.ringReturn') ? 1 : 0;
+    ret.r3A = approach(ret.r3A, wantRing, dt, fade, fade * 0.5);
+    const wantBul = on && since < P('hud.u4.dotHold') ? 1 : 0;
+    ret.bulA = wantBul ? 1 : Math.max(0, ret.bulA - dt / fade);
+    if (!wantRing) ret.r3 = P('hud.u4.openRadius') * u;                        // hidden: waits open
+    else {
+      const rest = P('hud.u4.radius') * u, tau = P('hud.u4.contractTau');
+      ret.r3 = rest + (ret.r3 - rest) * Math.exp(-dt / Math.max(1e-3, tau));
+    }
+    setAlpha(r3El, cache, 'r3', ret.r3A);
+    setAlpha(bulEl, cache, 'bul', ret.bulA);
+    if (ret.r3A > 0) {
+      const r = Math.round(ret.r3 * 4) / 4;
+      if (r !== ret.r3Sent) { ret.r3Sent = r; setVar('--r3', r, 'px'); }
+    }
+    if (ret.bulA > 0) {
+      const k = Math.exp(-dt / Math.max(1e-3, P('hud.u4.bulletTau')));
+      ret.bx *= k; ret.by *= k;
+      const tf = 'translate3d(' + (Math.round(ret.bx * 4) / 4) + 'px,' + (Math.round(ret.by * 4) / 4) + 'px,0)';
+      if (tf !== ret.bSent) { ret.bSent = tf; bulEl.style.transform = tf; }
+    }
+  }
+
+  // The player fired: place the bullet dot where the round went (its end point projected; the reticle is the origin),
+  // plus the measured kick up with a small sideways wobble. Payloads are pooled, so nothing is kept.
+  const _shotP = new THREE.Vector3();
+  function onPlayerShot(e) {
+    if (ret.mode !== 'aim') return;
+    ret.shotClock = clock;
+    let dx = 0, dy = 0;
+    const cam = game.camera;
+    if (cam && e.end && P('hud.u4.useShotDir')) {
+      _shotP.copy(e.end).project(cam);
+      if (_shotP.z < 1) { dx = _shotP.x * W / 2; dy = -_shotP.y * H / 2 + H / 2 - P('hud.reticle.y') * H; }
+    }
+    ret.seed = (Math.imul(ret.seed ^ (ret.seed >>> 15), 0x2c1b3c6d) + 0x6d2b79f5) >>> 0;   // local hash: the sim RNG is untouched
+    const kick = P('hud.u4.bulletKick') * u;
+    dx += ((ret.seed / 4294967296) - 0.5) * 0.5 * kick;
+    dy -= kick;
+    const lim = P('hud.u4.openRadius') * u, m = Math.hypot(dx, dy);
+    if (m > lim) { dx *= lim / m; dy *= lim / m; }
+    ret.bx = dx; ret.by = dy;
+  }
+  const offShot = game.events ? game.events.on('shot', (e) => { if (e && game.player && e.shooter === game.player) onPlayerShot(e); }) : null;
 
   function framePanel(dt) {
     const mode = ret.mode;
@@ -720,6 +967,7 @@ export function createHud(game, opts = {}) {
     if (cam) { cam.updateMatrixWorld(); camPos.setFromMatrixPosition(cam.matrixWorld); }
     applySizes();
     frameAwareness(dt, cam);          // first: it decides whether an encounter is on (panel rule)
+    frameGrenadeWarn(dt, cam);
     frameReticle(dt);
     framePanel(dt);
     frameHit(dt);
@@ -758,6 +1006,7 @@ export function createHud(game, opts = {}) {
     return {
       shown, clock: +clock.toFixed(4), reduced, u,
       reticle: { mode: ret.mode, dot: +ret.dotA.toFixed(3), arcs: +ret.arcsA.toFixed(3), hip: +ret.hipA.toFixed(3),
+        u4: { ring: +ret.r3A.toFixed(3), radius: +ret.r3.toFixed(2), bullet: +ret.bulA.toFixed(3), bx: +ret.bx.toFixed(2), by: +ret.by.toFixed(2) },
         gapPx: ret.gap, onTarget: ret.onTarget, yFrac: P('hud.reticle.y') },
       panel: { mag: ammo.mag, reserve: ammo.reserve, cap: ammo.cap, total: ammo.total, grenades: ammo.grenades,
         alpha: +ammo.alpha.toFixed(3), offFor: +Math.min(ammo.offFor, 999).toFixed(3), encounter: combatFlag || awEncounter },
@@ -767,6 +1016,8 @@ export function createHud(game, opts = {}) {
       health: { target: health.target, cur: +health.cur.toFixed(4), grade: { ...grade } },
       awareness: aw.filter((e) => e.actor).map((e) => ({ id: e.actor.id, state: e.state, color: e.color, value: e.value,
         alpha: +e.alpha.toFixed(3), onScreen: e.onScreen, occluded: e.occluded, x: e.tx, y: e.ty, scale: e.ts })),
+      grenadeWarn: gw.filter((g) => g.id >= 0).map((g) => ({ id: g.id, x: g.x, y: g.y, filled: g.filled, occluded: g.occluded,
+        edge: g.edge, angle: +(g.ang * 180 / Math.PI).toFixed(1) })),
       prompt: prm.text, promptAlpha: +prm.alpha.toFixed(3), promptAnchored: prm.anchored, promptXY: prm.anchored ? [prm.tx, prm.ty] : null,
     };
   }
@@ -775,6 +1026,7 @@ export function createHud(game, opts = {}) {
     if (sys && game.removeSystem) game.removeSystem(sys);
     if (ro) ro.disconnect(); else removeEventListener('resize', measure);
     if (reduceMq && reduceMq.removeEventListener) reduceMq.removeEventListener('change', onReduce);
+    if (offShot) offShot();
     root.remove();
   }
 

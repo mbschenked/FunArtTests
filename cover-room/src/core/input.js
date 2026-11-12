@@ -16,7 +16,7 @@
 // Pointer lock is requested on a canvas click (off in ?test). Every feel number is a param ('input.*').
 // Bindings and look/deadzone defaults follow refs/player-spec.md §1 and §3 (set by B1, 2026-11-11).
 
-export const BUTTONS = ['aim', 'fire', 'reload', 'grenade', 'cover', 'jump', 'swapShoulder', 'walk'];
+export const BUTTONS = ['aim', 'fire', 'reload', 'grenade', 'cover', 'jump', 'swapShoulder', 'walk', 'melee'];
 export const AXES = ['move', 'look'];
 
 // Bindings table. Keyboard entries are KeyboardEvent.code values; mouse buttons are 'Mouse0' (left), 'Mouse1' (middle),
@@ -28,15 +28,17 @@ export const AXES = ['move', 'look'];
 // the jump key and the player controller picks one from context (aim held = swap).
 // Walk: Left Ctrl as on PC, but only on macOS: on Windows/Linux Ctrl+W closes the tab and can't be blocked, so walk
 // there is C (C is "mark enemy" in the game, out of scope here). C also works on macOS. [ASSUMED key choice]
+// Melee: F on PC, Square on PS4 (refs/player-spec.md §1 [WIKI]). In this room melee is only the stealth takedown
+// (src/player/stealth.js); there is no open-fight melee yet.
 const MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || navigator.userAgent || '');
 export const DEFAULT_BINDINGS = {
   kbm: {
     moveForward: ['KeyW'], moveBack: ['KeyS'], moveLeft: ['KeyA'], moveRight: ['KeyD'],
     aim: ['Mouse2'], fire: ['Mouse0'], reload: ['KeyR'], grenade: ['KeyG'], cover: ['ShiftLeft'],
-    jump: ['Space'], swapShoulder: ['Space'], walk: MAC ? ['ControlLeft', 'KeyC'] : ['KeyC'],
+    jump: ['Space'], swapShoulder: ['Space'], walk: MAC ? ['ControlLeft', 'KeyC'] : ['KeyC'], melee: ['KeyF'],
   },
   pad: {
-    aim: [6], fire: [7], grenade: [5], cover: [1], jump: [0], reload: [3], swapShoulder: [0], walk: [],
+    aim: [6], fire: [7], grenade: [5], cover: [1], jump: [0], reload: [3], swapShoulder: [0], walk: [], melee: [2],
     moveStick: 0, lookStick: 1,          // 0 = left stick (axes 0, 1), 1 = right stick (axes 2, 3)
   },
 };

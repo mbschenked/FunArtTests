@@ -2,7 +2,10 @@
 //
 //   install(game) / createAI(game, opts) -> game.ai (the encounter director, ai/director.js)
 //     - defines every `ai.*` param (ai/tuning.js, each with its ai-spec source)
-//     - generates tactical posts from level.cover + level.nav (ai/posts.js) and two search loops
+//     - generates tactical posts from level.cover + level.nav (ai/posts.js), converts rails over drops and adds ledge
+//       perches, adds the level's designer posts (ai/layout.js) and two search loops
+//     - hard points: the level's designer ones (level.hardPoints) + an auto one per 'overwatch' spawn (ai/layout.js)
+//     - the vantage manager (ai/vantage.js): reach set, per-post vantage, perch / defend-search selector swaps
 //     - spawns min(ai.count, spawns) enemies from level.spawns.enemies (createEnemy, ai/enemy.js); adds them to
 //       game.actors and game.enemies
 //     - system 'ai' (ORDER.ai): director pre-step → each brain → director post-step (tokens, timers, lost-player,
@@ -18,6 +21,8 @@
 import { ORDER } from '../core/game.js';
 import { defineAIParams, makeP } from './tuning.js';
 import { generatePosts, PostQuery } from './posts.js';
+import { addPerchPosts, addDesignerPosts, renumberPosts, loadHardPoints } from './layout.js';
+import { VantageManager } from './vantage.js';
 import { createNavTools } from './navtools.js';
 import { Director } from './director.js';
 import { createEnemy, findExport } from './enemy.js';
@@ -67,6 +72,9 @@ export function createAI(game, opts = {}) {
   const tools = createNavTools(nav);
   if (!tools.ok) console.warn('[ai] level.nav has no CSR graph: post path distances fall back to straight lines');
   const posts = generatePosts(level, nav, P);
+  const perch = addPerchPosts(posts, nav, game.world, P);
+  const designerPosts = addDesignerPosts(posts, level, nav, game.world, P);
+  renumberPosts(posts);
   const loops = generateSearchLoops(level, nav, P);
 
   if (!game.grenades) {
@@ -78,24 +86,23 @@ export function createAI(game, opts = {}) {
   const director = new Director(game, { P, posts, tools, loops, Vector3: game.world.Vector3 });
   director.isDirector = true;
   director.nav = nav;
+  director.layout = { perchRails: perch.rails, perchLedges: perch.ledges, designerPosts };
+  director.vantage = new VantageManager(game, { P, posts, tools, director });
   game.ai = director;
 
   // spawn
   const spawns = (opts.spawns || (level.spawns && level.spawns.enemies) || []).slice(0, Math.max(0, P('ai.count')));
-  const hardPoints = (level.hardPoints || []).slice();
   if (!game.enemies) game.enemies = [];
   if (!game.actors) game.actors = [];
   spawns.forEach((sp, i) => {
     const npc = createEnemy(game, sp, { director, index: i, P, rig: opts.rig, createCharacter: opts.createCharacter, createWeapon: opts.createWeapon });
     npc.ai.query = new PostQuery(48);
-    if (sp.role === 'overwatch' && !level.hardPoints) {                   // room.js spawn hint → a one-NPC hard point there
-      hardPoints.push({ id: 'hp-' + npc.id, name: 'overwatch ' + npc.id, region: { center: { x: npc.pos.x, y: npc.pos.y, z: npc.pos.z }, radius: 4 }, min: 1, max: 1, enabled: true });
-    }
+    npc.ai.query.vantage = director.vantage;
     director.add(npc);
     game.enemies.push(npc);
     game.actors.push(npc);
   });
-  director.hardPoints = hardPoints;
+  director.hardPoints = loadHardPoints(level, spawns, director.npcs);   // designer zones + overwatch spawn hints
 
   // events
   const offs = [];

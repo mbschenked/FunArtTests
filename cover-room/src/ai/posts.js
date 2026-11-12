@@ -3,26 +3,39 @@
 // posts within 25 m of the role's anchor are considered. scorePost() is THE scoring function; everything else here
 // gathers the measures it reads, on a budget (rays and path fields are staggered across steps).
 // No 'three' import: positions are plain {x, y, z}.
+// Post types (G 11:03, G-deck p46): 'cover', 'open', 'perch' (an edge above a drop: lean out to aim down; layout.js).
+// Vantage (G 17:55–19:24, G-deck p65–68) is a measure like can-shoot: the share of the points the player could reach in
+// ~3 s that the post can see, cached per post by vantage.js and read here through q.vantage.
 import { curveAt, dist2D } from './tuning.js';
+import { regionContains } from './layout.js';
+
+// A post the NPC hides behind and pops up / leans from: cover posts, and perches on a rail (a parapet over a drop).
+export const isCoverLike = (post) => !!post && (post.type === 'cover' || (post.type === 'perch' && post.rail === true));
 
 // ------------------------------------------------------------------------------------------------ selectors
 // One selector per use (spec §3.2 table). Flags turn filters on; `terms` lists the scored criteria, each with a weight
-// param `ai.sel.<name>.<term>` (missing param = weight 0 = term off).
+// param `ai.sel.<name>.<term>` (missing param = weight 0 = term off). `types` limits the post types it considers.
 export const SELECTORS = {
-  engage:      { rangeCurve: 'ai.posts.curve.engage',      mustShoot: true,  notBehind: true,  pathClear: true,  terms: ['range', 'path', 'cover', 'space'] },
-  advance:     { rangeCurve: 'ai.posts.curve.advance',     mustShoot: true,  notBehind: true,  pathClear: true,  mustGain: true, terms: ['range', 'path', 'cover', 'space'] },
+  engage:      { rangeCurve: 'ai.posts.curve.engage',      mustShoot: true,  notBehind: true,  pathClear: true,  terms: ['range', 'path', 'cover', 'space', 'vantage'] },
+  advance:     { rangeCurve: 'ai.posts.curve.advance',     mustShoot: true,  notBehind: true,  pathClear: true,  mustGain: true, terms: ['range', 'path', 'cover', 'space', 'vantage'] },
   ambush:      { rangeCurve: null,                         mustShoot: false, notBehind: false, pathClear: true,  terms: ['high', 'path', 'hidden', 'cover'] },
-  defend:      { rangeCurve: null,                         mustShoot: false, notBehind: false, pathClear: false, terms: ['high', 'cover'] },
+  defend:      { rangeCurve: null,                         mustShoot: false, notBehind: false, pathClear: false, terms: ['high', 'cover', 'vantage'] },
+  // Defend search (G 39:51, G-deck p136): a defender with no vantage looks inside its hard point for a post that has it.
+  defendSearch: { rangeCurve: null,                        mustShoot: false, notBehind: false, pathClear: false, mustVantage: true, terms: ['vantage', 'path', 'cover', 'high'] },
+  // Perch (G 44:19, G-deck p146–147): the player is below and out of the line of fire: lean out over an edge.
+  // mustShoot is tested from perchFire, the lean-out point past the edge (leanFire).
+  perch:       { rangeCurve: 'ai.posts.curve.perch',       mustShoot: true,  notBehind: false, pathClear: false, types: ['perch'], leanFire: true, gather: 'target', terms: ['range', 'path', 'cover'] },
   flank:       { rangeCurve: 'ai.posts.curve.flank',       mustShoot: true,  notBehind: false, pathClear: false, offAxis: true, gather: 'flank', terms: ['range', 'cover'] },
   panic:       { rangeCurve: 'ai.posts.curve.panic',       mustShoot: false, notBehind: true,  pathClear: true,  terms: ['range', 'path', 'cover'] },
   investigate: { rangeCurve: 'ai.posts.curve.investigate', mustShoot: true,  notBehind: false, pathClear: false, terms: ['range', 'path'] },
 };
-const TERMS = ['range', 'path', 'cover', 'space', 'hidden', 'high'];
+const TERMS = ['range', 'path', 'cover', 'space', 'hidden', 'high', 'vantage'];
 for (const [name, s] of Object.entries(SELECTORS)) {
   s.name = name;
   s.keys = {};
   s.w = {};
   for (const t of TERMS) { s.keys[t] = s.terms.includes(t) ? `ai.sel.${name}.${t}` : null; s.w[t] = 0; }
+  s.needV = s.terms.includes('vantage') || !!s.mustVantage;
 }
 
 // Read the selector's weights from params (once per scoring pass, not per post).
@@ -39,29 +52,40 @@ export function refreshSelector(sel, P) {
 // ------------------------------------------------------------------------------------------------ THE score
 // ctx holds the measures for this post (filled by measureCheap / measureRays below):
 //   npc, sel, anchorDist, anchorLimit, pathLen, facesThreat, canShoot, behindTarget, pathNearTarget, gain, offAxis,
-//   targetDist, allyDist, seenByTarget, elevation
+//   targetDist, allyDist, seenByTarget, elevation, vantage (0..1, or −1 / undefined = not measured: the term sits out)
 export function scorePost(post, ctx, P) {
   const s = ctx.sel;
   // FILTERS (spec §3.2): any one rejects the post outright.
   if (post.claimedBy && post.claimedBy !== ctx.npc) return 0;                  // available: posts are exclusive
+  if (s.types && !s.types.includes(post.type)) return 0;                        // the selector's post types
+  if (post.type === 'perch' && !post.rail && !s.leanFire) return 0;             // ledge perches: perch selector only [ASSUMED]
+  if (post.hardPoint || post.roles) {                                           // designer tags (layout.js) [ASSUMED]
+    const ai = ctx.npc && ctx.npc.ai;
+    if (post.hardPoint && !(ai && ai.hardPoint && ai.hardPoint.id === post.hardPoint)) return 0;
+    if (post.roles && !(ai && post.roles.includes(ai.role))) return 0;
+  }
   if (ctx.anchorDist > ctx.anchorLimit) return 0;                               // 25 m from the role's anchor [DEV G 14:43]
   if (!(ctx.pathLen < Infinity)) return 0;                                      // reachable on the nav
-  if (post.type === 'cover' && !ctx.facesThreat) return 0;                      // the wall must be between post and target
+  if (post.type !== 'open' && !ctx.facesThreat) return 0;                       // cover: the wall between; perch: the drop toward the target
   if (s.mustShoot && !ctx.canShoot) return 0;                                   // ≥1 of 4 rays reach the target [DEV M p.424]
   if (s.notBehind && ctx.behindTarget) return 0;                                // not behind the player
   if (s.pathClear && ctx.pathNearTarget < P('ai.posts.pathNearPlayer')) return 0; // path doesn't run at the player [DEV M p.425]
   if (s.mustGain && ctx.gain < P('ai.advance.minGain')) return 0;               // advance: must end closer to the player
   if (s.offAxis && ctx.offAxis < P('ai.flank.offAxis')) return 0;               // flank: off the combat vector
+  const hasV = ctx.vantage != null && ctx.vantage >= 0;
+  if (s.mustVantage && hasV && ctx.vantage < P('ai.vantage.min')) return 0;     // defend search: must see the player's reach
   // SCORES: each term in [0,1]; the weights are exponents of a weighted geometric mean (spec §3.2 open point).
   const range  = s.rangeCurve ? curveAt(P, s.rangeCurve, ctx.targetDist) : 1;   // preferred distance to the target
   const path   = curveAt(P, 'ai.posts.curve.path', ctx.pathLen);                // 0 m 1.0, 5 m 0.9, 20 m 0.1 [DEV G slide]
-  const cover  = post.type === 'cover' ? 1 : P('ai.posts.openScore');           // cover 1.0, open 0.4 [INFERRED]
+  const cover  = isCoverLike(post) ? 1 : post.type === 'perch' ? P('ai.posts.perchScore') : P('ai.posts.openScore'); // cover 1.0, open 0.4 [INFERRED]
   const space  = ctx.allyDist < P('ai.posts.allySpacing') ? 0 : 1;              // repelled within 2 m of allies [DEV R]
   const hidden = ctx.seenByTarget ? P('ai.posts.visibleScore') : 1;             // ambush: hidden 1.0, visible 0.2 [INFERRED]
   const high   = curveAt(P, 'ai.posts.curve.elevation', ctx.elevation);         // high ground: −10 m 0.1, 0 0.2, +5 1.0 [DEV]
-  const w = s.w, W = w.range + w.path + w.cover + w.space + w.hidden + w.high;
+  const vant   = hasV ? curveAt(P, 'ai.posts.curve.vantage', ctx.vantage) : 1;  // share of the player's 3 s reach in view [ASSUMED curve]
+  const w = s.w, wv = hasV ? w.vantage : 0;
+  const W = w.range + w.path + w.cover + w.space + w.hidden + w.high + wv;
   if (W <= 0) return 1;
-  return (range ** w.range * path ** w.path * cover ** w.cover * space ** w.space * hidden ** w.hidden * high ** w.high) ** (1 / W);
+  return (range ** w.range * path ** w.path * cover ** w.cover * space ** w.space * hidden ** w.hidden * high ** w.high * vant ** wv) ** (1 / W);
 }
 
 // ------------------------------------------------------------------------------------------------ generation
@@ -142,14 +166,15 @@ const STATIC_ONLY = Object.freeze({ hitActors: false });
 // q = the query (see PostQuery). Fills ctx with every measure that needs no raycast.
 export function measureCheap(post, q, ctx, P) {
   const t = q.target, npc = q.npc;
-  ctx.anchorDist = dist2D(post, q.anchor);
+  ctx.anchorDist = q.region ? (regionContains(q.region, post) ? 0 : Infinity) : dist2D(post, q.anchor);
   ctx.anchorLimit = q.anchorLimit;
   ctx.pathLen = q.field ? q.field.dist[post.node] ?? Infinity : dist2D(post, npc.pos) * 1.2;
   if (post.node < 0 && q.field) ctx.pathLen = Infinity;
   const dx = t.x - post.x, dz = t.z - post.z;
   const d = Math.hypot(dx, dz) || 1e-6;
   ctx.targetDist = d;
-  ctx.facesThreat = post.type !== 'cover' || (post.nx * dx + post.nz * dz) / d < P('ai.posts.facing');
+  // cover: the target is beyond the wall; perch: beyond the edge (nx, nz points away from the rail / drop)
+  ctx.facesThreat = post.type === 'open' || (post.nx * dx + post.nz * dz) / d < P('ai.posts.facing');
   const cvx = q.cv.x, cvz = q.cv.z;
   const along = (post.x - t.x) * cvx + (post.z - t.z) * cvz;
   ctx.behindTarget = along < -P('ai.posts.behindMargin');
@@ -168,6 +193,8 @@ export function measureCheap(post, q, ctx, P) {
   ctx.elevation = post.y - t.y;
   ctx.canShoot = true;          // optimistic until measureRays runs
   ctx.seenByTarget = false;
+  // vantage: the cached value when the manager measured this post against the current reach set, else unmeasured
+  ctx.vantage = q.vantage && q.sel.needV && q.vantage.ready(post) ? post.vantage : -1;
 }
 
 // The raycast measures: can-shoot (≥1 of up to 4 rays from the fire point reach the target) and seen-by-target.
@@ -177,9 +204,9 @@ export function measureRays(post, q, ctx, P, world, tmp) {
   const t = q.target;
   if (q.sel.mustShoot || q.sel.terms.includes('high')) {
     ctx.canShoot = false;
-    if (post.fire) {
+    const f = (q.sel.leanFire && post.perchFire) || post.fire;
+    if (f) {
       const nr = Math.max(1, Math.min(4, P('ai.posts.raysPerPost')));
-      const f = post.fire;
       const dx = t.x - f.x, dz = t.z - f.z, h = Math.hypot(dx, dz) || 1;
       const sx = -dz / h, sz = dx / h;
       for (let i = 0; i < nr && !ctx.canShoot; i++) {
@@ -201,6 +228,15 @@ export function measureRays(post, q, ctx, P, world, tmp) {
   return used;
 }
 
+// Vantage for one candidate: the manager's cached value, measuring it first when stale (its own ray budget).
+// Returns the vantage rays used.
+export function measureVantage(post, q, ctx) {
+  if (!q.vantage || !q.sel.needV) { ctx.vantage = -1; return 0; }
+  const used = q.vantage.ready(post) ? 0 : q.vantage.compute(post);
+  ctx.vantage = q.vantage.ready(post) ? post.vantage : -1;
+  return used;
+}
+
 // ------------------------------------------------------------------------------------------------ staggered query
 // One per NPC. begin() gathers the nearest candidates; step() spends budget (one path field, then rays) and finishes
 // with every candidate scored. Results: q.best (post or null), q.bestScore, q.cands[i].score (-1 = rejected).
@@ -217,10 +253,14 @@ export class PostQuery {
     this.field = null;
     this.best = null; this.bestScore = 0; this.doneT = -1;
     this.cursor = 0;
+    this.region = null;     // a hard point's zone: candidates must lie inside it (replaces the anchor circle)
+    this.vantage = null;    // the VantageManager (vantage.js), set by index.js; null = no vantage term
   }
 
-  // sel: SELECTORS entry; posts: all posts; target/anchor: {x,y,z}; cv: unit combat vector {x, z}
-  begin(npc, sel, posts, target, anchor, anchorLimit, cv, allies, tools, P, forceInclude) {
+  // sel: SELECTORS entry; posts: all posts; target/anchor: {x,y,z}; cv: unit combat vector {x, z};
+  // region (optional): a hard point's zone (layout.js) — candidates are the posts inside it
+  begin(npc, sel, posts, target, anchor, anchorLimit, cv, allies, tools, P, forceInclude, region) {
+    this.region = region || null;
     this.npc = npc; this.sel = refreshSelector(sel, P); this.allies = allies; this.tools = tools;
     this.target.x = target.x; this.target.y = target.y; this.target.z = target.z;
     this.anchor.x = anchor.x; this.anchor.y = anchor.y; this.anchor.z = anchor.z;
@@ -234,12 +274,14 @@ export class PostQuery {
     const ideal = flankBand ? P('ai.flank.ideal') : 0, minOff = Math.cos(P('ai.flank.offAxis') * Math.PI / 180);
     for (const p of posts) {
       const da = dist2D(p, anchor);
-      if (da > anchorLimit) continue;
+      if (region ? !regionContains(region, p) : da > anchorLimit) continue;
+      if (sel.types && !sel.types.includes(p.type)) continue;
       let d;
       if (flankBand) {                       // flank: posts off the combat vector, nearest the ideal flank distance
         if (((p.x - target.x) * cv.x + (p.z - target.z) * cv.z) / (da || 1) > minOff) continue;
         d = Math.abs(da - ideal);
-      } else d = Math.hypot(p.x - npc.pos.x, p.z - npc.pos.z) + Math.abs(p.y - npc.pos.y);
+      } else if (sel.gather === 'target') d = Math.hypot(p.x - target.x, p.z - target.z);   // perch: the edges nearest the player
+      else d = Math.hypot(p.x - npc.pos.x, p.z - npc.pos.z) + Math.abs(p.y - npc.pos.y);
       if (n < K) n++;
       else if (d >= this.cands[n - 1].cheap) continue;
       let i = n - 1;
@@ -286,8 +328,13 @@ export class PostQuery {
         const c = this.cands[this.cursor];
         if (!c.rayDone) {
           if (budget.rays <= 0) return false;
+          // vantage rays come from their own budget (ai.budget.vantageRays); undefined = unlimited (tests)
+          const needV = this.vantage && this.sel.needV && !this.vantage.ready(c.post);
+          if (needV && budget.vrays !== undefined && budget.vrays <= 0) return false;
           measureCheap(c.post, this, this.ctx, P);
           budget.rays -= measureRays(c.post, this, this.ctx, P, world, tmp);
+          const vr = measureVantage(c.post, this, this.ctx);
+          if (budget.vrays !== undefined) budget.vrays -= vr;
           this.ctx.npc = this.npc; this.ctx.sel = this.sel;
           c.canShoot = this.ctx.canShoot; c.seen = this.ctx.seenByTarget;
           const s = scorePost(c.post, this.ctx, P);

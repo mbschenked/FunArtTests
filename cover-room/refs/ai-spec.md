@@ -277,6 +277,12 @@ Recommended selectors for the room [INFERRED unless tagged]:
 
 Open point: the ambush slide gives `:weight 10` and `:weight 1` while scores multiply. The semantics are unknown. [INFERRED] Use a weighted geometric mean, `score = Π c_i^(w_i / Σw)`, so weights act as exponents and the result stays in [0,1].
 
+### 3.3 Vantage, perches, designer hard points (implemented; full design in `refs/ai-vantage.md`)
+
+- **Vantage** (G 17:55–19:24, G-deck p65–68) [DEV]: the share of the player's ~3 s reach set (sampled navmesh points around the LKP) that a post can see, using one cached, budgeted raycast per point. The talk dropped connectivity plus vantage as an automatic replacement for zones (G-deck p69–72). So here it is only a selector term (strong in `defend`, light in `engage` and `advance`) and the defender's **defend search** (G 39:51): a defender with no vantage moves to a post inside its own hard point that has some, and in search it looks outward from there.
+- **Perches** (G 11:03, 44:19, G-deck p46, p146–147) [DEV]: rails over a drop and open ledges become `perch` posts with a lean-out fire point. When the player is below the edge and out of the line of fire, the `perch` selector moves the NPC there to aim down. Thresholds are [ASSUMED].
+- **Designer hard points and posts** (G-deck p88) [DEV]: `level.hardPoints` (`id`, `name`, `region` polygon, `min`, `max`, `enabled`) and `level.posts` (optional `hardPoint` / `roles` tags) join the same pool as the generated ones.
+
 ---
 
 ## 4. Combat coordination

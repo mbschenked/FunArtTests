@@ -39,6 +39,8 @@ const MODULES = [
   { name: 'skeleton',   path: 'character/skeleton.js' },
   { name: 'animator',   path: 'character/animator.js', order: ORDER.animation },
   { name: 'clips',      path: 'character/clips.js' },
+  // character/skins.js install(): loads the CC0 figures (assets/figures) that createCharacter dresses the rigs in.
+  { name: 'skins',      path: 'character/skins.js' },
   // vfx/index.js wires muzzle, tracer, impact and explosion and hooks the 'shot' and 'grenade:explode' events.
   { name: 'vfx',        path: 'vfx/index.js',          field: 'vfx',    ctor: ['createVfx'], order: ORDER.vfx },
   { name: 'hud',        path: 'hud/hud.js',            field: 'hud',    ctor: ['createHud', 'createHUD', 'HUD', 'Hud'], order: ORDER.hud },
@@ -50,6 +52,8 @@ const MODULES = [
   { name: 'weapons',    path: 'weapons/index.js',      order: ORDER.weapons },
   // ai/index.js install(): game.ai (director), enemies from level.spawns, ai/debug.js overlay (F2).
   { name: 'ai',         path: 'ai/index.js',           order: ORDER.ai },
+  // player/stealth.js install(): game.stealth, takedown prompt + 'takedown' player mode (after the player and the AI).
+  { name: 'stealth',    path: 'player/stealth.js',     order: ORDER.player },
 ];
 
 const fallbackEl = document.getElementById('fallback');
